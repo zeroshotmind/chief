@@ -108,6 +108,11 @@ class Api:
             f"/v1/runs/{run_id}/resolutions/{path}", json={"decision": decision, **body}
         )
 
+    def comment(self, run_id: str, artifact_id: str, body: str = "worth knowing", **kw: Any):
+        return self.client.post(
+            f"/v1/runs/{run_id}/artifacts/{artifact_id}/comments", json={"body": body, **kw}
+        )
+
     def add_instance(self, run_id: str, step_id: str, **body: Any):
         return self.client.post(f"/v1/runs/{run_id}/steps/{step_id}/instances", json=body)
 

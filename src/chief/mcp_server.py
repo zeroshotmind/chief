@@ -1,10 +1,12 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Twenty-four tools against 37 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Twenty-four tools against 38 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
-and the approval-policy config and audit query are deliberately REST-only — a session that
-can edit the policy governing its own approvals can approve its own work, and no session
-behaviour is driven by reading the audit log.
+and the approval-policy config, the audit query and artifact comments are deliberately
+REST-only — a session that can edit the policy governing its own approvals can approve its
+own work, no session behaviour is driven by reading the audit log, and a comment is what a
+person says *to* a harness, which a harness writing its own would make meaningless. Comments
+are readable here: they ride on the artifacts in the state ``get_run`` already returns.
 
 Tool arguments and results are the REST bodies — the same pydantic models, not a parallel
 set of shapes. The one exception is ``get_run``, which folds two routes into one tool and so
@@ -64,6 +66,10 @@ instead of improvising; the run pauses until a human decides.
 
 A `checkpoint` step is one the plan says a person decides. Report it running to say you have
 reached it — the run blocks there — then wait for their answer rather than deciding it.
+
+Artifacts in a run's state may carry `comments`: things a person said about that output,
+after the fact. Read them before building on the artifact they hang off — they are how you
+find out a draft was rejected or a file is stale without being told again.
 """
 
 # Coverage under MCP-SURFACE.md 1 is asserted against this list: a tool exists for every

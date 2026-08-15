@@ -55,6 +55,12 @@ export const listAmendments = (runId) => request(`/runs/${runId}/amendments`);
 export const resolveCheckpoint = (runId, path, body) =>
   post(`/runs/${runId}/resolutions/${path.join("/")}`, body);
 
+/** Say something about an artifact, for whoever picks the work up. Addressed by artifact id
+    rather than by state path: artifacts are read as one flat list of everything a run
+    produced, and the id is the only handle that survives that flattening. */
+export const commentOnArtifact = (runId, artifactId, body) =>
+  post(`/runs/${runId}/artifacts/${artifactId}/comments`, body);
+
 /** Templates: the reusable plan. A workflow is single-use, so reuse lives here. */
 export const listTemplates = () => request("/templates");
 export const archiveTemplate = (templateId) => post(`/templates/${templateId}/archive`, {});

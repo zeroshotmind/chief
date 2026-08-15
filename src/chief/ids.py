@@ -34,6 +34,10 @@ def artifact_id() -> str:
     return f"art_{_token()}"
 
 
+def comment_id() -> str:
+    return f"cmt_{_token()}"
+
+
 def instance_id(index: int) -> str:
     return f"inst_{index:02d}"
 

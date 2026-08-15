@@ -23,6 +23,29 @@ TERMINAL_OK: frozenset[str] = frozenset({"completed", "skipped"})
 HISTORY_LOCKED: frozenset[str] = frozenset({"completed", "failed"})
 
 
+class ArtifactComment(BaseModel):
+    """Something a person wanted said about an artifact, for whoever picks the work up.
+
+    A harness reports what it produced; this is the other direction — "this draft is the
+    one, match its tone", "the numbers in here are stale". It rides on the run state the
+    harness already fetches, so reading it costs no new call and no new tool.
+
+    Append-only, like the artifact list it hangs off. There is no edit and no delete: a
+    comment is a thing someone said at a point in the run, and letting it be rewritten
+    afterwards would make the record of what the harness was told disagree with what it
+    acted on.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    comment_id: str
+    body: str = Field(min_length=1)
+    author: str = Field(min_length=1)
+    created_at: str
+    #: Which transport it arrived on, as with a decision — see REQ-43.
+    via: str | None = None
+
+
 class ArtifactRef(BaseModel):
     """JSON metadata only; no blob storage (REQ-46)."""
 
@@ -33,6 +56,11 @@ class ArtifactRef(BaseModel):
     description: str | None = None
     ref: str | None = None
     data: Any = None
+    # Server-owned, in the same sense as a derived status: this shape is also what a harness
+    # submits in a StepUpdate, and a harness reporting its own comments would be reporting
+    # what it was told rather than what it did. `_stamp_artifacts` refuses them on the way
+    # in. See CONTRACT-NOTES.md #30.
+    comments: list[ArtifactComment] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _ref_or_data(self) -> ArtifactRef:

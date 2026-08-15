@@ -24,8 +24,10 @@ from ..models import (
     AmendmentCreate,
     AmendmentDecision,
     ApprovalPolicy,
+    ArtifactRef,
     BodyStepUpdate,
     CheckpointResolution,
+    CommentCreate,
     InstanceCreate,
     InstanceUpdate,
     RunCreate,
@@ -272,6 +274,25 @@ def resolve_nested_checkpoint(
 ) -> RunState:
     """A checkpoint inside a loop or parallel body, addressed by state path."""
     return service.resolve_checkpoint(run_id, pathlib_.parse_path(state_path), body)
+
+
+@router.post(
+    "/runs/{run_id}/artifacts/{artifact_id}/comments",
+    response_model=ArtifactRef,
+    status_code=status.HTTP_201_CREATED,
+)
+def comment_on_artifact(
+    run_id: str, artifact_id: str, body: CommentCreate, service: Service
+) -> ArtifactRef:
+    """Attach a person's note to an artifact, wherever in the run it hangs.
+
+    Addressed by artifact id rather than by state path, unlike its neighbours here. An
+    artifact's id is unique within the run and is stamped before anyone can see the
+    artifact, whereas its path is not something a reader holds: artifacts are read as a
+    flat list of everything a run produced, and requiring a path would mean carrying one
+    back through that flattening for no gain.
+    """
+    return service.comment_on_artifact(run_id, artifact_id, body)
 
 
 @router.post(

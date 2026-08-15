@@ -73,6 +73,19 @@ class CheckpointResolution(BaseModel):
     decided_by: str = "human"
 
 
+class CommentCreate(BaseModel):
+    """Body for commenting on an artifact.
+
+    ``comment_id`` and ``created_at`` are not accepted — they are the record's, not the
+    caller's, in the same way an artifact's id is stamped rather than supplied.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1)
+    author: str = "human"
+
+
 class InstanceCreate(BaseModel):
     """Payload for registering a new instance. Instances are created on demand at runtime
     rather than predeclared (REQ-19)."""

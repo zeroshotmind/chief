@@ -13,6 +13,7 @@ from typing import Any
 from ..errors import InvalidTransition, InvariantViolation, NotFound, ValidationFailed
 from ..ids import amendment_id as new_amendment_id
 from ..ids import artifact_id as new_artifact_id
+from ..ids import comment_id as new_comment_id
 from ..ids import instance_id as format_instance_id
 from ..ids import now
 from ..ids import run_id as new_run_id
@@ -23,10 +24,12 @@ from ..models import (
     AmendmentCreate,
     AmendmentDecision,
     ApprovalPolicy,
+    ArtifactComment,
     ArtifactRef,
     BodyStepUpdate,
     CheckpointOutcome,
     CheckpointResolution,
+    CommentCreate,
     InstanceCreate,
     InstanceUpdate,
     PatchOperation,
@@ -409,10 +412,87 @@ class Chief:
     def _stamp_artifacts(artifacts: list[ArtifactRef]) -> list[ArtifactRef]:
         stamped = []
         for artifact in artifacts:
+            # ArtifactRef is both the stored shape and the shape a harness submits, so the
+            # field is declared and `extra="forbid"` will not catch this. A harness sending
+            # comments would be reporting back what it was told rather than what it did.
+            if artifact.comments:
+                raise InvariantViolation(
+                    "artifact comments are not a harness's to report — they are what a "
+                    "person said about the work, added through the comment endpoint",
+                    details={"artifact_id": artifact.artifact_id},
+                )
             if artifact.artifact_id is None:
                 artifact = artifact.model_copy(update={"artifact_id": new_artifact_id()})
             stamped.append(artifact)
         return stamped
+
+    @staticmethod
+    def _find_artifact(run: RunState, artifact_id: str) -> ArtifactRef | None:
+        """The artifact with this id, wherever in the run it hangs.
+
+        Addressed by id rather than by state path, unlike everything else that reaches into
+        a run. An artifact's id is unique within the run and already stamped by the time
+        anyone can see it, whereas its path is not something the reader has: the UI
+        flattens artifacts out of the tree to list them, and a nested one would otherwise
+        have to carry a path back through the flattening just to be commented on.
+        """
+
+        def walk(container: dict[str, StepState]) -> ArtifactRef | None:
+            for state in container.values():
+                for artifact in state.artifacts:
+                    if artifact.artifact_id == artifact_id:
+                        return artifact
+                # `instances` is None on a task, not empty: a task has no instances rather
+                # than none yet, and the model keeps that distinction.
+                for instance in state.instances or []:
+                    for artifact in instance.artifacts:
+                        if artifact.artifact_id == artifact_id:
+                            return artifact
+                    found = walk(instance.step_states or {})
+                    if found is not None:
+                        return found
+            return None
+
+        return walk(run.step_states)
+
+    def comment_on_artifact(
+        self, run_id: str, artifact_id: str, body: CommentCreate
+    ) -> ArtifactRef:
+        """Attach a person's note to an artifact.
+
+        Deliberately not blocked by the completed-step rule that governs everything else
+        reaching into a finished step. Commenting on a finished step's output is the point —
+        "this draft is the one, match its tone" is said about work that is done — and a
+        comment annotates a result rather than changing one, so it is not a `history_edit`
+        and needs no amendment. The artifact, its `ref` and its `data` are untouched; the
+        recorded result still says exactly what the harness reported.
+        """
+        run, _, _ = self._load_for_update(run_id)
+        artifact = self._find_artifact(run, artifact_id)
+        if artifact is None:
+            raise NotFound(
+                f"run '{run_id}' has no artifact '{artifact_id}'",
+                details={"run_id": run_id, "artifact_id": artifact_id},
+            )
+        artifact.comments.append(
+            ArtifactComment(
+                comment_id=new_comment_id(),
+                body=body.body,
+                author=body.author,
+                created_at=now(),
+                via=current_transport.get(),
+            )
+        )
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, run)
+            self.store.audit(
+                conn,
+                "artifact.commented",
+                workflow_id=run.workflow_id,
+                run_id=run_id,
+                detail={"artifact_id": artifact_id, "author": body.author},
+            )
+        return artifact
 
     def _check_addressable(self, defn: WorkflowDefinition, path: list[str]) -> None:
         paths.validate_against_definition(defn.steps_by_id(), path)

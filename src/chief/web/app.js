@@ -33,7 +33,7 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
   decideAmendment, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
-  listAmendments, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
+  commentOnArtifact, listAmendments, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
 
 // ── colour and status vocabulary ─────────────────────────────────────────────────────────
@@ -490,6 +490,87 @@ const ICONS = {
   url: "↗", pr: "↗", json: "{}", log: "⌗",
 };
 
+// ── artifact comments ────────────────────────────────────────────────────────────────────
+
+/** What a person wanted said about an output, for whoever picks the work up. A harness
+    reports what it produced; this is the other direction, and it reaches the agent through
+    the run state it already fetches rather than through anything it has to be told to call. */
+const cmtDraftFor = (artifactId) =>
+  state.cmtDrafts[artifactId] || { body: "", open: false, error: null };
+
+function setCmtDraft(artifactId, patch) {
+  setState({
+    cmtDrafts: { ...state.cmtDrafts, [artifactId]: { ...cmtDraftFor(artifactId), ...patch } },
+  });
+}
+
+async function addComment(runId, artifactId) {
+  const body = cmtDraftFor(artifactId).body.trim();
+  if (!body) return;
+  try {
+    await commentOnArtifact(runId, artifactId, { body, author: "human" });
+    // Only on success — a refused comment stays on screen to be corrected, exactly as a
+    // refused checkpoint answer does.
+    const rest = { ...state.cmtDrafts };
+    delete rest[artifactId];
+    setState({ cmtDrafts: rest });
+    await refresh();
+  } catch (err) {
+    setCmtDraft(artifactId, { error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+function commentBlock(artifact) {
+  const runId = state.detail && state.detail.runId;
+  const artifactId = artifact.artifact_id;
+  // No run in view, or an artifact the server has not stamped yet: show what is there and
+  // offer nothing, rather than a box that posts to nowhere.
+  if (!runId || !artifactId) {
+    return (artifact.comments || []).map(commentRow);
+  }
+  const draft = cmtDraftFor(artifactId);
+  const inputId = `cmt-${artifactId}`;
+  return [
+    (artifact.comments || []).map(commentRow),
+    draft.error && el("div", { class: "banner", text: draft.error }),
+    draft.open
+      ? el(
+          "div",
+          { class: "cmt-compose" },
+          el("input", {
+            class: "field-search", type: "text", id: inputId, value: draft.body,
+            placeholder: "What should whoever picks this up know?",
+            onInput: (e) => setCmtDraft(artifactId, { body: e.target.value, error: null }),
+            onKeyDown: (e) => e.key === "Enter" && addComment(runId, artifactId),
+          }),
+          el("button", {
+            class: "btn btn-primary btn-sm", text: "Add",
+            onClick: () => addComment(runId, artifactId),
+          }),
+          el("button", {
+            class: "btn btn-secondary btn-sm", text: "Cancel",
+            onClick: () => setCmtDraft(artifactId, { open: false, body: "", error: null }),
+          }),
+        )
+      : el("button", {
+          class: "cmt-add",
+          text: (artifact.comments || []).length ? "＋ another comment" : "＋ comment",
+          onClick: () => setCmtDraft(artifactId, { open: true }),
+        }),
+  ];
+}
+
+const commentRow = (comment) =>
+  el(
+    "div",
+    { class: "cmt" },
+    el("span", { class: "cmt-body", text: comment.body }),
+    el("span", {
+      class: "cmt-meta",
+      text: `${comment.author}${comment.created_at ? ` · ${relAgo(comment.created_at)}` : ""}`,
+    }),
+  );
+
 /** One ArtifactRef as a card. `type` is an open string (REQ-46), so anything unrecognised
     degrades to its reference rendered as a link. */
 function artifactCard(artifact, label) {
@@ -583,6 +664,7 @@ function artifactCard(artifact, label) {
     ),
     body,
     path,
+    commentBlock(artifact),
   );
 }
 
@@ -721,6 +803,9 @@ const state = {
   // Half-typed checkpoint answers, keyed by run+path. In state for the same reason the list
   // search box is: the poll rebuilds the DOM, and anything held only in the DOM is lost.
   cpDrafts: {},
+  // Half-written artifact comments, keyed by artifact id, for the same reason cpDrafts
+  // exists: the poll rebuilds the DOM and takes anything held only in it.
+  cmtDrafts: {},
   // What a relative artifact ref is relative to, and the half-typed version of it while it
   // is being changed. Read from localStorage once, here, so every render is a plain field
   // lookup rather than a trip through storage.

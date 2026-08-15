@@ -39,7 +39,7 @@ Not every route: routes are addressing, operations are behaviour.
 That criterion has to be stated exactly, because `HARNESS_OPERATIONS` is what the parity
 test asserts against, and a fuzzy criterion encodes a judgement call rather than a rule.
 It admits `approve_amendment`, which the harness never initiates but a human routinely
-instructs. It excludes exactly two things, for two different reasons:
+instructs. It excludes exactly four things, for four different reasons:
 
 - **`GET/PUT /config/approval-policy`** — a session that can edit the policy governing its
   own amendments can approve its own work. No human instruction makes that safe; it is the
@@ -47,6 +47,11 @@ instructs. It excludes exactly two things, for two different reasons:
 - **`GET /audit`** — no session behaviour is driven by reading it. Observer surface.
 - **`POST /templates/{id}/archive`** — retiring a template is lifecycle administration, and
   no session behaviour depends on it. Added with templates; same reasoning as the audit log.
+- **`POST /runs/{id}/artifacts/{id}/comments`** — a comment is what a person says *to* a
+  harness about its output. A harness writing its own would be annotating its work with its
+  own opinion of it, which is what the summary is already for, and would make a comment
+  useless as a signal that someone looked. Reading them needs no tool: they ride on the
+  artifacts in the state `get_run` already returns.
 
 The test asserts soundness over all tools, and coverage over `HARNESS_OPERATIONS`. Both are
 enforceable; the biconditional is not.
@@ -164,8 +169,9 @@ person does, and no session behaviour depends on it.
 |---|---|
 | `GET/PUT /config/approval-policy` | Self-approval loop — §1. |
 | `GET /audit` | Observer surface — §1. |
+| `POST /runs/{id}/artifacts/{id}/comments` | A comment is said *to* a harness — §1. Readable through `get_run`. |
 
-Both remain fully reachable over REST, so REQ-4 holds: the *union* of transports is not
+These remain fully reachable over REST, so REQ-4 holds: the *union* of transports is not
 narrowed, only the agent-facing subset.
 
 ---

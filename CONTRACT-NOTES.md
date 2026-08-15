@@ -331,3 +331,38 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     This is entirely a property of the browser reading the run, not of the run: the same
     workflow opened on another machine resolves against that machine's checkout, which is
     the correct answer and not one a stored field could give.
+
+30. **Comments on artifacts — the channel that ran the wrong way.** An extension. Every
+    write in the contract flows harness → Chief: what was produced, what happened, what
+    could not be done. A person reviewing the output has nowhere to put "this draft is the
+    one, match its tone" except a checkpoint, which blocks the run, or an amendment, which
+    mints a plan revision. Both are the wrong shape for an aside.
+
+    An `ArtifactComment` (`comment_id`, `body`, `author`, `created_at`, `via`) hangs off the
+    artifact and rides on the run state `get_run` already returns, so the harness reads them
+    with no new call and the MCP surface gains no tool. Append-only, like the artifact list
+    itself: a comment is a thing someone said at a point in the run, and letting it be
+    rewritten would make the record of what the harness was told disagree with what it acted
+    on. Writing one is REST-only — a harness commenting on its own output is annotating the
+    work with its own opinion of it, which is what `summary` is already for.
+
+    Two things are load-bearing here.
+
+    `ArtifactRef` is both the stored shape and the shape a harness submits in a `StepUpdate`,
+    so `extra="forbid"` does *not* catch a harness sending `comments` — the field is
+    legitimately declared. `_stamp_artifacts` refuses it explicitly, the same way
+    `report_step_update` refuses a harness reporting a checkpoint's outcome. Splitting the
+    model was the alternative and was rejected: artifacts appear in six places in the
+    contract, and a second shape for one of them is a worse cost than one guard.
+
+    The completed-step rule is deliberately bypassed, and that exemption *is* the feature.
+    Commenting on finished work is the main case — nothing gets reviewed before it exists —
+    and a comment annotates a result rather than changing one, so it is not a `history_edit`
+    and needs no amendment. The `ref`, the `data` and the step's status are untouched: what
+    the harness reported still says exactly what it said.
+
+    Addressing is by `artifact_id`, not by state path, unlike everything else that reaches
+    into a run. The id is unique within the run and is stamped before anyone can see the
+    artifact, whereas the path is not something the reader holds — both UIs read artifacts
+    as one flat list of everything a run produced, and requiring a path would mean carrying
+    one back through that flattening for no gain.

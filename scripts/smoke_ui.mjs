@@ -89,8 +89,9 @@ const RUN = {
     // Two refs of the kind a harness actually reports: a file relative to wherever it was
     // working, and something already on the web. They resolve down different arms.
     a: { step_id: "a", status: "completed", summary: "did it", artifacts: [
-      { artifact_id: "art_1", type: "markdown", description: "Persona sheet", ref: "notes/personas.md", data: null },
-      { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null },
+      { artifact_id: "art_1", type: "markdown", description: "Persona sheet", ref: "notes/personas.md", data: null,
+        comments: [{ comment_id: "cmt_1", body: "the tone here is the one to match", author: "roy", created_at: new Date().toISOString(), via: "rest" }] },
+      { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null, comments: [] },
     ] },
     b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {} }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
@@ -353,6 +354,17 @@ const unlinked = !!unresolved && unresolved.tag === "span" && !unresolved.href;
 // having on the clipboard.
 const stillCopyable = countClass(mainNode(), "art-copy") === 2;
 
+// A comment already on an artifact is shown, and leaving a new one posts it addressed by
+// artifact id — the only handle that survives artifacts being flattened into one list.
+const commentShown = JSON.stringify(mainNode()).includes("the tone here is the one to match");
+clickByText("＋ another comment");
+await new Promise((r) => setTimeout(r, 10));
+typeIntoId("cmt-art_1", "check the second half against the brief");
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Add");
+await new Promise((r) => setTimeout(r, 40));
+const comment = posts.find((x) => x.url.includes("/comments"));
+
 if (NO_TEMPLATES) {
   // A page newer than its server must still work: one 404 on an extension endpoint should
   // not leave every screen on "Loading…".
@@ -402,6 +414,7 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`comments:    shown=${commentShown}, sent=${JSON.stringify(comment && comment.body)}`);
 console.log(`folder:      saved=${rootSaved}, relinked=${rehomed}, unset-is-text=${unlinked}`);
 
 const expected = [
@@ -440,6 +453,12 @@ const ok =
   // Clearing it: readable text, no link, copy button still there.
   unlinked &&
   stillCopyable &&
+  // Comments: the existing one is read back, and a new one goes out by artifact id.
+  commentShown &&
+  !!comment &&
+  comment.url.endsWith("/runs/run_1/artifacts/art_1/comments") &&
+  comment.body.body === "check the second half against the brief" &&
+  comment.body.author === "human" &&
   // What was typed is what was sent, addressed by state path, with the decision on it.
   !!decision &&
   decision.url.endsWith("/resolutions/e") &&

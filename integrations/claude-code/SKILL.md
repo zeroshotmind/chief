@@ -142,3 +142,10 @@ the user's to do in the web UI at `/ui`.
 `list_runs` finds the run, `get_run` with `include_plan=true` returns both the state and
 the plan — the goals, the harnesses, the dependencies. That is enough to work out what is
 done and what is next without asking the user to re-explain.
+
+**Read the `comments` on the artifacts while you are there.** They are what a person said
+about an output after you reported it — "this draft is the one, match its tone", "the
+numbers in here are stale". Nobody will repeat them to you, and building on an artifact
+someone has commented on without reading the comment is how you redo rejected work. They
+are yours to read, not to write: a comment is what you were *told*, so there is no tool to
+add one.
