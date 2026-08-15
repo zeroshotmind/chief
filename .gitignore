@@ -14,3 +14,6 @@ htmlcov/
 *.sqlite3-wal
 *.sqlite3-shm
 .DS_Store
+
+# Output from exercising Chief against real work. Yours, not the tool's.
+human-test/
