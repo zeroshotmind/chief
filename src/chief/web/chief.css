@@ -1,0 +1,475 @@
+/* Nocturne — design-system tokens and component classes, as imported from the Chief Runs
+   design project. Retuning the look happens here.
+
+   The imported screen specifies a light ground built from the same hues, so that is the
+   default; the system's native dark palette returns under a dark colour-scheme preference.
+   The web-font @import the design system carries was dropped deliberately: Chief is
+   self-hosted (REQ-21) and must render without reaching the network. */
+
+:root {
+  /* Light variant of the Nocturne tokens — same hues, ground lifted. */
+  --color-bg: #eef0f8;
+  --color-surface: #fbfcff;
+  --color-text: #262837;
+  --color-accent: #796cbf;
+  --color-accent-2: #7972a9;
+  --color-divider: color-mix(in srgb, #262837 14%, transparent);
+
+  --shadow-sm: 0 0 0 1px #dcdfee;
+  --shadow-md: 0 0 0 1px #d3d6e8, 0 6px 18px rgba(38, 40, 70, 0.10);
+  --shadow-lg: 0 0 0 1px #c6cade, 0 16px 40px rgba(38, 40, 70, 0.16);
+
+  /* Status hues. Shared by CSS and by the graph code, which reads them off :root. */
+  --ok: oklch(0.52 0.12 155);
+  --warn: oklch(0.62 0.13 65);
+  --bad: oklch(0.55 0.16 25);
+  --dim: #b2b6ca;
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the same step of
+     any role matches the others in visual value. */
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-200: #e4e7f5;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-400: #b2b6ca;
+  --color-neutral-500: #9397ab;
+  --color-neutral-600: #75798c;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-100: #f5f4ff;
+  --color-accent-200: #e7e5fe;
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-600: #796cbf;
+  --color-accent-700: #5d5294;
+  --color-accent-800: #423a6a;
+  --color-accent-900: #2b2741;
+
+  --font-heading: "Inter", system-ui, -apple-system, sans-serif;
+  --font-heading-weight: 500;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-6: 16.8px;
+  --space-8: 22.4px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #161826;
+    --color-surface: #232532;
+    --color-text: #e9e9ed;
+    --color-accent: #9184d9;
+    --color-accent-2: #a7a1db;
+    --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+
+    --shadow-sm: 0 0 0 1px #3f424d;
+    --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0, 0, 0, 0.55);
+    --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0, 0, 0, 0.65);
+
+    --ok: oklch(0.72 0.13 155);
+    --warn: oklch(0.78 0.14 75);
+    --bad: oklch(0.68 0.17 25);
+    --dim: #75798c;
+
+    /* The neutral ramp inverts: step 100 is the ink on a dark ground. */
+    --color-neutral-100: #292b31;
+    --color-neutral-200: #3f424d;
+    --color-neutral-300: #595d6c;
+    --color-neutral-400: #75798c;
+    --color-neutral-500: #9397ab;
+    --color-neutral-600: #b2b6ca;
+    --color-neutral-700: #cfd3e5;
+    --color-neutral-800: #e4e7f5;
+    --color-neutral-900: #f3f5fe;
+
+    --color-accent-200: #2b2741;
+    --color-accent-300: #423a6a;
+    --color-accent-700: #d2cefd;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Components — plain CSS on plain HTML: no JavaScript, no build step.
+   ══════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
+}
+h4 { font-size: 20px; }
+p { margin: 0 0 var(--space-3); }
+a { color: var(--color-accent); text-underline-offset: 3px; }
+a:hover { color: var(--color-accent-700); }
+.text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.mono { font-family: var(--font-mono); }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+
+@keyframes chiefpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* — buttons — */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 14px; line-height: 1.2; color: var(--color-text);
+  background: transparent; border: 1px solid transparent;
+  padding: var(--space-2) calc(var(--space-3) * 1.2);
+  border-radius: var(--radius-md);
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.btn-primary:active:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+.btn-secondary { border-color: var(--color-divider); }
+.btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-secondary:active:not(:disabled) { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.btn-sm { font-size: 12px; padding: 3px 12px; }
+
+/* — forms — */
+.field > label {
+  display: block; font-size: 12px; margin-bottom: 5px;
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.input {
+  width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  font-size: 14px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+
+/* — cards — */
+.card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border-radius: var(--radius-md);
+  background: var(--color-surface); box-shadow: var(--shadow-sm);
+}
+.card-kicker {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+/* — tags — */
+.tag {
+  display: inline-flex; align-items: center; font-size: 11px;
+  letter-spacing: 0.02em; padding: 3px 10px;
+  border-radius: calc(var(--radius-md) * 0.75);
+}
+.tag-accent { background: var(--color-accent-200); color: var(--color-accent-700); }
+
+/* — navigation — */
+.nav {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  position: sticky; top: 0; z-index: 15; background: var(--color-bg);
+}
+.nav-brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 16px; margin-right: auto;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.nav-dot { width: 9px; height: 9px; border-radius: 3px; background: var(--color-accent); }
+.nav a {
+  color: var(--color-neutral-500); text-decoration: none; font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.nav a[aria-current="page"] { color: var(--color-accent); }
+
+/* — dialog — */
+.dialog-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center; z-index: 30;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-neutral-900) 50%, transparent);
+}
+.dialog {
+  width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+}
+.dialog-title {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 17px;
+}
+.dialog-body { font-size: 14px; opacity: 0.85; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Screens
+   ══════════════════════════════════════════════════════════════════════ */
+
+#app { min-height: 100vh; display: flex; flex-direction: column; }
+main { width: 100%; padding: var(--space-8) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+main.narrow { max-width: 760px; }
+main.wide { max-width: 1240px; padding-top: var(--space-4); }
+.screen-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); }
+.accent-note {
+  font-size: 12px; color: var(--color-accent-700);
+  border-left: 2px solid var(--color-accent); padding-left: var(--space-3);
+}
+.banner {
+  font-size: 13px; padding: var(--space-3);
+  border-radius: var(--radius-md); background: var(--color-surface);
+  border-left: 2px solid var(--bad); color: var(--color-text);
+}
+
+/* — run list — */
+/* The row rule fades to transparent at both ends over 48px: a Nocturne signature. */
+.run-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  background: linear-gradient(to right, transparent, var(--color-divider) 48px,
+    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
+  border: 0; font: inherit; color: inherit; text-align: left;
+  cursor: pointer; border-radius: var(--radius-sm);
+}
+.run-row:hover { background-color: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.run-row .title { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: 14px; }
+.run-row .id { font-family: var(--font-mono); font-size: 11px; }
+/* Fixed widths, because the header above the rows has to line up with them. */
+.run-row .status { flex: none; font-size: 12px; width: 108px; }
+.run-row .when { flex: none; font-size: 12px; color: var(--color-neutral-500); width: 64px; text-align: right; }
+.run-row .stamp, .run-row .dur {
+  flex: none; text-align: right; white-space: nowrap;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-neutral-500);
+}
+.run-row .stamp { width: 112px; }
+.run-row .dur { width: 64px; }
+
+/* — list controls: filter chips, search, sortable column heads — */
+.list-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.chip {
+  font: inherit; font-size: 12px; padding: 3px 11px; cursor: pointer;
+  color: var(--color-neutral-500); background: transparent;
+  border: 1px solid var(--color-divider); border-radius: 999px;
+}
+.chip:hover { color: var(--color-text); border-color: var(--color-neutral-400); }
+.chip.on {
+  color: var(--color-accent-700); background: var(--color-accent-200);
+  border-color: transparent;
+}
+.field-search {
+  flex: 1; min-width: 180px; font: inherit; font-size: 13px;
+  padding: 5px 10px; color: var(--color-text); caret-color: var(--color-accent);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+}
+.field-search:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
+
+/* What a checkpoint asks for, in the approvals inbox. One field per line: these are
+   questions someone is answering in their own words, not a settings form. */
+.cp-fields {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.cp-field { display: flex; flex-direction: column; gap: 4px; }
+.cp-label { font-size: 12px; color: var(--color-neutral-600); }
+.cp-field .field-search { flex: none; width: 100%; box-sizing: border-box; }
+
+.list-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-2) 5px;
+}
+.col-head {
+  font: inherit; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--color-neutral-500); background: none; border: 0; padding: 0;
+  cursor: pointer; white-space: nowrap;
+}
+.col-head:hover { color: var(--color-text); }
+.col-head.on { color: var(--color-accent); }
+.col-head.title { flex: 1; min-width: 0; text-align: left; }
+.col-head.status { flex: none; width: 108px; text-align: left; }
+.col-head.when { flex: none; width: 64px; text-align: right; }
+.col-head.stamp { flex: none; width: 112px; text-align: right; }
+.col-head.dur { flex: none; width: 64px; text-align: right; }
+
+.dot { flex: none; border-radius: 50%; width: 8px; height: 8px; }
+.dot.pulse { animation: chiefpulse 1.6s infinite; }
+
+/* — graph — */
+.graph-split { display: flex; gap: var(--space-5, 14px); align-items: flex-start; }
+.graph-viewport { flex: 1; min-width: 0; overflow: hidden; }
+.graph-plane { position: relative; transform-origin: top left; }
+.graph-plane svg { position: absolute; inset: 0; overflow: visible; }
+.node {
+  position: absolute; padding: 9px 11px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--color-surface); border-radius: var(--radius-md);
+  cursor: pointer; box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-divider);
+  /* Height is set inline and grows for a construct's body; clip rather than spill if a
+     goal wraps further than the measurement allowed for. */
+  box-sizing: border-box; overflow: hidden;
+}
+.node:hover { border-color: var(--color-neutral-400); }
+.node.sel { border: 1px solid var(--color-accent); box-shadow: var(--shadow-md); }
+.node.pend { border: 1px dashed var(--color-accent); }
+.node.fail { border: 1px solid color-mix(in srgb, var(--bad) 50%, transparent); }
+.node.ghost {
+  border: 1px dashed var(--color-accent); opacity: 0.92;
+  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
+}
+.node-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.node-goal {
+  flex: 1; min-width: 0; font-size: 12px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.node-goal.dimmed { color: var(--color-neutral-500); }
+.node-goal.ghosted { color: var(--color-accent-700); }
+.node-cluster { display: inline-flex; align-items: center; gap: 3px; margin-left: 14px; }
+.node-cluster .dot { width: 5px; height: 5px; }
+.node-cluster .label { font-size: 10px; color: var(--color-neutral-500); margin-left: 3px; }
+/* A construct in the graph: not a container around its body — the body steps are ordinary
+   nodes — but a small gate the flow passes through. A loop's dashed return edge comes back
+   here; the id is on it so click-to-inspect reads naturally. */
+.node.gate {
+  border-style: dashed; border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 4%, var(--color-surface));
+  display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 10px;
+}
+.gate-label {
+  font-size: 10px; color: var(--color-accent); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* The two labels on a gate's arrows: ✓ the exit condition, ✗ the repeat. */
+.gate-edge-label { font-size: 10px; font-family: var(--font-mono); }
+.node-arts {
+  position: absolute; bottom: 7px; right: 9px; font-size: 10px;
+  color: var(--color-neutral-500); white-space: nowrap;
+}
+.node-tag {
+  position: absolute; top: -11px; right: 8px; background: var(--color-surface);
+  font-family: inherit; font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  white-space: nowrap; cursor: pointer;
+  border: 1px dashed var(--color-accent); color: var(--color-accent);
+  animation: chiefpulse 1.8s infinite;
+}
+.node-tag.past { border: 1px solid var(--color-neutral-500); color: var(--color-neutral-500); animation: none; }
+.node-tag.ghost { animation: none; cursor: default; }
+/* A checkpoint that has been reached: the one node on the graph a person can act on. */
+.node-tag.waiting { border: 1px solid var(--warn); color: var(--warn); }
+.node-tag.quiet {
+  border: 1px solid var(--color-divider); color: var(--color-neutral-500);
+  animation: none; cursor: default;
+}
+/* A checkpoint is not the machine working — it is the machine stopped, waiting for a
+   person. Squared off against the rounded task nodes, and warm rather than accent-blue,
+   so it reads as a different kind of thing at a glance rather than on inspection. */
+.node.checkpoint {
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-md) 2px;
+}
+.node.checkpoint.waiting {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 6%, var(--color-surface));
+}
+
+/* — inspector — */
+.inspector {
+  flex: none; width: 360px; position: sticky; top: 64px;
+  display: flex; flex-direction: column; gap: var(--space-3);
+  max-height: calc(100vh - 96px); overflow-y: auto;
+}
+.section-label {
+  font-size: 11px; color: var(--color-neutral-500); letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.close-x {
+  border: 0; background: transparent; cursor: pointer; color: var(--color-neutral-500);
+  font-size: 12px; font-family: inherit; padding: 2px 4px;
+}
+
+/* — amendment operation diff rows — */
+.op { display: flex; gap: var(--space-2); align-items: baseline; font-size: 12px; }
+.op-badge {
+  flex: none; font-family: var(--font-mono); font-size: 11px;
+  border-radius: var(--radius-sm); padding: 0 6px;
+}
+.op-lines { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.op-text { color: var(--color-neutral-700); }
+.op-was { color: var(--color-neutral-500); text-decoration: line-through; }
+.op-now { color: var(--color-accent-700); }
+.op-note { color: var(--color-neutral-500); font-size: 11px; }
+
+/* — artifacts — */
+.art-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.art-icon { flex: none; font-size: 12px; color: var(--color-accent); }
+.art-label {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--color-neutral-700);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.art-meta { flex: none; font-size: 10px; color: var(--color-neutral-500); }
+.art-img { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--color-divider); }
+.art-missing {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; padding: var(--space-3); text-align: center;
+  font-size: 11px; color: var(--color-neutral-500);
+  border-style: dashed;
+}
+.art-md {
+  display: flex; flex-direction: column; gap: 4px;
+  border-left: 2px solid var(--color-divider); padding-left: var(--space-3);
+}
+.art-md .h { font-size: 12px; color: var(--color-text); }
+.art-md .li { font-size: 12px; color: var(--color-neutral-600); display: flex; gap: 6px; }
+.art-md .li::before { content: "·"; flex: none; color: var(--color-neutral-400); }
+.art-md .p { font-size: 12px; color: var(--color-neutral-600); }
+.art-video {
+  aspect-ratio: 16 / 9; border-radius: var(--radius-sm);
+  background: linear-gradient(140deg, #33344a, #232435);
+  display: flex; align-items: center; justify-content: center; position: relative;
+}
+.art-video .play {
+  width: 44px; height: 44px; border-radius: 50%; background: rgba(251, 252, 255, 0.14);
+  border: 1px solid rgba(251, 252, 255, 0.4); display: flex; align-items: center;
+  justify-content: center; color: #fbfcff; font-size: 14px; padding-left: 3px;
+}
+.art-video .dur {
+  position: absolute; bottom: 8px; right: 10px; font-size: 10px;
+  font-family: var(--font-mono); color: rgba(251, 252, 255, 0.75);
+}
+.art-audio { display: flex; align-items: center; gap: var(--space-2); }
+.art-audio .play {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  border: 1px solid var(--color-accent); color: var(--color-accent);
+  display: flex; align-items: center; justify-content: center; font-size: 10px; padding-left: 2px;
+}
+.art-audio .wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 28px; }
+.art-audio .wave span { flex: 1; background: var(--color-accent-300); border-radius: 1px; }
+.art-href { font-size: 11px; font-family: var(--font-mono); color: var(--color-accent-700); word-break: break-all; }
+
+.inst-row { display: flex; align-items: baseline; gap: var(--space-2); font-size: 12px; }
+.inst-row .label { flex: none; color: var(--color-neutral-700); }
+.inst-row .summary { min-width: 0; color: var(--color-neutral-500); }
+
+@media (max-width: 900px) {
+  .graph-split { flex-direction: column; }
+  .inspector { width: 100%; position: static; max-height: none; }
+}

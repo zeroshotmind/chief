@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chief"
+version = "0.1.0"
+description = "Chief — adaptive agentic workflow tracker, REST backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "mcp>=2.0",  # REQ-2: the MCP surface, mounted on the same app (src/chief/mcp_server.py)
+    "pydantic>=2.6",
+    "uvicorn[standard]>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+chief = "chief.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# The web UI ships as static files inside the package (REQ-16, REQ-21: one process).
+[tool.setuptools.package-data]
+chief = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:chief.*"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
