@@ -307,3 +307,27 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     vacuously at `register_run`, and an approved `replay_step` resetting a dependency to
     `pending` would leave a checkpoint blocked with nothing to retract it — the failure mode
     `skip_cause` exists to prevent, in a second fixpoint loop.
+
+29. **An artifact ref names a file, but nothing says where.** REQ-46 is clear that an
+    artifact is metadata and never a blob, and a harness reporting one names the file the
+    way it saw it: `songs/personas.md`, relative to whatever directory it was working in.
+    That directory is not recorded anywhere, so the reference reads fine and resolves to
+    nothing.
+
+    The base deliberately does **not** go on the model. A `cwd` on the run is the obvious
+    place and it is wrong three ways: it grows the harness-facing surface, it is stale the
+    moment the tree moves, and it fixes nothing for runs already recorded. Chief also stays
+    out of serving the file — a `GET /files?path=` would make the tracker a file server and
+    put path-traversal containment in a process that currently reads nothing off disk.
+
+    So the base lives in `localStorage`, set from the artifacts section of the inspector
+    where the paths it applies to are visible. A relative ref resolves against it into a
+    `vscode://file/…` link; an absolute one is used as-is; an `http(s)` ref is left exactly
+    as reported. With no base set the path renders as plain text rather than as a link built
+    on a guess — a `vscode://` URL on the wrong root opens "file not found" in the editor,
+    which reads as the editor failing rather than the base being unset. A copy control sits
+    beside every ref regardless, since copying is the one action that works either way.
+
+    This is entirely a property of the browser reading the run, not of the run: the same
+    workflow opened on another machine resolves against that machine's checkout, which is
+    the correct answer and not one a stored field could give.

@@ -464,6 +464,30 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 .art-audio .wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 28px; }
 .art-audio .wave span { flex: 1; background: var(--color-accent-300); border-radius: 1px; }
 .art-href { font-size: 11px; font-family: var(--font-mono); color: var(--color-accent-700); word-break: break-all; }
+/* A path and the two things you can do with it. `align-items: baseline` would drag the
+   button off the line once a long path wraps, so the copy control is pinned to the top. */
+.art-path { display: flex; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.art-path .art-href { flex: 1; min-width: 0; }
+/* Unresolvable: still worth reading, just not worth pretending is a link. */
+.art-path span.art-href { color: var(--color-neutral-500); }
+.art-copy {
+  flex: none; border: none; background: none; cursor: pointer; padding: 0 2px;
+  font-size: 11px; line-height: 1.4; color: var(--color-neutral-400);
+}
+.art-copy:hover { color: var(--color-accent-700); }
+/* Copies the relative ref, because that is all there is until a folder is named. */
+.art-copy.partial { opacity: 0.55; }
+.art-copy.ok { color: var(--ok); }
+.art-root {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  padding: 0 var(--space-1) var(--space-1);
+}
+.art-root .input { flex: 1; min-width: 0; }
+.art-root-label { flex: none; font-size: 11px; color: var(--color-neutral-500); }
+.art-root-path {
+  flex: 1; min-width: 0; font-size: 11px; color: var(--color-neutral-700);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
 
 .inst-row { display: flex; align-items: baseline; gap: var(--space-2); font-size: 12px; }
 .inst-row .label { flex: none; color: var(--color-neutral-700); }

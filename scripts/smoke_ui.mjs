@@ -14,7 +14,7 @@ const clicks = [];
 const handlers = []; // non-click listeners, so the search field can be typed into
 
 function node(tag) {
-  return {
+  const self = {
     tag,
     children: [],
     style: {},
@@ -31,6 +31,15 @@ function node(tag) {
     querySelector() { return null; },
     replaceWith() {},
   };
+  // Real nodes always have one, and code that toggles a class without going through a
+  // re-render reaches for it directly. It writes through to `class`, which is what the
+  // assertions below read.
+  const classes = () => (self.class || "").split(" ").filter(Boolean);
+  self.classList = {
+    add: (c) => { self.class = [...classes(), c].join(" "); },
+    remove: (c) => { self.class = classes().filter((x) => x !== c).join(" "); },
+  };
+  return self;
 }
 
 const roots = { app: node("div"), "dialog-root": node("div") };
@@ -45,6 +54,16 @@ globalThis.window = { addEventListener() {} };
 globalThis.location = { search: "", hash: "", replace(h) { this.hash = h; } };
 globalThis.Node = Object;
 globalThis.setInterval = () => 0;
+// The base a relative artifact ref resolves against lives in the browser, not on the server
+// (see app.js "local files"). Standing in for it here is what makes the editor link's shape
+// assertable — the one part of this that fails silently, because a wrong scheme or a
+// mangled path still renders as a perfectly ordinary link.
+const stored = { "chief.filesRoot": "/Users/you/work/songs" };
+globalThis.localStorage = {
+  getItem: (k) => stored[k] ?? null,
+  setItem: (k, v) => { stored[k] = v; },
+  removeItem: (k) => { delete stored[k]; },
+};
 
 const STEPS = [
   { id: "a", type: "task", goal: "first", harness: "claude-code", depends_on: [] },
@@ -67,7 +86,12 @@ const RUN = {
   run_id: "run_1", workflow_id: "wf_ok", base_version: 2, applied_amendment_ids: [],
   status: "waiting_on_human", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   step_states: {
-    a: { step_id: "a", status: "completed", summary: "did it", artifacts: [] },
+    // Two refs of the kind a harness actually reports: a file relative to wherever it was
+    // working, and something already on the web. They resolve down different arms.
+    a: { step_id: "a", status: "completed", summary: "did it", artifacts: [
+      { artifact_id: "art_1", type: "markdown", description: "Persona sheet", ref: "notes/personas.md", data: null },
+      { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null },
+    ] },
     b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {} }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
   },
@@ -139,6 +163,13 @@ function countClass(root, cls) {
   let n = root.class && root.class.split(" ").includes(cls) ? 1 : 0;
   for (const child of root.children || []) n += countClass(child, cls);
   return n;
+}
+
+/** Every node in a subtree whose class list contains `cls`. */
+function findByClass(root, cls, out = []) {
+  if ((root.class || "").split(" ").includes(cls)) out.push(root);
+  for (const child of root.children || []) findByClass(child, cls, out);
+  return out;
 }
 
 function countTag(root, tag) {
@@ -273,6 +304,55 @@ const runClusters = countClass(mainNode(), "node-cluster");
 // The cycle survives execution: body steps stay drawn, the gate carries the instances.
 const runGates = countClass(mainNode(), "gate");
 
+// Artifacts: a path you can act on. The relative ref resolves against the stored folder and
+// becomes an editor link; the http one is left exactly as the harness reported it. Both get
+// a copy button, because copying works even when nothing can open the file.
+const paths = findByClass(mainNode(), "art-path");
+const hrefs = paths.map((p) => findByClass(p, "art-href")[0]).map((a) => a && a.href);
+const copyButtons = paths.reduce((n, p) => n + findByClass(p, "art-copy").length, 0);
+// What lands on the clipboard is the absolute path, not the relative one — the whole point
+// is to hand over something that means something outside this page.
+let copied = null;
+// node ships a real `navigator` and it is getter-only, so the stub goes on the property it
+// actually lacks rather than on the object.
+Object.defineProperty(globalThis.navigator, "clipboard", {
+  configurable: true,
+  value: { writeText: async (t) => { copied = t; } },
+});
+const copyNode = findByClass(mainNode(), "art-copy")[0];
+[...clicks].reverse().find((c) => c.node === copyNode)?.fn({ currentTarget: copyNode });
+await new Promise((r) => setTimeout(r, 10));
+
+// Naming the folder is the only interactive part of this, so drive it: open the field, type
+// a new root with a trailing slash on it, save. What should come back is a stored value with
+// the slash gone and links rebuilt underneath it.
+clickByText("Change");
+await new Promise((r) => setTimeout(r, 10));
+typeIntoId("files-root", "/elsewhere/tree/");
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Save");
+await new Promise((r) => setTimeout(r, 20));
+const rootSaved = stored["chief.filesRoot"];
+const rehomed = findByClass(mainNode(), "art-path")
+  .map((p) => findByClass(p, "art-href")[0].href)
+  .includes("vscode://file/elsewhere/tree/notes/personas.md");
+
+// And with no folder named at all, the path is text. A link built on a guessed base opens a
+// "file not found" in the editor, which reads as the editor being broken.
+clickByText("Change");
+await new Promise((r) => setTimeout(r, 10));
+typeIntoId("files-root", "");
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Save");
+await new Promise((r) => setTimeout(r, 20));
+const unresolved = findByClass(mainNode(), "art-path")
+  .map((p) => findByClass(p, "art-href")[0])
+  .find((a) => a.textContent === "notes/personas.md");
+const unlinked = !!unresolved && unresolved.tag === "span" && !unresolved.href;
+// The copy button does not go away with the link: what the harness reported is still worth
+// having on the clipboard.
+const stillCopyable = countClass(mainNode(), "art-copy") === 2;
+
 if (NO_TEMPLATES) {
   // A page newer than its server must still work: one 404 on an extension endpoint should
   // not leave every screen on "Loading…".
@@ -320,6 +400,9 @@ console.log("workflow dialog opened:", dialogOpened);
 console.log(`draft graph: ${draftNodes} nodes, ${draftGates} loop gates, ${draftEdgeLabels} branch labels`);
 console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
+console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
+console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`folder:      saved=${rootSaved}, relinked=${rehomed}, unset-is-text=${unlinked}`);
 
 const expected = [
   "Workflows", "Workflow detail", "Workflow detail", "Workflows", "Workflow detail",
@@ -345,6 +428,18 @@ const ok =
   // The plan says a person decides this one, and the graph says so without being asked.
   waitingNodes === 1 &&
   asked &&
+  // Two artifacts, two acted-on paths, a copy control on each.
+  paths.length === 2 &&
+  copyButtons === 2 &&
+  hrefs.includes("vscode://file/Users/you/work/songs/notes/personas.md") &&
+  hrefs.includes("https://example.com/pr/1") &&
+  copied === "/Users/you/work/songs/notes/personas.md" &&
+  // Changing the folder: stored without its trailing slash, and the links follow it.
+  rootSaved === "/elsewhere/tree" &&
+  rehomed &&
+  // Clearing it: readable text, no link, copy button still there.
+  unlinked &&
+  stillCopyable &&
   // What was typed is what was sent, addressed by state path, with the decision on it.
   !!decision &&
   decision.url.endsWith("/resolutions/e") &&

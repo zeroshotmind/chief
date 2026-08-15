@@ -315,6 +315,174 @@ const dot = (color, pulse, size) =>
     style: { background: color, ...(size ? { width: size, height: size } : {}) },
   });
 
+// ── local files ──────────────────────────────────────────────────────────────────────────
+
+/** An artifact is a reference, not a blob (REQ-46), and a harness reporting one names the
+    file the way it saw it — `songs/personas.md`, relative to wherever it was working. Chief
+    never recorded that directory and should not start: the plan is not a checkout, and a
+    field for it would be one more thing on the harness-facing surface that is wrong the
+    moment the tree moves.
+
+    So the base lives in the browser, next to the person who knows it. It is per-machine
+    state about *this* reader — the same run opened on another machine resolves against that
+    machine's copy — which is exactly what localStorage is for, and it means an old run's
+    paths come alive the moment a folder is named, rather than only runs recorded after some
+    schema change. */
+const ROOT_KEY = "chief.filesRoot";
+
+/** One editor, named once. Not a preference and not a picker: on the machine Chief runs on
+    there is a default editor for source, and offering a dropdown would be asking the reader
+    to configure something they will answer the same way every time. `cursor://file/` is the
+    same shape if that is the one you want; JetBrains is not (`idea://open?file=`). */
+const EDITOR_SCHEME = "vscode://file";
+
+// localStorage throws outright in a few configurations (and simply is not there under the
+// smoke harness's stub DOM), and none of this is worth a broken render.
+const readRoot = () => {
+  try {
+    return localStorage.getItem(ROOT_KEY) || "";
+  } catch {
+    return "";
+  }
+};
+
+const writeRoot = (value) => {
+  try {
+    if (value) localStorage.setItem(ROOT_KEY, value);
+    else localStorage.removeItem(ROOT_KEY);
+  } catch {
+    /* the path still resolves for this session; it just will not survive a reload */
+  }
+};
+
+/** Anything with a scheme is somewhere else — http, but also mailto: or a git+ssh remote. */
+const isUrlRef = (ref) => /^[a-z][a-z0-9+.-]*:/i.test(ref || "");
+const isFileRef = (ref) => !!ref && !isUrlRef(ref);
+
+/** The absolute path a ref names, or null when it is relative and no folder has been set.
+    A guess would be worse than nothing here: a `vscode://` link built on the wrong base
+    opens a "file not found" in the editor, which reads as the editor failing. */
+function absolutePath(ref) {
+  if (!isFileRef(ref)) return null;
+  if (ref.startsWith("/")) return ref;
+  // `~` is the shell's, not the browser's: there is no way to learn $HOME from here, and
+  // joining it onto the project folder would build a path with a literal tilde in it. Left
+  // unlinked and copyable, which is the same answer as a relative ref with no folder set.
+  if (ref.startsWith("~")) return null;
+  const root = (state.filesRoot || "").replace(/\/+$/, "");
+  return root ? `${root}/${ref}` : null;
+}
+
+// encodeURI, not encodeURIComponent — the separators are the point.
+const editorHref = (absolute) => `${EDITOR_SCHEME}${encodeURI(absolute)}`;
+
+/** Put `text` on the clipboard and say so on the button that was pressed.
+    The acknowledgement is written straight onto the node rather than through setState: it is
+    a fact about one button for one second, and routing it through a full re-render would
+    tear down every field being typed into elsewhere on the page. */
+function copyPath(button, text) {
+  const done = () => {
+    button.textContent = "✓";
+    button.classList.add("ok");
+    setTimeout(() => {
+      button.textContent = "⧉";
+      button.classList.remove("ok");
+    }, 1200);
+  };
+  // Needs a secure context. http://localhost counts, so the default binding is fine; a
+  // Chief served over plain http on a LAN address is not, hence the fallback message.
+  try {
+    navigator.clipboard.writeText(text).then(done, () => {
+      button.textContent = "⌫";
+    });
+  } catch {
+    button.textContent = "⌫";
+  }
+}
+
+/** Where an artifact is, as a row you can act on: open it, or take the path elsewhere. */
+function pathRow(ref) {
+  if (!ref) return null;
+  const web = /^https?:/i.test(ref);
+  const absolute = absolutePath(ref);
+  // What gets copied is the most useful form of the reference, which for a relative path
+  // means the resolved one — that is the version that means something in a terminal. With
+  // no folder set there is still the raw ref, and handing that over beats handing over
+  // nothing, so the copy control is unconditional.
+  const target = web ? ref : absolute || ref;
+
+  return el(
+    "span",
+    { class: "art-path" },
+    web
+      ? el("a", { class: "art-href", text: ref, href: ref, target: "_blank", rel: "noreferrer" })
+      : absolute
+        ? el("a", {
+            class: "art-href", text: ref, href: editorHref(absolute), title: `Open ${absolute}`,
+          })
+        // Either no folder has been named, or the ref carries a scheme Chief cannot open.
+        // A `vscode://` link built on a guessed base would open a "file not found" in the
+        // editor, which reads as the editor being broken rather than the base being unset.
+        : el("span", {
+            class: "art-href", text: ref,
+            title: isFileRef(ref) ? "Set a project folder to open this" : ref,
+          }),
+    el("button", {
+      // Say which path is on offer. A relative one is a real answer — it is what the
+      // harness reported — but handing it over without saying so reads as the resolution
+      // having silently failed, so the unset case names itself.
+      class: absolute || web ? "art-copy" : "art-copy partial",
+      text: "⧉",
+      title: absolute || web ? `Copy ${target}` : `Copy ${target} — no project folder set`,
+      onClick: (e) => copyPath(e.currentTarget, target),
+    }),
+  );
+}
+
+/** The control that names the base, shown with the artifacts rather than parked in a
+    settings screen: it only matters when you are looking at a path that needs it. */
+function rootRow(arts) {
+  if (!arts.some(({ artifact }) => isFileRef(artifact.ref) && !artifact.ref.startsWith("/"))) {
+    return null;
+  }
+  if (state.rootEditing) {
+    return el(
+      "div",
+      { class: "art-root" },
+      el("input", {
+        class: "input", id: "files-root", type: "text", value: state.rootDraft,
+        placeholder: "/Users/you/projects/thing",
+        onInput: (e) => setState({ rootDraft: e.target.value }),
+        onKeyDown: (e) => e.key === "Enter" && saveRoot(),
+      }),
+      el("button", { class: "btn btn-primary btn-sm", text: "Save", onClick: saveRoot }),
+      el("button", {
+        class: "btn btn-secondary btn-sm", text: "Cancel",
+        onClick: () => setState({ rootEditing: false }),
+      }),
+    );
+  }
+  return el(
+    "div",
+    { class: "art-root" },
+    el("span", {
+      class: "art-root-label",
+      text: state.filesRoot ? "Project folder" : "Set a project folder to open these",
+    }),
+    state.filesRoot && el("span", { class: "mono art-root-path", text: state.filesRoot }),
+    el("button", {
+      class: "btn btn-secondary btn-sm", text: state.filesRoot ? "Change" : "Set…",
+      onClick: () => setState({ rootEditing: true, rootDraft: state.filesRoot }),
+    }),
+  );
+}
+
+function saveRoot() {
+  const value = (state.rootDraft || "").trim().replace(/\/+$/, "");
+  writeRoot(value);
+  setState({ filesRoot: value, rootEditing: false });
+}
+
 // ── artifacts ────────────────────────────────────────────────────────────────────────────
 
 const ICONS = {
@@ -395,17 +563,13 @@ function artifactCard(artifact, label) {
         data.duration && el("span", { class: "art-meta", text: data.duration }),
       ),
     );
-  } else if (artifact.ref) {
-    const external = /^https?:/.test(artifact.ref);
-    body.push(
-      external
-        ? el("a", {
-            class: "art-href", text: artifact.ref, href: artifact.ref,
-            target: "_blank", rel: "noreferrer",
-          })
-        : el("span", { class: "art-href", text: artifact.ref }),
-    );
   }
+
+  // Deliberately outside the chain above: a ref is a ref whatever the type made of it, so
+  // an image and a markdown file both get the same row. It used to be the chain's last
+  // branch, which meant the one artifact that rendered a preview was the one whose location
+  // you could not read.
+  const path = pathRow(artifact.ref);
 
   return el(
     "section",
@@ -418,6 +582,7 @@ function artifactCard(artifact, label) {
       el("span", { class: "art-meta", text: meta }),
     ),
     body,
+    path,
   );
 }
 
@@ -556,6 +721,12 @@ const state = {
   // Half-typed checkpoint answers, keyed by run+path. In state for the same reason the list
   // search box is: the poll rebuilds the DOM, and anything held only in the DOM is lost.
   cpDrafts: {},
+  // What a relative artifact ref is relative to, and the half-typed version of it while it
+  // is being changed. Read from localStorage once, here, so every render is a plain field
+  // lookup rather than a trip through storage.
+  filesRoot: readRoot(),
+  rootEditing: false,
+  rootDraft: "",
   detail: null, // { runId, state, def, amendments }
   dialog: null,
   error: null,
@@ -1538,6 +1709,7 @@ function inspector(panel) {
     ),
     panel.artsLabel &&
       el("span", { class: "section-label", style: { padding: "0 var(--space-1)" }, text: panel.artsLabel }),
+    panel.artsLabel && rootRow(panel.arts || []),
     (panel.arts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
   );
 }
