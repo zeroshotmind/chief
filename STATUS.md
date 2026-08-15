@@ -165,7 +165,7 @@ performs. Config and audit are REST-only by design — the reasoning is in MCP-S
 
 What shipped:
 
-- `src/chief/mcp_server.py` — 17 tools over the same `Chief` instance the REST app uses, so
+- `src/chief/mcp_server.py` — 24 tools over the same `Chief` instance the REST app uses, so
   both transports share one `Store`, one connection and one lock.
 - **HTTP, mounted at `/mcp` on the existing app.** Not stdio: a stdio server is spawned as a
   child process by its client, which would mean a second process on the same SQLite file,
@@ -404,5 +404,5 @@ GET    /v1/audit                                           (extension)
 
 27 routes, also served without the `/v1` prefix. Full schemas at `/docs` when running.
 
-The MCP surface is not in this list by design: it is 17 tools over these same service
+The MCP surface is not in this list by design: it is 24 tools over these same service
 methods, mounted at `/mcp`. See MCP-SURFACE.md.

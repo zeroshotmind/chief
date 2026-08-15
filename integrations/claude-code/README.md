@@ -2,11 +2,12 @@
 
 Two pieces, doing different jobs:
 
-- **The MCP server** is the capability surface — 17 tools (REQ-2). Without it Claude Code
+- **The MCP server** is the capability surface — 24 tools (REQ-2). Without it Claude Code
   cannot reach Chief at all.
 - **`SKILL.md`** is the protocol — plan first, summarise every update, propose an amendment
-  rather than improvising, wait for the human. No tool description conveys that, and it is
-  what makes the tracking worth having.
+  rather than improvising, wait for the human, read the comments a person left on the
+  artifacts. No tool description conveys that, and it is what makes the tracking worth
+  having.
 
 ## 1. Run Chief
 
@@ -47,7 +48,21 @@ For one repo rather than globally, put it at `.claude/skills/chief/SKILL.md` in 
 
 ## What Claude cannot do
 
-`GET/PUT /config/approval-policy` and `GET /audit` are REST-only, by design. A session that
-can edit the policy governing its own amendments can approve its own work, which is the
-loop REQ-13 exists to prevent. Both remain fully available in the web UI at `/ui` and over
-REST — the reasoning is in MCP-SURFACE.md.
+Four things are REST-only, by design:
+
+- **`GET/PUT /config/approval-policy`** — a session that can edit the policy governing its
+  own amendments can approve its own work, which is the loop REQ-13 exists to prevent.
+- **`GET /audit`** — no session behaviour is driven by reading it. Observer surface.
+- **`POST /templates/{id}/archive`** — lifecycle administration; nothing depends on it.
+- **`POST /runs/{id}/artifacts/{id}/comments`** — a comment is what a person says *to* a
+  harness about its output. A harness writing its own would be annotating the work with its
+  own opinion of it, which is what the step summary is for. Claude *reads* comments freely:
+  they ride on the artifacts in the state `get_run` already returns.
+
+`approve_workflow`, `approve_amendment`, `reject_amendment` and `resolve_checkpoint` are
+tools, but they are human decisions — the skill says to call them only when you have been
+asked to in that turn. Chief records which transport each decision arrived on, so an
+approval made by an agent is distinguishable afterwards from one made in the UI.
+
+All of these remain fully available in the web UI at `/ui` and over REST — the reasoning is
+in MCP-SURFACE.md.
