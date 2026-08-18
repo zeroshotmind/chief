@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .review import ReviewNote
+
 StepType = Literal["task", "loop", "parallel", "checkpoint"]
 WorkflowStatus = Literal["draft", "approved", "archived"]
 WorkflowSource = Literal["import", "generated"]
@@ -121,6 +123,14 @@ class WorkflowDefinition(BaseModel):
     # store: a plan being validated, a template's steps, a run's effective definition.
     created_at: str | None = None
     updated_at: str | None = None
+    # What a reviewer said about this plan. Server-owned in the same way as the timestamps
+    # above: kept in its own table, attached on the way out of ``get_workflow``, and absent
+    # from the stored document so a revision cannot overwrite the feedback that asked for
+    # it. A harness therefore reads notes without a second call and cannot write one —
+    # neither WorkflowCreate nor WorkflowRevise declares the field, and both forbid extras.
+    # Empty on any definition that did not come through that read: a version snapshot, a
+    # plan being validated, a run's effective definition.
+    review_notes: list[ReviewNote] = Field(default_factory=list)
 
     def step(self, step_id: str) -> WorkflowStep | None:
         for s in self.steps:

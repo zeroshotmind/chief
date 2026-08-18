@@ -22,6 +22,7 @@ from .definition import (
     WorkflowStep,
 )
 from .policy import ApprovalPolicy, ApprovalRule
+from .review import ReviewNote, ReviewNoteCreate, ReviewNoteDecision
 from .runstate import (
     HISTORY_LOCKED,
     TERMINAL_OK,
@@ -77,6 +78,9 @@ __all__ = [
     "InstanceUpdate",
     "PatchOp",
     "PatchOperation",
+    "ReviewNote",
+    "ReviewNoteCreate",
+    "ReviewNoteDecision",
     "TemplateOrigin",
     "TemplateCreate",
     "TemplateFromWorkflow",

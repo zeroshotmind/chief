@@ -366,3 +366,54 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     artifact, whereas the path is not something the reader holds — both UIs read artifacts
     as one flat list of everything a run produced, and requiring a path would mean carrying
     one back through that flattening for no gain.
+
+31. **Review notes on a plan — the same channel, one step earlier.** #30 gave a person
+    somewhere to say something about work that is done. A draft is the other moment worth
+    saying something at, and it had the same gap: a reviewer looking at a plan they are not
+    ready to approve could reject it, archive it, or type the reason into a chat window
+    Chief cannot see. None of those leaves the harness anything to revise against.
+
+    A `ReviewNote` (`note_id`, `step_id`, `step_goal`, `body`, `author`, `created_at`,
+    `resolved`, `resolved_at`, `resolved_by`, `via`) hangs off the workflow and rides on the
+    document `get_workflow` already returns, so the harness reads feedback with no new call
+    and the MCP surface again gains no tool. `step_id` is nullable: some feedback is about
+    the plan's shape and belongs to no node.
+
+    Three things are load-bearing.
+
+    **The note is not stored on the step, or anywhere in the workflow document.**
+    `revise_draft` replaces title and steps wholesale — that is what makes it a revision
+    rather than a patch — so a note kept inside the document would be destroyed by the very
+    revision it asked for, leaving the reviewer nothing to check the new plan against. The
+    notes live in their own table and are attached on the way out, exactly as `created_at`
+    and `updated_at` are attached from the row's columns. That also settles the
+    dual-shape trap #30 had to guard against by hand: `WorkflowCreate` and `WorkflowRevise`
+    are separate models that never declare the field, so `extra="forbid"` refuses a harness
+    submitting notes with no service-layer check needed.
+
+    **A note whose step is gone is orphaned, not dropped and not auto-resolved.** Step ids
+    are permanent under amendment (REQ-35), but a *draft's* ids are only as stable as the
+    harness chooses to make them — a revision may rename, split or remove a step a note was
+    left on. Silently discarding the note loses the feedback; silently resolving it claims
+    the feedback was addressed, which is the thing nobody but the reviewer can say. The step
+    vanishing may mean the note was acted on, or may mean the plan was restructured around
+    it. So the note stays open, flagged, and carries `step_goal` — the goal as it read when
+    the note was written — so an orphan says what it was about rather than naming a
+    meaningless id. Orphaning is derived against the plan as it stands rather than stored: a
+    later revision can bring the id back, and a stored flag would then be a lie.
+
+    In the UI a note is a comment thread on a node: selecting a step opens its thread in the
+    inspector beside the graph, and the node carries a count of what is open. The plan's own
+    thread is the panel with nothing selected — which is also where orphans go, since the
+    node they were left on no longer exists to open them from. It needs a button of its own
+    beside Approve: "nothing selected" is true when you arrive and false from your first
+    click onwards, so a thread reachable only in that state reads as one that disappeared. The first design put all of
+    it in one card with a target dropdown, which was a form for filing feedback rather than
+    a place to say something about the thing you are looking at.
+
+    **Resolving is REST-only, like writing.** A session that can close the feedback it was
+    given can decide its own work was accepted, which is the loop REQ-13 exists to prevent.
+    The harness reads the notes and revises the plan; a person judges whether that answered
+    them. Nothing here is enforced, in either direction — a draft with open notes can still
+    be approved, and a revision that orphans a note is not refused. Chief records; the
+    decision stays with the person.

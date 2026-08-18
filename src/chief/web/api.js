@@ -61,6 +61,23 @@ export const resolveCheckpoint = (runId, path, body) =>
 export const commentOnArtifact = (runId, artifactId, body) =>
   post(`/runs/${runId}/artifacts/${artifactId}/comments`, body);
 
+/** Feedback on a plan, for whoever revises it. The other direction of the comment channel:
+    a comment is said about work that is done, a note about work that has not started.
+
+    `step_id` is optional — omitted, the note is about the plan as a whole. Both writing a
+    note and closing one are REST-only: a harness reads them off the workflow document and
+    revises the plan, and a person judges whether that answered them. */
+export const listReviewNotes = (workflowId) => request(`/workflows/${workflowId}/notes`);
+
+export const addReviewNote = (workflowId, body) => post(`/workflows/${workflowId}/notes`, body);
+
+export const decideReviewNote = (workflowId, noteId, resolved) =>
+  request(`/workflows/${workflowId}/notes/${noteId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolved, resolved_by: "human" }),
+  });
+
 /** Templates: the reusable plan. A workflow is single-use, so reuse lives here. */
 export const listTemplates = () => request("/templates");
 export const archiveTemplate = (templateId) => post(`/templates/${templateId}/archive`, {});

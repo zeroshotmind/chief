@@ -108,6 +108,14 @@ const TEMPLATES = [
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   },
 ];
+// Review notes on the draft: one open on a step that is still there, one whose step the
+// plan has since lost, and one already dealt with. The third is what the resolved group is
+// for, and the second is the case worth drawing — a note that outlived its node.
+const NOTES = [
+  { note_id: "rvw_1", workflow_id: "wf_draft", step_id: "a", step_goal: "first", body: "start from the brief, not the outline", author: "roy", created_at: new Date().toISOString(), resolved: false, resolved_at: null, resolved_by: null, via: "rest", orphaned: false },
+  { note_id: "rvw_2", workflow_id: "wf_draft", step_id: "zz", step_goal: "the step that went away", body: "this whole stage is premature", author: "roy", created_at: new Date().toISOString(), resolved: false, resolved_at: null, resolved_by: null, via: "rest", orphaned: true },
+  { note_id: "rvw_3", workflow_id: "wf_draft", step_id: null, step_goal: null, body: "shape is right now", author: "roy", created_at: new Date().toISOString(), resolved: true, resolved_at: new Date().toISOString(), resolved_by: "roy", via: "rest", orphaned: false },
+];
 const AUDIT = [
   { seq: 1, at: new Date().toISOString(), event: "workflow.created", workflow_id: "wf_draft", run_id: null, amendment_id: null, detail: { via: "rest" } },
   { seq: 2, at: new Date().toISOString(), event: "workflow.approved", workflow_id: "wf_ok", run_id: null, amendment_id: null, detail: { decided_by: "roy", reason: "scope is right", via: "rest" } },
@@ -121,12 +129,17 @@ globalThis.NO_TEMPLATES = process.env.NO_TEMPLATES === "1";
 const posts = [];
 
 globalThis.fetch = async (url, options) => {
-  if (options && options.method === "POST") posts.push({ url, body: JSON.parse(options.body) });
+  // Every write, not only the POSTs: resolving a note is a PATCH, and a smoke test that
+  // only watched POSTs would call it green without ever seeing the request.
+  if (options && options.body) {
+    posts.push({ url, method: options.method, body: JSON.parse(options.body) });
+  }
   if (NO_TEMPLATES && url.endsWith("/templates")) {
     return { ok: false, status: 404, json: async () => ({ error: { code: "not_found" } }) };
   }
   const body =
-    url.includes("/audit") ? AUDIT
+    url.includes("/notes") ? NOTES
+    : url.includes("/audit") ? AUDIT
     : url.endsWith("/templates") ? TEMPLATES
     : url.endsWith("/workflows") ? WORKFLOWS
     : url.endsWith("/runs") ? [RUN]
@@ -225,6 +238,63 @@ const draftGates = countClass(mainNode(), "gate");
 // The gate is a decision: its two arrows are labelled with the exit condition and its
 // negation, sourced from the loop's exit_when.
 const draftEdgeLabels = countClass(mainNode(), "gate-edge-label");
+// Feedback on the draft. It hangs off the node it is about, the way a comment hangs off the
+// post it is under — so nothing is on screen until a node is clicked.
+// The badge says which nodes have something to read without opening every one.
+const noteBadges = countClass(mainNode(), "node-notes");
+
+// The plan-level thread is the panel you get with nothing selected: the orphan lives here
+// too, because the step it was left on is gone and there is no node left to open it from.
+const planNotes = countClass(mainNode(), "note");
+const orphanShown = JSON.stringify(mainNode()).includes("was on zz");
+
+// Click the step that has a note. Its thread comes up beside it, in the inspector.
+clickByText("first");
+await new Promise((r) => setTimeout(r, 20));
+const stepNotes = countClass(mainNode(), "note");
+const stepNoteShown = JSON.stringify(mainNode()).includes("start from the brief");
+
+// Leaving one: the box is on the node, so there is nothing to say what it is about.
+clickByText("＋ another note");
+await new Promise((r) => setTimeout(r, 10));
+// A note is a sentence or two, so the box is a resizable textarea rather than a one-line
+// field. Asserted by tag: a silent revert to <input> would otherwise keep this test green.
+const box = [...handlers].reverse().find((h) => h.type === "input" && h.node.id === "note-a");
+const boxIsTextarea = !!box && box.node.tag === "textarea";
+typeIntoId("note-a", "check it against last quarter's numbers");
+await new Promise((r) => setTimeout(r, 10));
+// And Enter puts in a newline instead of sending, which is the point of the change. Only
+// the modifier submits.
+const before = posts.length;
+const keys = [...handlers].reverse().find((h) => h.type === "keydown" && h.node.id === "note-a");
+keys.fn({ key: "Enter" });
+await new Promise((r) => setTimeout(r, 20));
+const plainEnterHeld = posts.length === before;
+clickByText("Add");
+await new Promise((r) => setTimeout(r, 40));
+const noteSent = posts.find((x) => x.url.includes("/notes") && x.method === "POST");
+
+// Closing one is the human's, not the harness's — so it has to be here, in front of them.
+// This is the step's own note, because the step's thread is what is open.
+clickByText("resolve");
+await new Promise((r) => setTimeout(r, 40));
+const noteResolved = posts.find((x) => x.method === "PATCH");
+
+// Getting back to the plan's own thread with a node still selected. This is the whole
+// reason the button exists: the plan panel is what you get with nothing selected, which is
+// true when you arrive and false the moment you click a node — so without a way back,
+// feedback about the plan reads as having disappeared after the first click.
+clickByText("Feedback on the plan");
+await new Promise((r) => setTimeout(r, 20));
+const planReachable = JSON.stringify(mainNode()).includes("Feedback on the plan");
+const planComposeBack = findByClass(mainNode(), "note-input").length === 0 &&
+  JSON.stringify(mainNode()).includes("＋ another note");
+const orphanBack = JSON.stringify(mainNode()).includes("was on zz");
+
+clickByText("resolved (1)");
+await new Promise((r) => setTimeout(r, 10));
+const resolvedShown = JSON.stringify(mainNode()).includes("shape is right now");
+
 clickByText("Approve");
 await new Promise((r) => setTimeout(r, 20));
 record("approve dialog");
@@ -414,6 +484,9 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`             plan-reachable=${planReachable}, orphan-still-there=${orphanBack}`);
+console.log(`             box=${boxIsTextarea ? "textarea" : "INPUT"}, plain-enter-held=${plainEnterHeld}`);
+console.log(`notes:       plan=${planNotes} (orphan=${orphanShown}), step=${stepNotes}, badges=${noteBadges}, sent=${JSON.stringify(noteSent && noteSent.body)}, resolved=${JSON.stringify(noteResolved && noteResolved.body)}`);
 console.log(`comments:    shown=${commentShown}, sent=${JSON.stringify(comment && comment.body)}`);
 console.log(`folder:      saved=${rootSaved}, relinked=${rehomed}, unset-is-text=${unlinked}`);
 
@@ -453,6 +526,32 @@ const ok =
   // Clearing it: readable text, no link, copy button still there.
   unlinked &&
   stillCopyable &&
+  // Notes hang off nodes. Nothing selected shows the plan thread — which here is the
+  // orphan, whose step no node can stand in for. The plan-level note that is already
+  // resolved stays folded away until asked for.
+  planNotes === 1 &&
+  orphanShown &&
+  noteBadges === 1 &&
+  resolvedShown &&
+  // Selecting the step that has one shows that one, and only that one.
+  stepNotes === 1 &&
+  stepNoteShown &&
+  boxIsTextarea &&
+  plainEnterHeld &&
+  // The plan's thread is reachable with a node selected, and still carries the orphan.
+  planReachable &&
+  planComposeBack &&
+  orphanBack &&
+  // A new note goes out against the node whose thread it was typed into.
+  !!noteSent &&
+  noteSent.url.endsWith("/workflows/wf_draft/notes") &&
+  noteSent.body.step_id === "a" &&
+  noteSent.body.body === "check it against last quarter's numbers" &&
+  noteSent.body.author === "human" &&
+  // And closing one is a write from this page, not something the harness did.
+  !!noteResolved &&
+  noteResolved.url.endsWith("/workflows/wf_draft/notes/rvw_1") &&
+  noteResolved.body.resolved === true &&
   // Comments: the existing one is read back, and a new one goes out by artifact id.
   commentShown &&
   !!comment &&

@@ -29,8 +29,8 @@ Status vocabulary:
 
 | REQ | Requirement | Status | Where / note |
 |---|---|---|---|
-| 1 | REST API for all core operations | Built | 35 routes under `/v1`; `api/routes.py` |
-| 2 | MCP interface covering the same operations | Built | 24 tools, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
+| 1 | REST API for all core operations | Built | 42 routes under `/v1`; `api/routes.py` |
+| 2 | MCP interface covering the same operations | Built | 24 tools against 42 routes, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
 | 3 | Not coupled to any agentic framework | Built | Plain REST + JSON; `harness` is an open string, not an enum |
 | 4 | All functionality reachable through the API; nothing UI-exclusive | Built | Invariants live in `domain/service.py`, not in route handlers, which is why the MCP surface inherited them unchanged rather than reimplementing them. Asserted, not just claimed: `test_transport_parity.py` |
 
@@ -156,8 +156,8 @@ enforced there rather than in the route handlers, specifically so a second trans
 inherit them unchanged. It did: `src/chief/mcp_server.py` holds no logic, only the mapping.
 
 **The tool list is reconciled in MCP-SURFACE.md**, which supersedes contract §3 and is the
-source for the §3 rewrite the doc still needs. Seventeen tools, not the 14 §3 names nor the
-27 routes: the seven update/instance routes are three path-parameterised service methods, so
+source for the §3 rewrite the doc still needs. Twenty-four tools, not the 14 §3 names nor the
+42 routes: the seven update/instance routes are three path-parameterised service methods, so
 `report_instance_body_step_update` disappears into `report_step_update`; and the one-to-one
 correspondence rule is replaced by a soundness rule (every tool resolves to a method a REST
 route also reaches) plus a coverage rule over the operations an agent session legitimately
@@ -372,9 +372,21 @@ section 1 is honest per-clause and was still no substitute.
 POST   /v1/workflows
 GET    /v1/workflows
 GET    /v1/workflows/{workflow_id}
+PUT    /v1/workflows/{workflow_id}                         (extension, revise a draft)
 GET    /v1/workflows/{workflow_id}/versions/{version}
 POST   /v1/workflows/{workflow_id}/approve
 POST   /v1/workflows/{workflow_id}/archive
+
+POST   /v1/workflows/{workflow_id}/notes                   (extension, review notes)
+GET    /v1/workflows/{workflow_id}/notes                   (extension, review notes)
+PATCH  /v1/workflows/{workflow_id}/notes/{note_id}         (extension, review notes)
+
+POST   /v1/templates                                       (extension, reuse)
+GET    /v1/templates                                       (extension, reuse)
+GET    /v1/templates/{template_id}                         (extension, reuse)
+POST   /v1/templates/{template_id}/archive                 (extension, reuse)
+POST   /v1/templates/{template_id}/workflows               (extension, reuse)
+POST   /v1/workflows/{workflow_id}/template                (extension, reuse)
 
 POST   /v1/workflows/{workflow_id}/runs
 GET    /v1/runs
@@ -388,6 +400,11 @@ POST   /v1/runs/{run_id}/state/{state_path}/updates        (extension, nesting)
 POST   /v1/runs/{run_id}/state/{state_path}/instances      (extension, nesting)
 POST   /v1/runs/{run_id}/instance-updates/{state_path}     (extension, nesting)
 
+POST   /v1/runs/{run_id}/steps/{step_id}/resolution        (extension, checkpoints)
+POST   /v1/runs/{run_id}/resolutions/{state_path}          (extension, checkpoints)
+
+POST   /v1/runs/{run_id}/artifacts/{artifact_id}/comments  (extension, artifact comments)
+
 POST   /v1/runs/{run_id}/amendments
 GET    /v1/runs/{run_id}/amendments
 GET    /v1/amendments                                      (extension, global inbox)
@@ -398,11 +415,15 @@ POST   /v1/amendments/{amendment_id}/withdraw
 
 GET    /v1/config/approval-policy
 PUT    /v1/config/approval-policy
+GET    /v1/config/workflow-approval-policy                 (extension, draft auto-approval)
+PUT    /v1/config/workflow-approval-policy                 (extension, draft auto-approval)
 
 GET    /v1/audit                                           (extension)
 ```
 
-27 routes, also served without the `/v1` prefix. Full schemas at `/docs` when running.
+42 routes, also served without the `/v1` prefix; `/healthz` is not counted here. Full
+schemas at `/docs` when running. The count is asserted against the router in
+`tests/test_transport_parity.py` — this list went stale twice before that guard existed.
 
 The MCP surface is not in this list by design: it is 24 tools over these same service
 methods, mounted at `/mcp`. See MCP-SURFACE.md.

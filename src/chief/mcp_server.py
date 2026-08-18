@@ -1,12 +1,14 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Twenty-four tools against 38 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Twenty-four tools against 42 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
-and the approval-policy config, the audit query and artifact comments are deliberately
-REST-only — a session that can edit the policy governing its own approvals can approve its
-own work, no session behaviour is driven by reading the audit log, and a comment is what a
-person says *to* a harness, which a harness writing its own would make meaningless. Comments
-are readable here: they ride on the artifacts in the state ``get_run`` already returns.
+and the approval-policy config, the audit query, artifact comments and draft review notes
+are deliberately REST-only — a session that can edit the policy governing its own approvals
+can approve its own work, no session behaviour is driven by reading the audit log, and both
+comment channels run one way: they are what a person says *to* a harness, which a harness
+writing or closing its own would make meaningless. Both are readable here, and neither
+needs a call of its own: comments ride on the artifacts in the state ``get_run`` returns,
+review notes on the plan ``get_workflow`` returns.
 
 Tool arguments and results are the REST bodies — the same pydantic models, not a parallel
 set of shapes. The one exception is ``get_run``, which folds two routes into one tool and so
@@ -70,6 +72,12 @@ reached it — the run blocks there — then wait for their answer rather than d
 Artifacts in a run's state may carry `comments`: things a person said about that output,
 after the fact. Read them before building on the artifact they hang off — they are how you
 find out a draft was rejected or a file is stale without being told again.
+
+A workflow carries `review_notes` the same way: feedback a reviewer left on the draft while
+deciding whether to approve it, each on a step or on the plan as a whole. get_workflow before
+revise_draft, address every note with `resolved: false`, and say in the revision's reason
+which note each change answers. Marking one resolved is theirs, not yours — there is no tool
+for it, and there is none for writing a note either.
 """
 
 # Coverage under MCP-SURFACE.md 1 is asserted against this list: a tool exists for every

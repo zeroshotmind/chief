@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 35 REST routes and requires them to correspond one-to-one. This doc
+against what is now 42 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by
@@ -170,6 +170,9 @@ person does, and no session behaviour depends on it.
 | `GET/PUT /config/approval-policy` | Self-approval loop — §1. |
 | `GET /audit` | Observer surface — §1. |
 | `POST /runs/{id}/artifacts/{id}/comments` | A comment is said *to* a harness — §1. Readable through `get_run`. |
+| `POST /workflows/{id}/notes` | Review feedback is said *to* a harness, like a comment. Readable through `get_workflow`. |
+| `GET /workflows/{id}/notes` | Same data the workflow document already carries; a second way to fetch it would be a tool that buys nothing. |
+| `PATCH /workflows/{id}/notes/{note_id}` | Closing the feedback you were given is deciding your own work was accepted — the loop §1 is about. |
 
 These remain fully reachable over REST, so REQ-4 holds: the *union* of transports is not
 narrowed, only the agent-facing subset.

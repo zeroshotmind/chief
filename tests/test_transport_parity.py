@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import json
 import re
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -38,6 +39,13 @@ REST_ONLY = {
     "get_approval_policy",  # editing the policy that governs your own amendments is
     "put_approval_policy",  # self-approval — the loop REQ-13 exists to prevent
     "audit_entries",  # observer surface; no session behaviour is driven by reading it
+    # Both comment channels run one way. A harness reads them — they ride on the documents
+    # `get_run` and `get_workflow` already return — and writes neither. A session that could
+    # write the feedback it was given, or close it, could tell itself its work was accepted.
+    "comment_on_artifact",
+    "add_review_note",
+    "list_review_notes",
+    "decide_review_note",
 }
 
 
@@ -111,6 +119,34 @@ def test_rest_only_operations_are_not_tools():
 def test_rest_only_operations_really_are_reachable_over_rest():
     """The exclusions narrow the agent-facing subset, not the API. REQ-4 turns on this."""
     assert REST_ONLY <= service_methods(routes)
+
+
+def test_the_documented_route_inventory_matches_the_router():
+    """STATUS.md's appendix lists every route, and the count appears in four places.
+
+    It has gone stale twice — templates and checkpoints were added without it moving, and
+    the number in `mcp_server`'s docstring drifted separately. Both are the kind of error
+    nobody notices by reading, so the router is the source and the docs are checked against
+    it. `/healthz` is excluded: it is a liveness probe, not an operation.
+    """
+    # One entry per method+path, which is what the appendix lists — several paths answer to
+    # two methods, so counting distinct paths gives a different (and previously documented)
+    # number. `/healthz` is excluded: it is a liveness probe, not an operation.
+    live = [
+        (method, route.path.replace(":path", ""))
+        for route in routes.router.routes
+        if route.path != "/healthz"
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"})
+    ]
+    inventory = Path("STATUS.md").read_text()
+    documented = set(re.findall(r"^(GET|PUT|POST|PATCH|DELETE)\s+/v1(\S+)", inventory, re.M))
+
+    assert documented == set(live), (
+        f"STATUS.md is missing {sorted(set(live) - documented)} "
+        f"and lists {sorted(documented - set(live))} that no longer exist"
+    )
+    for doc in (inventory, inspect.getsource(mcp_server), Path("MCP-SURFACE.md").read_text()):
+        assert f"{len(live)} routes" in doc or f"{len(live)} REST routes" in doc
 
 
 def test_every_tool_advertises_a_usable_schema(tools):

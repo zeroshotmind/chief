@@ -33,7 +33,8 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
   decideAmendment, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
-  commentOnArtifact, listAmendments, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
+  addReviewNote, commentOnArtifact, decideReviewNote, listAmendments, listReviewNotes, listRuns,
+  listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
 
 // ── colour and status vocabulary ─────────────────────────────────────────────────────────
@@ -793,6 +794,10 @@ const state = {
   templates: undefined, // undefined = not loaded yet, null = server has no templates
 
   workflowAudit: null, // { workflowId, entries }
+  // Review notes for the workflow on screen: { workflowId, notes }. Fetched per screen and
+  // cleared on the way out, like workflowAudit — a poll landing mid-navigation must not
+  // leave one plan's feedback attached to another's.
+  workflowNotes: null,
   selected: null, // "step:<id>" | "am:<id>" | "pam:<id>" | "none"
   runs: null, // null until the first load resolves
   workflows: null,
@@ -806,6 +811,12 @@ const state = {
   // Half-written artifact comments, keyed by artifact id, for the same reason cpDrafts
   // exists: the poll rebuilds the DOM and takes anything held only in it.
   cmtDrafts: {},
+  // Half-written review notes and which threads have their resolved history open, both
+  // keyed by what the note is about — a step id, or NOTE_PLAN. In state for the reason
+  // cmtDrafts is: the poll rebuilds the DOM every 15 seconds and takes anything held only
+  // in it, including the box you are typing into.
+  noteDrafts: {},
+  noteShow: {},
   // What a relative artifact ref is relative to, and the half-typed version of it while it
   // is being changed. Read from localStorage once, here, so every render is a plain field
   // lookup rather than a trip through storage.
@@ -864,7 +875,7 @@ function stateFromHash() {
   const id = raw && decodeURIComponent(raw);
   const blank = {
     runId: null, workflowId: null, templateId: null,
-    selected: null, detail: null, dialog: null, workflowAudit: null,
+    selected: null, detail: null, dialog: null, workflowAudit: null, workflowNotes: null,
   };
   const view = Object.keys(ROUTED).find((v) => ROUTE_KIND[v] === kind);
   if (view && id) return { ...blank, view, [ROUTED[view]]: id };
@@ -968,6 +979,10 @@ async function refresh() {
       state.view === "workflow" && state.workflowId
         ? { workflowId: state.workflowId, entries: await getWorkflowAudit(state.workflowId) }
         : null;
+    patch.workflowNotes =
+      state.view === "workflow" && state.workflowId
+        ? { workflowId: state.workflowId, notes: await listReviewNotes(state.workflowId) }
+        : null;
 
     // A workflow that is executing shows its execution: the same screen, further along. The
     // run carries the *effective* plan, which is the base plan plus any applied amendment,
@@ -1005,7 +1020,10 @@ function openTemplate(templateId) {
 }
 
 function openWorkflow(workflowId) {
-  setState({ view: "workflow", workflowId, selected: null, dialog: null, workflowAudit: null });
+  setState({
+    view: "workflow", workflowId, selected: null, dialog: null,
+    workflowAudit: null, workflowNotes: null, noteDrafts: {}, noteShow: {},
+  });
   refresh();
 }
 
@@ -1655,6 +1673,9 @@ function stepPanel(step, stepState, def) {
     : [];
 
   return {
+    // Which node this panel is about. The review-note thread hangs off it, the way a
+    // comment thread hangs off the post it is under.
+    stepId: step.id,
     kicker:
       step.type === "checkpoint"
         ? `Checkpoint · ${outcome ? outcome.decision : stepState.status}`
@@ -1791,6 +1812,10 @@ function inspector(panel) {
           el("button", { class: "btn btn-primary btn-sm", text: "Approve…", onClick: panel.approve }),
           el("button", { class: "btn btn-secondary btn-sm", text: "Reject…", onClick: panel.reject }),
         ),
+      // The thread on this node, under everything the panel says about it. `noteWorkflow`
+      // is set only by the workflow screen, so the run and template screens — which share
+      // this inspector — render nothing here.
+      panel.noteWorkflow && noteBlock(panel.noteWorkflow, panel.stepId || null),
     ),
     panel.artsLabel &&
       el("span", { class: "section-label", style: { padding: "0 var(--space-1)" }, text: panel.artsLabel }),
@@ -2174,6 +2199,12 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
         }),
       ),
       artCount > 0 && el("span", { class: "node-arts", text: `⌗ ${artCount}` }),
+      // Feedback waiting on this node, so you can see which steps have something to read
+      // without opening every one of them. Click goes through to the node as usual — the
+      // thread is in the inspector the click opens.
+      !step.ghost &&
+        openNoteCount(step.id) > 0 &&
+        el("span", { class: "node-notes", text: `💬 ${openNoteCount(step.id)}` }),
       // The one node a person can act on from here. It says who it is waiting for, and the
       // inbox is where it gets answered — the graph shows the plan, it is not a form.
       step.type === "checkpoint" &&
@@ -2314,6 +2345,10 @@ function workflowDetailScreen() {
               class: "btn btn-primary btn-sm", text: "Approve…",
               onClick: () => openWorkflowDialog(workflow, "approve"),
             }),
+          // The way back to the plan's own thread. Without it, feedback about the plan is
+          // reachable only by having nothing selected — which is true when you arrive and
+          // false the moment you click a node, so it reads as having disappeared.
+          planNoteButton(workflow),
           el("button", {
             class: "btn btn-secondary btn-sm", text: draft ? "Discard…" : "Archive…",
             onClick: () => openWorkflowDialog(workflow, "archive"),
@@ -2368,9 +2403,233 @@ function workflowDetailScreen() {
       "div",
       { class: "graph-split" },
       viewport,
-      inspector(panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps))),
+      // Whichever panel is showing gets the workflow, and with it the note thread. With no
+      // node selected that is the plan overview, which is exactly the right home for a note
+      // about the plan rather than about any one step.
+      inspector(
+        Object.assign(
+          panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
+          { noteWorkflow: workflow },
+        ),
+      ),
     ),
   );
+}
+
+
+// ── review notes on a plan ───────────────────────────────────────────────────────────────
+//
+// Feedback left while deciding whether to approve a draft. It hangs off the node it is
+// about, in the inspector that opens when you click one — the same place, and the same
+// shape, as a comment on an artifact. A note about the plan rather than any one step goes
+// on the panel you get with nothing selected, which is the plan overview.
+//
+// The harness reads these off the workflow document and cannot write one or close one; see
+// MCP-SURFACE.md. Closing is here, in front of the person who asked for the change.
+
+/** The key a thread is filed under. A step id cannot be empty, so nothing collides. */
+const NOTE_PLAN = "";
+
+const notesHeld = (workflow) => {
+  const held = state.workflowNotes;
+  // Nothing while the fetch is in flight, and nothing on a screen that is not this
+  // workflow — a poll landing mid-navigation must not hang one plan's feedback off another.
+  if (!held || !workflow || held.workflowId !== workflow.workflow_id) return null;
+  return held.notes || [];
+};
+
+/** The notes on one node. Orphans are filed under the plan: their step is gone, so there is
+    no node left to open them from, and dropping them off the screen would quietly lose the
+    feedback the revision was supposed to answer. */
+function notesFor(workflow, stepId) {
+  const all = notesHeld(workflow);
+  if (!all) return null;
+  return stepId
+    ? all.filter((n) => n.step_id === stepId && !n.orphaned)
+    : all.filter((n) => !n.step_id || n.orphaned);
+}
+
+/** How many open notes a node is carrying, for the badge on the graph. Zero everywhere but
+    the workflow screen, because that is the only screen that loads them. */
+function openNoteCount(stepId) {
+  const held = state.workflowNotes;
+  if (!held) return 0;
+  return (held.notes || []).filter((n) => n.step_id === stepId && !n.resolved && !n.orphaned)
+    .length;
+}
+
+const noteDraftFor = (key) =>
+  state.noteDrafts[key] || { body: "", open: false, error: null };
+
+function setNoteDraft(key, patch) {
+  setState({ noteDrafts: { ...state.noteDrafts, [key]: { ...noteDraftFor(key), ...patch } } });
+}
+
+async function postNote(workflow, stepId) {
+  const key = stepId || NOTE_PLAN;
+  const body = noteDraftFor(key).body.trim();
+  if (!body) return;
+  try {
+    await addReviewNote(workflow.workflow_id, {
+      body,
+      step_id: stepId || null,
+      author: "human",
+    });
+    // Only on success — a refused note stays on screen to be corrected, exactly as a
+    // refused artifact comment does.
+    const rest = { ...state.noteDrafts };
+    delete rest[key];
+    setState({ noteDrafts: rest });
+    await refresh();
+  } catch (err) {
+    setNoteDraft(key, { error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+async function decideNote(workflow, note, resolved) {
+  try {
+    await decideReviewNote(workflow.workflow_id, note.note_id, resolved);
+    await refresh();
+  } catch (err) {
+    setState({ error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+/** One note, drawn like a comment because it is one. What it adds is the resolve control
+    and, on an orphan, what the note used to be about — by then the step id names nothing,
+    which is why the goal is copied onto the note when it is written. */
+function noteRow(workflow, note) {
+  const meta =
+    `${note.author}${note.created_at ? ` · ${relAgo(note.created_at)}` : ""}` +
+    (note.resolved
+      ? ` · resolved${note.resolved_by ? ` by ${note.resolved_by}` : ""}` +
+        (note.resolved_at ? ` ${relAgo(note.resolved_at)}` : "")
+      : "");
+  return el(
+    "div",
+    { class: note.resolved ? "note note-done" : "note" },
+    note.orphaned &&
+      el("span", {
+        class: "note-orphan",
+        text: `was on ${note.step_id}${note.step_goal ? `: ${note.step_goal}` : ""}`,
+        title:
+          "A revision removed that step. Whether that answered this note, or worked around " +
+          "it, is yours to say — so it stays open until you close it.",
+      }),
+    el("span", { class: "cmt-body", text: note.body }),
+    el(
+      "span",
+      { class: "note-foot" },
+      el("span", { class: "cmt-meta", text: meta }),
+      workflow.status !== "archived" &&
+        el("button", {
+          class: "cmt-add note-act",
+          text: note.resolved ? "reopen" : "resolve",
+          onClick: () => decideNote(workflow, note, !note.resolved),
+        }),
+    ),
+  );
+}
+
+/** The thread on one node: what is open, a way to see what has been dealt with, and a box.
+
+    Rendered inside the inspector, under whatever it is about. On a draft the box is always
+    offered, empty thread or not — that emptiness is the invitation, and it is where you say
+    what you want changed instead of typing it somewhere Chief cannot see. */
+function noteBlock(workflow, stepId) {
+  const notes = notesFor(workflow, stepId);
+  if (!notes) return null;
+
+  const key = stepId || NOTE_PLAN;
+  const open = notes.filter((n) => !n.resolved);
+  const done = notes.filter((n) => n.resolved);
+  const draft = workflow.status === "draft";
+  const writable = workflow.status !== "archived";
+  if (!draft && notes.length === 0) return null;
+
+  const showing = !!state.noteShow[key];
+  const label = stepId ? "Feedback on this step" : "Feedback on the plan";
+  return [
+    el(
+      "span",
+      { class: "section-label note-label" },
+      el("span", { style: { flex: "1" }, text: `${label}${open.length ? ` (${open.length})` : ""}` }),
+      done.length > 0 &&
+        el("button", {
+          class: "cmt-add note-act",
+          text: showing ? `hide resolved (${done.length})` : `resolved (${done.length})`,
+          onClick: () => setState({ noteShow: { ...state.noteShow, [key]: !showing } }),
+        }),
+    ),
+    open.map((note) => noteRow(workflow, note)),
+    showing && done.map((note) => noteRow(workflow, note)),
+    noteDraftFor(key).error && el("div", { class: "banner", text: noteDraftFor(key).error }),
+    writable &&
+      (noteDraftFor(key).open
+        ? el(
+            "div",
+            { class: "note-compose" },
+            // A textarea, not a one-line input: "this should be a loop, and the check
+            // belongs inside it rather than after" is a sentence, and a field that shows
+            // eight characters of it invites the kind of note nobody can act on. It starts
+            // three lines tall and the browser's own grip resizes it from there.
+            //
+            // The body is the element's text rather than a `value` attribute, which a
+            // textarea ignores. Safe because every render builds a fresh node — the draft
+            // lives in state, which is what survives the 15-second poll.
+            el("textarea", {
+              class: "note-input", id: `note-${key || "plan"}`, rows: "3",
+              text: noteDraftFor(key).body,
+              placeholder: stepId
+                ? "What should change about this step?"
+                : "What should change about the plan?",
+              onInput: (e) => setNoteDraft(key, { body: e.target.value, error: null }),
+              // Enter is a newline here, so sending needs the modifier. Same key as every
+              // other multi-line box a person types a message into.
+              onKeyDown: (e) =>
+                e.key === "Enter" && (e.metaKey || e.ctrlKey) && postNote(workflow, stepId),
+            }),
+            el(
+              "div",
+              { class: "note-compose-actions" },
+              el("button", {
+                class: "btn btn-primary btn-sm", text: "Add",
+                onClick: () => postNote(workflow, stepId),
+              }),
+              el("button", {
+                class: "btn btn-secondary btn-sm", text: "Cancel",
+                onClick: () => setNoteDraft(key, { open: false, body: "", error: null }),
+              }),
+            ),
+          )
+        : el("button", {
+            class: "cmt-add",
+            text: open.length || done.length ? "＋ another note" : "＋ leave a note",
+            onClick: () => setNoteDraft(key, { open: true }),
+          })),
+  ];
+}
+
+/** Open the plan's own thread — the panel you get with no node selected.
+
+    Shown as a count so it also answers "is there anything on the plan I have not read", and
+    marked as current while that panel is the one showing, so it reads as a place you are
+    rather than only a button you press. */
+function planNoteButton(workflow) {
+  const notes = notesFor(workflow, null);
+  if (!notes) return null;
+  const draft = workflow.status === "draft";
+  if (!draft && notes.length === 0) return null;
+
+  const open = notes.filter((n) => !n.resolved).length;
+  const here = !state.selected || state.selected === "none";
+  return el("button", {
+    class: here ? "btn btn-secondary btn-sm is-here" : "btn btn-ghost btn-sm",
+    style: { fontSize: "12px" },
+    text: `Feedback on the plan${open ? ` · ${open}` : ""}`,
+    title: "Notes about the plan as a whole, and any left on a step that has since gone",
+    onClick: () => setState({ selected: "none" }),
+  });
 }
 
 /** The decisions already taken on this workflow, read back out of the audit log.

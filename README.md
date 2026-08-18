@@ -112,7 +112,37 @@ will run it, ordered by explicit `depends_on` edges rather than by position.
 
 That plan arrives as a **draft**, and a draft cannot take a run until you approve it. This is
 the point of the tool. Read the graph in the UI, then approve it — or don't, and say what is
-wrong. Once approved the agent registers a run and reports each step as it starts and finishes.
+wrong (see below). Once approved the agent registers a run and reports each step as it starts
+and finishes.
+
+### Review notes — saying what is wrong with a draft
+
+A plan you are not ready to approve is the normal case, and "say what is wrong" should not mean
+typing it into a chat window Chief cannot see. Every workflow takes **review notes**.
+
+**Click a node in the graph and the thread for it opens beside the plan**, with a box to add
+to it — the same shape as commenting on a post. The box is a resizable textarea, because a
+useful note is usually a sentence or two; Enter gives you a newline and ⌘/Ctrl+Enter sends. A node carrying feedback shows a 💬 count, so you can see what
+has something to read without opening every one.
+
+For feedback about the plan itself — "this is a chain and it should fan out" — there is a
+**Feedback on the plan** button beside Approve, carrying its own count. That is also where a
+note goes when the step it was left on is removed by a revision.
+
+The agent reads them off the plan it fetches before revising — no extra call, and nothing to
+repeat. Once it has revised, mark the notes it answered **resolved**; they fold away behind a
+"resolved (n)" toggle, so what is still open stays readable through several rounds. Resolving
+is yours alone, as writing is: a session that could close the feedback it was given could
+decide its own work had been accepted.
+
+If a revision removes the step a note was on, the note is **not** dropped and **not** quietly
+resolved. It moves to the plan's thread — there is no node left to open it from — reading *was
+on step_04: draft the migration script*, the goal that step had when you wrote the note. The
+step disappearing might mean you were listened to, or might mean the plan was restructured
+around you, and only you can tell those apart.
+
+Nothing here is enforced. A draft with open notes can still be approved, and a revision that
+orphans a note is not refused — Chief records the decision, it does not make it.
 
 ### When the plan stops fitting
 
@@ -137,7 +167,7 @@ Approving completes the step. Rejecting fails it, which skips everything downstr
 rejected checkpoint stops that branch of the plan rather than quietly letting it proceed. A
 rejection needs a note saying why; approving does not.
 
-### Comments — telling the agent something after the fact
+### Comments — telling the agent something about work that is done
 
 Every artifact a run produces takes **comments**. "This draft is the one, match its tone."
 "The numbers in here are stale." They hang off the artifact and ride on the run state the
@@ -145,7 +175,9 @@ agent already fetches when it picks the work up, so nothing has to be repeated a
 call is needed to find them.
 
 Comments are yours to write, not the agent's — a harness annotating its own output with its
-own opinion of it is what the step summary is already for. They are append-only.
+own opinion of it is what the step summary is already for. They are append-only. Review notes
+are the same channel one step earlier: a comment is said about work that is done, a note about
+work that has not started.
 
 ### Opening the files a run produced
 

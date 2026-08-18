@@ -15,6 +15,7 @@ from ..ids import amendment_id as new_amendment_id
 from ..ids import artifact_id as new_artifact_id
 from ..ids import comment_id as new_comment_id
 from ..ids import instance_id as format_instance_id
+from ..ids import note_id as new_note_id
 from ..ids import now
 from ..ids import run_id as new_run_id
 from ..ids import template_id as new_template_id
@@ -33,6 +34,9 @@ from ..models import (
     InstanceCreate,
     InstanceUpdate,
     PatchOperation,
+    ReviewNote,
+    ReviewNoteCreate,
+    ReviewNoteDecision,
     RunCreate,
     RunPlan,
     RunState,
@@ -128,7 +132,112 @@ class Chief:
         return defn
 
     def get_workflow(self, workflow_id: str) -> WorkflowDefinition:
-        return self.store.get_workflow(workflow_id)
+        defn = self.store.get_workflow(workflow_id)
+        # The one read that carries the review notes. A harness picking a draft back up gets
+        # the feedback in the document it was going to fetch anyway, exactly as it gets
+        # artifact comments in the run state — no new call, and nothing to remember to ask
+        # for. The workflow list leaves them off: it is a list of plans, not of feedback.
+        defn.review_notes = self._attach_orphaning(defn, self.store.list_review_notes(workflow_id))
+        return defn
+
+    # --- review notes on a draft --------------------------------------------------------
+
+    @staticmethod
+    def _attach_orphaning(defn: WorkflowDefinition, notes: list[ReviewNote]) -> list[ReviewNote]:
+        """Mark the notes whose step the plan no longer has.
+
+        Computed against the plan as it stands rather than stored, because a revision can
+        drop a step id and a later one can bring it back. An orphan is shown, never dropped
+        and never auto-resolved: the step vanishing may mean the feedback was acted on, or
+        may mean the harness restructured around it without addressing it, and telling those
+        apart is the reviewer's job.
+        """
+        present = defn.steps_by_id()
+        return [
+            note.model_copy(
+                update={"orphaned": note.step_id is not None and note.step_id not in present}
+            )
+            for note in notes
+        ]
+
+    def add_review_note(self, workflow_id: str, body: ReviewNoteCreate) -> ReviewNote:
+        """Leave feedback on a plan, for whoever revises it.
+
+        The step's goal is copied onto the note as it reads now. If the step is later
+        rewritten or dropped, the note still says what it was about — "was on step_04:
+        draft the migration script" — which is the difference between an orphan a person
+        can act on and an id that means nothing.
+        """
+        defn = self.store.get_workflow(workflow_id)
+        step = None
+        if body.step_id is not None:
+            step = defn.step(body.step_id)
+            if step is None:
+                raise ValidationFailed(
+                    f"workflow '{workflow_id}' has no step '{body.step_id}'",
+                    details={"workflow_id": workflow_id, "step_id": body.step_id},
+                )
+        note = ReviewNote(
+            note_id=new_note_id(),
+            workflow_id=workflow_id,
+            step_id=body.step_id,
+            step_goal=step.goal if step else None,
+            body=body.body,
+            author=body.author,
+            created_at=now(),
+            via=current_transport.get(),
+        )
+        with self.store.transaction() as conn:
+            self.store.add_review_note(conn, note)
+            self.store.audit(
+                conn,
+                "workflow.note_added",
+                workflow_id=workflow_id,
+                detail={
+                    "note_id": note.note_id,
+                    "step_id": note.step_id,
+                    "author": note.author,
+                    "status": defn.status,
+                },
+            )
+        return note
+
+    def list_review_notes(self, workflow_id: str, resolved: bool | None = None) -> list[ReviewNote]:
+        defn = self.store.get_workflow(workflow_id)
+        notes = self._attach_orphaning(defn, self.store.list_review_notes(workflow_id))
+        if resolved is None:
+            return notes
+        return [n for n in notes if n.resolved is resolved]
+
+    def decide_review_note(
+        self, workflow_id: str, note_id: str, decision: ReviewNoteDecision
+    ) -> ReviewNote:
+        """Close a note, or put it back.
+
+        Not a harness's to call, for the same reason it cannot approve the workflow it
+        proposed: a session that can close the feedback it was given can decide its own work
+        is finished. It reads the notes and revises the plan; a person judges whether that
+        answered them. Hence no MCP tool — see MCP-SURFACE.md.
+        """
+        defn = self.store.get_workflow(workflow_id)
+        note = self.store.get_review_note(workflow_id, note_id)
+        if note.resolved is decision.resolved:
+            raise InvalidTransition(
+                f"review note '{note_id}' is already "
+                f"{'resolved' if note.resolved else 'open'}"
+            )
+        note.resolved = decision.resolved
+        note.resolved_at = now() if decision.resolved else None
+        note.resolved_by = decision.resolved_by if decision.resolved else None
+        with self.store.transaction() as conn:
+            self.store.save_review_note(conn, note)
+            self.store.audit(
+                conn,
+                "workflow.note_resolved" if decision.resolved else "workflow.note_reopened",
+                workflow_id=workflow_id,
+                detail={"note_id": note_id, "decided_by": decision.resolved_by},
+            )
+        return self._attach_orphaning(defn, [note])[0]
 
     def get_workflow_version(self, workflow_id: str, version: int) -> WorkflowDefinition:
         return self.store.get_workflow_version(workflow_id, version)

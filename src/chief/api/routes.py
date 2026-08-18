@@ -30,6 +30,9 @@ from ..models import (
     CommentCreate,
     InstanceCreate,
     InstanceUpdate,
+    ReviewNote,
+    ReviewNoteCreate,
+    ReviewNoteDecision,
     RunCreate,
     RunPlan,
     RunState,
@@ -103,6 +106,41 @@ def archive_workflow(
     body: AmendmentDecision = Body(default_factory=AmendmentDecision),
 ) -> WorkflowDefinition:
     return service.archive_workflow(workflow_id, body)
+
+
+# --- extension: review notes on a plan ----------------------------------------------------
+#
+# Feedback a person leaves on a draft, for whoever revises it. The other direction of the
+# artifact-comment channel: a comment is said about work that is done, a note about work
+# that has not started. REST-only in both directions — a harness reads notes off the
+# workflow document `get_workflow` already returns, and neither writes one nor closes one.
+
+
+@router.post(
+    "/workflows/{workflow_id}/notes",
+    response_model=ReviewNote,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_review_note(
+    workflow_id: str, body: ReviewNoteCreate, service: Service
+) -> ReviewNote:
+    """Leave a note on a step, or on the plan as a whole when ``step_id`` is omitted."""
+    return service.add_review_note(workflow_id, body)
+
+
+@router.get("/workflows/{workflow_id}/notes", response_model=list[ReviewNote])
+def list_review_notes(
+    workflow_id: str, service: Service, resolved: bool | None = Query(None)
+) -> Any:
+    return service.list_review_notes(workflow_id, resolved)
+
+
+@router.patch("/workflows/{workflow_id}/notes/{note_id}", response_model=ReviewNote)
+def decide_review_note(
+    workflow_id: str, note_id: str, body: ReviewNoteDecision, service: Service
+) -> ReviewNote:
+    """Mark a note resolved, or put a resolved one back."""
+    return service.decide_review_note(workflow_id, note_id, body)
 
 
 # --- extension: templates -----------------------------------------------------------------

@@ -25,7 +25,14 @@ from typing import Any
 
 from ..errors import NotFound
 from ..ids import now
-from ..models import Amendment, ApprovalPolicy, RunState, WorkflowDefinition, WorkflowTemplate
+from ..models import (
+    Amendment,
+    ApprovalPolicy,
+    ReviewNote,
+    RunState,
+    WorkflowDefinition,
+    WorkflowTemplate,
+)
 from ..transport import current_transport
 
 SCHEMA = """
@@ -78,6 +85,22 @@ CREATE TABLE IF NOT EXISTS templates (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+-- Feedback a reviewer left on a draft. Beside the workflow rather than inside its
+-- document, because revising a draft replaces that document wholesale and would take the
+-- notes asking for the revision with it (CONTRACT-NOTES.md #31). ``step_id`` is nullable:
+-- a note may be about the plan as a whole.
+-- ``seq`` orders them: timestamps are millisecond-resolution and two notes typed in the
+-- same breath tie, at which point the fallback would be a random id.
+CREATE TABLE IF NOT EXISTS review_notes (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id     TEXT NOT NULL UNIQUE,
+    workflow_id TEXT NOT NULL,
+    step_id     TEXT,
+    document    TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_by_workflow ON review_notes (workflow_id, seq);
 
 CREATE TABLE IF NOT EXISTS config (
     key      TEXT PRIMARY KEY,
@@ -135,7 +158,10 @@ class Store:
 
     # Timestamps live in the table's own columns, so the stored document must not carry a
     # second copy that could drift from them.
-    _STAMPS = {"created_at", "updated_at"}
+    # Server-owned fields that live in the record rather than in the stored document: the
+    # timestamps are the table's columns, and the notes are their own table. A second copy
+    # inside the JSON could only ever drift from the thing it copies.
+    _STAMPS = {"created_at", "updated_at", "review_notes"}
 
     @staticmethod
     def _stamped(row: sqlite3.Row) -> WorkflowDefinition:
@@ -246,6 +272,49 @@ class Store:
                 "ORDER BY created_at, workflow_id"
             )
         return [self._stamped(r) for r in rows]
+
+    # --- review notes -------------------------------------------------------------------
+
+    def add_review_note(self, conn: sqlite3.Connection, note: ReviewNote) -> None:
+        conn.execute(
+            "INSERT INTO review_notes (note_id, workflow_id, step_id, document, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                note.note_id,
+                note.workflow_id,
+                note.step_id,
+                note.model_dump_json(exclude={"orphaned"}),
+                note.created_at,
+            ),
+        )
+
+    def save_review_note(self, conn: sqlite3.Connection, note: ReviewNote) -> None:
+        conn.execute(
+            "UPDATE review_notes SET document = ? WHERE note_id = ?",
+            (note.model_dump_json(exclude={"orphaned"}), note.note_id),
+        )
+
+    def get_review_note(self, workflow_id: str, note_id: str) -> ReviewNote:
+        row = self._one(
+            "SELECT document FROM review_notes WHERE note_id = ? AND workflow_id = ?",
+            (note_id, workflow_id),
+        )
+        if row is None:
+            raise NotFound(f"workflow '{workflow_id}' has no review note '{note_id}'")
+        return ReviewNote.model_validate_json(row["document"])
+
+    def list_review_notes(self, workflow_id: str) -> list[ReviewNote]:
+        """Every note on this workflow, oldest first — resolved ones included.
+
+        Filtering happens above this line. A reader deciding whether feedback was addressed
+        needs to see what was already closed, and a store that hid it would make that a
+        second query every caller has to remember.
+        """
+        rows = self._all(
+            "SELECT document FROM review_notes WHERE workflow_id = ? ORDER BY seq",
+            (workflow_id,),
+        )
+        return [ReviewNote.model_validate_json(r["document"]) for r in rows]
 
     # --- runs ---------------------------------------------------------------------------
 

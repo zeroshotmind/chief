@@ -5,9 +5,9 @@ Two pieces, doing different jobs:
 - **The MCP server** is the capability surface — 24 tools (REQ-2). Without it Claude Code
   cannot reach Chief at all.
 - **`SKILL.md`** is the protocol — plan first, summarise every update, propose an amendment
-  rather than improvising, wait for the human, read the comments a person left on the
-  artifacts. No tool description conveys that, and it is what makes the tracking worth
-  having.
+  rather than improvising, wait for the human, read what a person wrote back: the comments
+  on the artifacts, and the review notes on a draft you are about to revise. No tool
+  description conveys that, and it is what makes the tracking worth having.
 
 ## 1. Run Chief
 
@@ -48,7 +48,7 @@ For one repo rather than globally, put it at `.claude/skills/chief/SKILL.md` in 
 
 ## What Claude cannot do
 
-Four things are REST-only, by design:
+Five things are REST-only, by design:
 
 - **`GET/PUT /config/approval-policy`** — a session that can edit the policy governing its
   own amendments can approve its own work, which is the loop REQ-13 exists to prevent.
@@ -58,6 +58,10 @@ Four things are REST-only, by design:
   harness about its output. A harness writing its own would be annotating the work with its
   own opinion of it, which is what the step summary is for. Claude *reads* comments freely:
   they ride on the artifacts in the state `get_run` already returns.
+- **`/workflows/{id}/notes`** — review feedback on a draft, in both directions. A harness
+  writing its own note is the same problem as a harness writing its own comment; a harness
+  *closing* a note is worse, because it is a session deciding the feedback it was given has
+  been dealt with. Claude reads notes freely: they ride on the plan `get_workflow` returns.
 
 `approve_workflow`, `approve_amendment`, `reject_amendment` and `resolve_checkpoint` are
 tools, but they are human decisions — the skill says to call them only when you have been

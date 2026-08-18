@@ -113,6 +113,27 @@ class Api:
             f"/v1/runs/{run_id}/artifacts/{artifact_id}/comments", json={"body": body, **kw}
         )
 
+    def note(self, workflow_id: str, body: str = "this needs rethinking", **kw: Any):
+        return self.client.post(f"/v1/workflows/{workflow_id}/notes", json={"body": body, **kw})
+
+    def notes(self, workflow_id: str, **params: Any) -> list[dict]:
+        response = self.client.get(f"/v1/workflows/{workflow_id}/notes", params=params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def decide_note(self, workflow_id: str, note_id: str, **body: Any):
+        return self.client.patch(f"/v1/workflows/{workflow_id}/notes/{note_id}", json=body)
+
+    def draft(self, steps: list[dict], **kw: Any) -> str:
+        response = self.create_workflow(steps, **kw)
+        assert response.status_code == 201, response.text
+        return response.json()["workflow_id"]
+
+    def revise(self, workflow_id: str, steps: list[dict], *, title: str = "test", **kw: Any):
+        return self.client.put(
+            f"/v1/workflows/{workflow_id}", json={"title": title, "steps": steps, **kw}
+        )
+
     def add_instance(self, run_id: str, step_id: str, **body: Any):
         return self.client.post(f"/v1/runs/{run_id}/steps/{step_id}/instances", json=body)
 

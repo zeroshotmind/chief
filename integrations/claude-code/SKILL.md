@@ -74,6 +74,16 @@ create a second workflow to replace one you just made: the reviewer then has two
 nothing saying which counts. It replaces the whole plan, so send every step you want to
 keep. Once approved, changes go through an amendment instead.
 
+**`get_workflow` before you revise, and read `review_notes`.** That is where the reviewer
+put what they want changed — each note on a step, or on the plan as a whole. Address every
+one with `resolved: false`, and say in the revision's `reason` which note each change
+answers. A note whose step you removed comes back marked `orphaned`: it is still open, and
+`step_goal` says what it was about. If you disagree with a note, say so and leave the plan
+alone — do not revise it into something the note did not ask for.
+
+Marking a note resolved is theirs, not yours; so is writing one. There is no tool for
+either, deliberately.
+
 ## Then run it
 
 `approve_workflow` (see below on who decides) → `register_run` → work the steps.

@@ -364,6 +364,12 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
   position: absolute; bottom: 7px; right: 9px; font-size: 10px;
   color: var(--color-neutral-500); white-space: nowrap;
 }
+/* Feedback waiting on this node. Bottom-left, opposite the artifact count, so a node can
+   carry both without either moving. */
+.node-notes {
+  position: absolute; bottom: 7px; left: 9px; font-size: 10px;
+  color: var(--color-accent-700); white-space: nowrap;
+}
 .node-tag {
   position: absolute; top: -11px; right: 8px; background: var(--color-surface);
   font-family: inherit; font-size: 10px; padding: 2px 8px; border-radius: 999px;
@@ -496,6 +502,39 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 }
 .cmt-add:hover { color: var(--color-accent-700); }
 .art-copy.ok { color: var(--ok); }
+
+/* Review notes, drawn as the comment thread they are — same rule, same typography as an
+   artifact comment, because they are the same act at two different moments. What a note
+   adds is a resolve control and a resolved state that stays legible without competing with
+   what is still open. */
+.note {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  margin-top: var(--space-1); padding-left: var(--space-2);
+  border-left: 2px solid var(--color-accent-300);
+}
+.note-done { border-left-color: var(--color-neutral-300); opacity: 0.55; }
+.note-label { display: flex; align-items: baseline; gap: var(--space-2); margin-top: var(--space-1); }
+.note-foot { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.note-foot .cmt-meta { flex: 1; min-width: 0; }
+.note-act { flex: none; margin-top: 0; }
+/* The plan-feedback button while its panel is the one showing: a place you are, not just a
+   button you can press. */
+.btn.is-here { border-color: var(--color-accent-500); color: var(--color-accent-700); }
+.note-compose { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.note-compose-actions { display: flex; gap: var(--space-1); }
+/* `resize: vertical` rather than `both`: the inspector is a fixed-width column, and a box
+   dragged wider than it just overflows. Height is the axis a note actually needs. */
+.note-input {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 58px;
+  padding: var(--space-1) var(--space-2);
+  font: inherit; font-size: 12px; line-height: 1.45;
+  color: var(--color-neutral-800); background: var(--color-surface);
+  border: 1px solid var(--color-neutral-300); border-radius: var(--radius-sm);
+}
+.note-input:focus { outline: none; border-color: var(--color-accent-500); }
+.note-input::placeholder { color: var(--color-neutral-500); }
+/* An orphan says what it used to be about: by now its step id names nothing. */
+.note-orphan { font-size: 10px; color: var(--warn); }
 .art-root {
   display: flex; align-items: center; gap: var(--space-2); min-width: 0;
   padding: 0 var(--space-1) var(--space-1);
