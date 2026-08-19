@@ -2102,7 +2102,7 @@ function templatesScreen() {
 function templateDetailScreen() {
   const template = (state.templates || []).find((t) => t.template_id === state.templateId);
   if (!template) {
-    return el("main", { class: "wide" }, el("p", { class: "text-muted", text: "Loading…" }));
+    return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading…" }));
   }
   // Placeholders live in text, never in ids or edges, so the unrendered plan has exactly the
   // shape every workflow made from it will have.
@@ -2111,7 +2111,7 @@ function templateDetailScreen() {
 
   return el(
     "main",
-    { class: "wide", "data-screen-label": "Template detail" },
+    { class: "wide graph", "data-screen-label": "Template detail" },
     el(
       "div",
       {},
@@ -2492,7 +2492,7 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
 function workflowDetailScreen() {
   const workflow = (state.workflows || []).find((w) => w.workflow_id === state.workflowId);
   if (!workflow) {
-    return el("main", { class: "wide" }, el("p", { class: "text-muted", text: "Loading…" }));
+    return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading…" }));
   }
   const runs = executionsOf(workflow, state.runs);
   const life = lifecycleOf(workflow, runs);
@@ -2513,7 +2513,7 @@ function workflowDetailScreen() {
 
   return el(
     "main",
-    { class: "wide", "data-screen-label": "Workflow detail" },
+    { class: "wide graph", "data-screen-label": "Workflow detail" },
     el(
       "div",
       {},
@@ -2980,7 +2980,7 @@ function workflowPanel(workflow, topSteps) {
 function detailScreen() {
   const detail = state.detail;
   if (!detail || detail.runId !== state.runId) {
-    return el("main", { class: "wide" }, el("p", { class: "text-muted", text: "Loading run…" }));
+    return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading run…" }));
   }
   const run = detail.state;
   const def = detail.def;
@@ -2994,7 +2994,7 @@ function detailScreen() {
 
   return el(
     "main",
-    { class: "wide", "data-screen-label": "Run detail" },
+    { class: "wide graph", "data-screen-label": "Run detail" },
     el(
       "div",
       {},

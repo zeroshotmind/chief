@@ -226,6 +226,11 @@ a:hover { color: var(--color-accent-700); }
 main { width: 100%; padding: var(--space-8) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 main.narrow { max-width: 760px; }
 main.wide { max-width: 1240px; padding-top: var(--space-4); }
+/* A screen that draws a plan takes the window it is given. 1240 is a *reading* width, right
+   for the workflow table above and wrong here twice over: it leaves the inspector stranded
+   mid-screen with dead space beside it, and it hands the graph less room than it has, so
+   plans scroll sideways that would have fitted. A graph is a canvas, not a column. */
+main.wide.graph { max-width: none; }
 .screen-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); }
 .accent-note {
   font-size: 12px; color: var(--color-accent-700);
