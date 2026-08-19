@@ -78,6 +78,16 @@ export const decideReviewNote = (workflowId, noteId, resolved) =>
     body: JSON.stringify({ resolved, resolved_by: "human" }),
   });
 
+/** File a workflow under a project, or clear the label with null. Not a revision: it says
+    nothing about the plan, so it is allowed at any status — which matters, because the
+    workflows most in need of filing are the ones that already ran. */
+export const labelWorkflow = (workflowId, project) =>
+  request(`/workflows/${workflowId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project: project || null }),
+  });
+
 /** Templates: the reusable plan. A workflow is single-use, so reuse lives here. */
 export const listTemplates = () => request("/templates");
 export const archiveTemplate = (templateId) => post(`/templates/${templateId}/archive`, {});

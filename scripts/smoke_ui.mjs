@@ -30,6 +30,9 @@ function node(tag) {
     },
     querySelector() { return null; },
     replaceWith() {},
+    // A real anchor has these; the download path uses both.
+    click() { self.clicked = true; },
+    remove() {},
   };
   // Real nodes always have one, and code that toggles a class without going through a
   // re-render reaches for it directly. It writes through to `class`, which is what the
@@ -43,7 +46,12 @@ function node(tag) {
 }
 
 const roots = { app: node("div"), "dialog-root": node("div") };
+// What a browser download needs and the stub DOM does not have. The blob is captured so the
+// exported bytes can be asserted rather than only the fact that a click happened.
+let exported = null;
+globalThis.URL = { createObjectURL: (b) => { exported = b; return "blob:x"; }, revokeObjectURL() {} };
 globalThis.document = {
+  body: node("body"),
   createElement: node,
   createElementNS: (_ns, tag) => node(tag),
   getElementById: (id) => roots[id] || node("div"),
@@ -89,8 +97,8 @@ const WIDE_STEPS = [
     depends_on: Array.from({ length: 12 }, (_, i) => `w${String(i).padStart(2, "0")}`) },
 ];
 const WORKFLOWS = [
-  { created_at: "2026-03-02T09:00:00Z", updated_at: "2026-03-02T09:00:00Z", workflow_id: "wf_draft", title: "A draft", source: "generated", generated_by: "claude-code", status: "draft", version: 1, steps: STEPS },
-  { created_at: "2026-01-05T09:00:00Z", updated_at: "2026-01-06T09:00:00Z", workflow_id: "wf_ok", title: "Approved one", source: "import", generated_by: null, status: "approved", version: 2, steps: STEPS },
+  { created_at: "2026-03-02T09:00:00Z", updated_at: "2026-03-02T09:00:00Z", workflow_id: "wf_draft", title: "A draft", source: "generated", generated_by: "claude-code", status: "draft", version: 1, steps: STEPS, project: "songs", origin_dir: "/w/songs" },
+  { created_at: "2026-01-05T09:00:00Z", updated_at: "2026-01-06T09:00:00Z", workflow_id: "wf_ok", title: "Approved one", source: "import", generated_by: null, status: "approved", version: 2, steps: STEPS, project: "chief", origin_dir: "/w/chief" },
   { created_at: "2026-02-01T09:00:00Z", updated_at: "2026-02-01T09:00:00Z", workflow_id: "wf_old", title: "Archived one", source: "import", generated_by: null, status: "archived", version: 1, steps: STEPS },
 ];
 const RUN = {
@@ -117,7 +125,7 @@ const TEMPLATES = [
       { name: "repo", description: "owner/name", required: true, default: null },
       { name: "since", description: null, required: false, default: "24h" },
     ],
-    steps: STEPS, status: "active", version: 1, derived_from_workflow_id: null,
+    steps: STEPS, status: "active", version: 1, derived_from_workflow_id: null, project: "chief",
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   },
 ];
@@ -173,6 +181,22 @@ function clickByText(text) {
   const hit = [...clicks].reverse().find((c) => JSON.stringify(c.node).includes(text));
   if (!hit) throw new Error(`no clickable element containing ${text}`);
   hit.fn({ preventDefault() {}, stopPropagation() {} });
+}
+
+/** Click the first element under `root` whose text matches — for the times when the same
+    word appears twice on a screen ("Save" is the project filing button *and* "Save as
+    template"), and the newest-wins rule would pick the wrong one. */
+function clickIn(root, text) {
+  const found = [];
+  (function walk(n) {
+    if ((n.textContent || "") === text) found.push(n);
+    for (const c of n.children || []) walk(c);
+  })(root);
+  for (const n of found) {
+    const hit = [...clicks].reverse().find((c) => c.node === n);
+    if (hit) return hit.fn({ preventDefault() {}, stopPropagation() {} });
+  }
+  throw new Error(`no clickable element under that subtree with text ${text}`);
 }
 
 /** Click the newest element whose class list contains every one of `classes`. Text is
@@ -372,6 +396,21 @@ const durations = [];
 })(mainNode());
 if (durations.join() !== "<1m,,") throw new Error(`durations: ${JSON.stringify(durations)}`);
 
+// Projects. One chip per label in use, plus the ones nobody has filed — the bucket that
+// has to exist, because every workflow that predates projects is in it and a filter that
+// hid them would hide most of the history.
+const projectChipRow = findByClass(mainNode(), "chips-project")[0];
+const chipLabels = (projectChipRow.children || []).map((c) => c.textContent);
+clickByText("Unfiled");
+await new Promise((r) => setTimeout(r, 20));
+const unfiledOnly = rowTitles().join();
+clickByText("chief 1");
+await new Promise((r) => setTimeout(r, 20));
+const chiefOnly = rowTitles().join();
+clickByText("Every project");
+await new Promise((r) => setTimeout(r, 20));
+const backToAll = rowTitles().length;
+
 clickByText("Active");
 await new Promise((r) => setTimeout(r, 10));
 
@@ -409,14 +448,15 @@ await new Promise((r) => setTimeout(r, 10));
 
 // Naming the folder is the only interactive part of this, so drive it: open the field, type
 // a new root with a trailing slash on it, save. What should come back is a stored value with
-// the slash gone and links rebuilt underneath it.
+// the slash gone and links rebuilt underneath it — under this project's own key, because one
+// folder for every project resolves the wrong tree the moment there are two.
 clickByText("Change");
 await new Promise((r) => setTimeout(r, 10));
 typeIntoId("files-root", "/elsewhere/tree/");
 await new Promise((r) => setTimeout(r, 10));
 clickByText("Save");
 await new Promise((r) => setTimeout(r, 20));
-const rootSaved = stored["chief.filesRoot"];
+const rootSaved = stored["chief.filesRoot:chief"];
 const rehomed = findByClass(mainNode(), "art-path")
   .map((p) => findByClass(p, "art-href")[0].href)
   .includes("vscode://file/elsewhere/tree/notes/personas.md");
@@ -465,6 +505,18 @@ clickByText("Add");
 await new Promise((r) => setTimeout(r, 40));
 const comment = posts.find((x) => x.url.includes("/comments"));
 
+// Filing a workflow under a project, from the screen you are looking at it on. Allowed at
+// any status: the workflows most in need of filing are the ones that already ran.
+const originShown = JSON.stringify(mainNode()).includes("made in /w/chief");
+clickByText("refile…");
+await new Promise((r) => setTimeout(r, 20));
+typeIntoId("wf-project", "chief-ui");
+await new Promise((r) => setTimeout(r, 10));
+// Scoped: "Save as template" is on this screen too, and is rendered later.
+clickIn(findByClass(mainNode(), "wf-project")[0], "Save");
+await new Promise((r) => setTimeout(r, 40));
+const filed = posts.find((x) => x.method === "PATCH" && x.url.includes("/workflows/wf_ok"));
+
 if (NO_TEMPLATES) {
   // A page newer than its server must still work: one 404 on an extension endpoint should
   // not leave every screen on "Loading…".
@@ -506,6 +558,13 @@ clickByText("Use this template");
 await new Promise((r) => setTimeout(r, 20));
 const paramFields = roots["dialog-root"].children.reduce((n, c) => n + countTag(c, "input"), 0);
 
+// Exporting a template: the browser writes the file, not the server. What comes out has to
+// be exactly what POST /templates takes, or the file is a dead end rather than something
+// that can be committed and registered again.
+clickByText("Export to a file");
+await new Promise((r) => setTimeout(r, 20));
+const exportedBody = exported ? JSON.parse(await exported.text()) : null;
+
 // A plan wider than the window. Added now rather than up top so the list assertions above
 // keep counting the three workflows they were written for.
 WORKFLOWS.push({
@@ -534,6 +593,9 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`projects:    chips ${JSON.stringify(chipLabels)}`);
+console.log(`             unfiled=[${unfiledOnly}] chief=[${chiefOnly}] all=${backToAll}, origin-shown=${originShown}`);
+console.log(`             filed=${JSON.stringify(filed && filed.body)}, exported keys=${exportedBody && Object.keys(exportedBody).join(",")}`);
 console.log(`wide plan:   ${wideNodes} nodes, plane ${planeWidth}px in a 900px window, scrolls=${viewportScrolls}`);
 console.log(`             plan-reachable=${planReachable}, orphan-still-there=${orphanBack}`);
 console.log(`             box=${boxIsTextarea ? "textarea" : "INPUT"}, plain-enter-held=${plainEnterHeld}`);
@@ -603,6 +665,23 @@ const ok =
   !!noteResolved &&
   noteResolved.url.endsWith("/workflows/wf_draft/notes/rvw_1") &&
   noteResolved.body.resolved === true &&
+  // One chip per project in use, an Unfiled bucket, and an everything chip.
+  chipLabels.join("|") === "Every project 3|chief 1|songs 1|Unfiled 1" &&
+  unfiledOnly === "Archived one" &&
+  chiefOnly === "Approved one" &&
+  backToAll === 3 &&
+  // The plan says where it was made, as a record rather than a live path.
+  originShown &&
+  // Filing goes out as a PATCH, and is allowed on a workflow that has already run.
+  !!filed &&
+  filed.body.project === "chief-ui" &&
+  // The exported template is a POST /templates body at rest — same names, same shape, id
+  // included so re-registering the same file is idempotent rather than a second copy.
+  !!exportedBody &&
+  exportedBody.template_id === "tpl_1" &&
+  exportedBody.project === "chief" &&
+  exportedBody.steps.length === STEPS.length &&
+  exportedBody.parameters.length === 2 &&
   // Fourteen nodes, twelve of them in one layer: the plane is far wider than the window,
   // and the viewport scrolls to it instead of hiding the difference.
   wideNodes === 14 &&

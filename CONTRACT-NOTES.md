@@ -417,3 +417,52 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     them. Nothing here is enforced, in either direction — a draft with open notes can still
     be approved, and a revision that orphans a note is not refused. Chief records; the
     decision stays with the person.
+
+32. **Projects — a label, and a path that is only ever a memory.** An extension, and the
+    second time the same question has been asked. #29 refused to put a `cwd` on the run;
+    the proposal here was larger — keep each project's workflows and templates in a
+    `.chief/` directory under that project, with a global registry of directory paths.
+
+    That was refused for a reason #29 does not cover. Workflow ids are a 4-hex token, a
+    16-bit space, and they are unique **only because one table's primary key enforces it**:
+    at 100 workflows two independent stores collide 7% of the time, at 300 it is even
+    money. Relocating the store therefore means widening or namespacing ids first — a
+    breaking change to every workflow already recorded — before any of the rest. The single
+    in-process lock (`Store._lock`, STATUS.md §6) and the global "is anything waiting on
+    me" query are real costs too, but secondary: they make it slower and more complicated,
+    not wrong.
+
+    What survived is the part that was actually being asked for, in two fields.
+
+    **`project` is a label.** An open string namespace like `harness` (REQ-26). It is *not*
+    a directory, and that separation is the point: one product spans several checkouts, and
+    one checkout hosts work for more than one. A label is chosen and stable; a path rots.
+
+    **`origin_dir` is provenance.** Where the harness stood when the plan was made. It
+    looks like the `cwd` #29 refused and is admissible for one reason: nothing resolves
+    against it. The server never reads it, and artifact refs still resolve against the
+    folder named in the browser. It answers "which checkout was this?" a month later, and
+    it seeds that browser-side folder as a *suggestion* the reader can override — which is
+    the only safe way to use a path that may have moved since it was recorded. Not
+    accepted on `WorkflowRevise`: a revision made somewhere else overwriting it would turn
+    a record into a lie.
+
+    Two consequences worth naming. The browser's folder is now keyed by project, because
+    one folder for everything resolves the wrong tree the moment there is a second
+    checkout; the unkeyed value stays the fallback so a folder set before projects existed
+    keeps working, and an empty string is stored to mean "deliberately none" so clearing
+    one is distinguishable from never having set it.
+
+    And labelling is `PATCH /workflows/{id}`, allowed at any status including archived,
+    because every workflow that predates this has no label and the ones most worth filing
+    are the ones that already ran. `GET /projects` is derived by counting labels rather
+    than stored: a project has no lifecycle, so there is nothing to create, rename or
+    delete, and nothing that can disagree with the workflows it claims. The unlabelled are
+    counted under a null name rather than omitted — on any existing database they are the
+    majority, and a list that hid them would hide most of the history.
+
+    Templates carry the label too, and a workflow made from one inherits it. Exporting a
+    template writes a file from the *browser*, never the server: what comes out is exactly
+    a `POST /templates` body, id included, so it can be committed beside the project and
+    registered again idempotently. That is as close to "the project owns its templates" as
+    Chief can get without becoming a file server, which #29 already ruled out.

@@ -113,6 +113,19 @@ class WorkflowDefinition(BaseModel):
     status: WorkflowStatus = "draft"
     version: int = 1
     steps: list[WorkflowStep] = Field(default_factory=list)
+    # Which body of work this plan belongs to. An open string namespace like ``harness``
+    # (REQ-26): adding a project is adding a value, not a schema change. Deliberately a
+    # label rather than a path — a label is stable, and a path rots the moment the tree
+    # moves, which is the whole of CONTRACT-NOTES.md #29. Absent on anything planned before
+    # projects existed, and the UI must show those rather than filter them away.
+    project: str | None = None
+    # Where the harness was standing when this plan was made. Provenance, not a base for
+    # resolving anything: nothing on the server reads it, and artifact refs still resolve
+    # against the folder named in the browser (#29). Recorded because "which checkout was
+    # this?" is a real question a month later, and because it makes a good *suggestion* for
+    # that browser-side folder — a suggestion the reader can override, which a stale path
+    # must always be. See CONTRACT-NOTES.md #32.
+    origin_dir: str | None = None
     # Set only when this workflow was instantiated from a template (extension).
     from_template: TemplateOrigin | None = None
     # When the plan was first submitted and when it was last written. These are facts about
@@ -171,6 +184,10 @@ class WorkflowCreate(BaseModel):
     source: WorkflowSource
     generated_by: str | None = None
     steps: list[WorkflowStep]
+    #: Both are the harness's to state at creation: it knows what it is working on and
+    #: where it is standing. Neither is accepted on a revision — see ``WorkflowRevise``.
+    project: str | None = None
+    origin_dir: str | None = None
 
 
 class WorkflowRevise(BaseModel):
@@ -190,7 +207,10 @@ class WorkflowRevise(BaseModel):
     the audit log records that it happened.
 
     ``source`` and ``generated_by`` are not accepted: revising a plan does not change where
-    it came from.
+    it came from. Neither are ``project`` and ``origin_dir``, for the same reason — the
+    second especially, which is a record of where the harness stood and would be a lie if a
+    later revision from somewhere else could overwrite it. A mislabelled project is
+    corrected through ``PATCH /workflows/{id}``, which is a labelling act, not a plan one.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -198,3 +218,20 @@ class WorkflowRevise(BaseModel):
     title: str = Field(min_length=1)
     steps: list[WorkflowStep]
     reason: str | None = None
+
+
+class WorkflowLabel(BaseModel):
+    """Body for ``PATCH /workflows/{workflow_id}``: which project this belongs to.
+
+    Its own request rather than part of a revision, because it says nothing about the plan
+    and so is not refused once the workflow leaves ``draft``. Filing an approved — or long
+    finished — workflow under a project is the main use: every workflow that existed before
+    projects did has no label, and no amount of care at creation time can fix those.
+
+    ``null`` clears it, which has to be possible: a label applied to the wrong workflow is
+    otherwise permanent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    project: str | None = None

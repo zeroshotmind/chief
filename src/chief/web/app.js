@@ -33,8 +33,8 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
   decideAmendment, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
-  addReviewNote, commentOnArtifact, decideReviewNote, listAmendments, listReviewNotes, listRuns,
-  listTemplates, listWorkflows, resolveCheckpoint,
+  addReviewNote, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
+  listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
 
 // ── colour and status vocabulary ─────────────────────────────────────────────────────────
@@ -331,6 +331,34 @@ const dot = (color, pulse, size) =>
     schema change. */
 const ROOT_KEY = "chief.filesRoot";
 
+/** The key a project's folder is stored under.
+
+    Keyed by project, because one folder for everything is wrong the moment Chief is used on
+    a second checkout: the artifacts of one project would resolve against another's tree and
+    open the wrong file, or none. The bare key stays the home of the unlabelled ones, so a
+    folder set before projects existed keeps working. */
+const rootKeyFor = (project) => (project ? `${ROOT_KEY}:${project}` : ROOT_KEY);
+
+/** Which project the screen is looking at, for the purposes of resolving a path. */
+function currentProject() {
+  const wf = (state.workflows || []).find((w) => w.workflow_id === state.workflowId);
+  if (wf) return wf.project || null;
+  const run = (state.runs || []).find((r) => r.run_id === state.runId);
+  const owner = run && (state.workflows || []).find((w) => w.workflow_id === run.workflow_id);
+  return (owner && owner.project) || null;
+}
+
+/** Where this plan was made, if it says. Only ever offered as a suggestion — see
+    CONTRACT-NOTES.md #32: a recorded path is a fact about the past, not a promise about
+    where the tree is now, so the browser's own setting stays the one that decides. */
+function originDirOf() {
+  const wf = (state.workflows || []).find((w) => w.workflow_id === state.workflowId);
+  if (wf) return wf.origin_dir || null;
+  const run = (state.runs || []).find((r) => r.run_id === state.runId);
+  const owner = run && (state.workflows || []).find((w) => w.workflow_id === run.workflow_id);
+  return (owner && owner.origin_dir) || null;
+}
+
 /** One editor, named once. Not a preference and not a picker: on the machine Chief runs on
     there is a default editor for source, and offering a dropdown would be asking the reader
     to configure something they will answer the same way every time. `cursor://file/` is the
@@ -339,18 +367,23 @@ const EDITOR_SCHEME = "vscode://file";
 
 // localStorage throws outright in a few configurations (and simply is not there under the
 // smoke harness's stub DOM), and none of this is worth a broken render.
-const readRoot = () => {
+const readRoot = (project = null) => {
   try {
+    const own = localStorage.getItem(rootKeyFor(project));
+    // An empty string is a decision — "this project has no folder" — and is distinct from
+    // the key being absent, which is "nobody has said". Only the absent case falls back to
+    // the unkeyed value, so a folder set before projects existed keeps resolving while
+    // clearing one still clears it.
+    if (own !== null) return own;
     return localStorage.getItem(ROOT_KEY) || "";
   } catch {
     return "";
   }
 };
 
-const writeRoot = (value) => {
+const writeRoot = (value, project = null) => {
   try {
-    if (value) localStorage.setItem(ROOT_KEY, value);
-    else localStorage.removeItem(ROOT_KEY);
+    localStorage.setItem(rootKeyFor(project), value || "");
   } catch {
     /* the path still resolves for this session; it just will not survive a reload */
   }
@@ -370,7 +403,7 @@ function absolutePath(ref) {
   // joining it onto the project folder would build a path with a literal tilde in it. Left
   // unlinked and copyable, which is the same answer as a relative ref with no folder set.
   if (ref.startsWith("~")) return null;
-  const root = (state.filesRoot || "").replace(/\/+$/, "");
+  const root = (readRoot(currentProject()) || "").replace(/\/+$/, "");
   return root ? `${root}/${ref}` : null;
 }
 
@@ -446,17 +479,21 @@ function rootRow(arts) {
   if (!arts.some(({ artifact }) => isFileRef(artifact.ref) && !artifact.ref.startsWith("/"))) {
     return null;
   }
+  const project = currentProject();
+  const root = readRoot(project);
+  const origin = originDirOf();
+
   if (state.rootEditing) {
     return el(
       "div",
       { class: "art-root" },
       el("input", {
         class: "input", id: "files-root", type: "text", value: state.rootDraft,
-        placeholder: "/Users/you/projects/thing",
+        placeholder: origin || "/Users/you/projects/thing",
         onInput: (e) => setState({ rootDraft: e.target.value }),
         onKeyDown: (e) => e.key === "Enter" && saveRoot(),
       }),
-      el("button", { class: "btn btn-primary btn-sm", text: "Save", onClick: saveRoot }),
+      el("button", { class: "btn btn-primary btn-sm", text: "Save", onClick: () => saveRoot() }),
       el("button", {
         class: "btn btn-secondary btn-sm", text: "Cancel",
         onClick: () => setState({ rootEditing: false }),
@@ -468,20 +505,35 @@ function rootRow(arts) {
     { class: "art-root" },
     el("span", {
       class: "art-root-label",
-      text: state.filesRoot ? "Project folder" : "Set a project folder to open these",
+      text: root
+        ? project ? `Folder for ${project}` : "Project folder"
+        : "Set a project folder to open these",
     }),
-    state.filesRoot && el("span", { class: "mono art-root-path", text: state.filesRoot }),
+    root && el("span", { class: "mono art-root-path", text: root }),
+    // One click when the plan already says where it was made. It is still only a
+    // suggestion — the tree may have moved since, and then this is the wrong answer and
+    // typing one is the right one.
+    !root && origin &&
+      el("button", {
+        class: "btn btn-secondary btn-sm",
+        text: "Use where it ran",
+        title: `Made in ${origin}. If the tree has moved since, set it by hand instead.`,
+        onClick: () => saveRoot(origin),
+      }),
     el("button", {
-      class: "btn btn-secondary btn-sm", text: state.filesRoot ? "Change" : "Set…",
-      onClick: () => setState({ rootEditing: true, rootDraft: state.filesRoot }),
+      class: "btn btn-secondary btn-sm", text: root ? "Change" : "Set…",
+      onClick: () => setState({ rootEditing: true, rootDraft: root }),
     }),
   );
 }
 
-function saveRoot() {
-  const value = (state.rootDraft || "").trim().replace(/\/+$/, "");
-  writeRoot(value);
-  setState({ filesRoot: value, rootEditing: false });
+function saveRoot(value = state.rootDraft) {
+  const cleaned = (value || "").trim().replace(/\/+$/, "");
+  writeRoot(cleaned, currentProject());
+  // `filesRoot` is only a render trigger now — the value that resolves a path is read back
+  // out of storage per project, so keeping a second copy in state could only ever disagree
+  // with it.
+  setState({ filesRoot: cleaned, rootEditing: false });
 }
 
 // ── artifacts ────────────────────────────────────────────────────────────────────────────
@@ -881,6 +933,12 @@ const state = {
   // touched by `refresh()`'s patch, so they survive polling and coming back to the list.
   wfQuery: "",
   wfFilter: "active",
+  // Which project the list is narrowed to: null is all of them, UNFILED is the ones nobody
+  // has filed. Not in the URL, for the same reason the other filters are not — the hash
+  // addresses where you are, and this is how you are looking at it.
+  wfProject: null,
+  // The workflow whose project label is being edited, and the half-typed name.
+  filing: null,
   wfSort: { key: "lifecycle", dir: "asc" },
 };
 
@@ -1274,6 +1332,42 @@ const ATTENTION = { draft: 1, waiting_on_human: 1, paused_for_approval: 1 };
 
 /** The list's filters. "Active" is what the screen showed before there were any — archived
     workflows out, everything else in — so the default view has not changed. */
+/** The bucket for workflows with no project. A sentinel rather than `null`, because `null`
+    already means "no project filter at all" and the two are opposites: one shows
+    everything, the other shows only the ones nobody has filed. */
+const UNFILED = "\u0000unfiled";
+
+/** One chip per project in use, plus the unfiled, plus an everything chip.
+
+    Derived from the workflows on screen rather than from `GET /projects`: the counts have
+    to agree with the list under them, and a second source could only ever disagree. The row
+    is absent entirely until something is labelled, so nobody who does not use projects has
+    to look at a filter that does nothing. */
+function projectChips(rows) {
+  const counts = new Map();
+  for (const r of rows) counts.set(r.workflow.project || UNFILED, (counts.get(r.workflow.project || UNFILED) || 0) + 1);
+  const named = [...counts.keys()].filter((k) => k !== UNFILED).sort((a, b) => a.localeCompare(b));
+  if (named.length === 0) return null;
+
+  const chip = (key, label) =>
+    el("button", {
+      class: "chip" + (state.wfProject === key ? " on" : ""),
+      text: `${label} ${counts.get(key) || rows.length}`,
+      onClick: () => setState({ wfProject: state.wfProject === key ? null : key }),
+    });
+  return el(
+    "div",
+    { class: "chips chips-project" },
+    el("button", {
+      class: "chip" + (state.wfProject === null ? " on" : ""),
+      text: `Every project ${rows.length}`,
+      onClick: () => setState({ wfProject: null }),
+    }),
+    named.map((name) => chip(name, name)),
+    counts.has(UNFILED) && chip(UNFILED, "Unfiled"),
+  );
+}
+
 const WF_FILTERS = [
   { key: "active", label: "Active", of: (w) => w.status !== "archived" },
   // What is waiting on a person: an unapproved draft, or a run paused on an amendment.
@@ -1338,8 +1432,16 @@ function workflowsScreen() {
   const filter = WF_FILTERS.find((f) => f.key === state.wfFilter) || WF_FILTERS[0];
   const q = state.wfQuery.trim().toLowerCase();
   const matches = (r) =>
-    !q || r.workflow.title.toLowerCase().includes(q) || r.workflow.workflow_id.includes(q);
-  const shown = rows.filter((r) => filter.of(r.workflow, r.life) && matches(r));
+    !q ||
+    r.workflow.title.toLowerCase().includes(q) ||
+    r.workflow.workflow_id.includes(q) ||
+    (r.workflow.project || "").toLowerCase().includes(q);
+  // `null` is the everything chip; UNFILED is the bucket for workflows with no label, which
+  // is every one that predates projects and has to stay reachable rather than filtered away.
+  const inProject = (r) =>
+    state.wfProject === null ||
+    (state.wfProject === UNFILED ? !r.workflow.project : r.workflow.project === state.wfProject);
+  const shown = rows.filter((r) => filter.of(r.workflow, r.life) && inProject(r) && matches(r));
 
   const { key, dir } = state.wfSort;
   const col = WF_COLUMNS.find((c) => c.key === key) || WF_COLUMNS[1];
@@ -1388,6 +1490,7 @@ function workflowsScreen() {
             });
           }),
         ),
+        projectChips(rows),
         el("input", {
           // Rebuilt on every render, so its value comes from state and `render` puts the
           // caret back — otherwise the 15s poll would eat what you are typing.
@@ -1883,6 +1986,40 @@ function inspector(panel) {
 
 // ── templates ────────────────────────────────────────────────────────────────────────────
 
+/** Write a template out as a file, so a project can keep its own plan shapes beside its code.
+
+    A download from the browser, not a write from the server: Chief reads nothing off disk
+    and writes nothing to it, which is what keeps it a tracker rather than a file server
+    (CONTRACT-NOTES.md #29). The browser is already the thing with a filesystem the person
+    chose.
+
+    What comes out is exactly what `POST /templates` takes — the same field names, the same
+    shape — so the file is a request body at rest. Commit it, and registering it on another
+    machine is posting it back. The id travels with it, which is what makes re-registering
+    the same file idempotent rather than a second copy under a new name. */
+function exportTemplate(template) {
+  const body = {
+    template_id: template.template_id,
+    title: template.title,
+    description: template.description,
+    parameters: template.parameters,
+    steps: template.steps,
+    project: template.project,
+  };
+  const slug = (template.title || template.template_id)
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(body, null, 2) + "\n"], { type: "application/json" }),
+  );
+  const link = el("a", { href: url, download: `${slug || "template"}.json` });
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Freed on the next tick rather than immediately: revoking it before the click has been
+  // dispatched cancels the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 /** A template is the plan you keep; a workflow is the plan you are running this time. It
     draws through the same renderer as everything else — a template *is* a plan, it just has
     placeholders where a workflow has values. */
@@ -2032,6 +2169,13 @@ function templateDetailScreen() {
           el("button", {
             class: "btn btn-primary btn-sm", text: "Use this template…",
             onClick: () => openTemplateDialog(template),
+          }),
+          el("button", {
+            class: "btn btn-ghost btn-sm", style: { fontSize: "12px" },
+            text: "Export to a file",
+            title: "Downloads the template as JSON — the same body POST /templates takes, "
+                 + "so it can be committed alongside the project and registered anywhere",
+            onClick: () => exportTemplate(template),
           }),
           el("button", {
             class: "btn btn-secondary btn-sm", text: "Archive…",
@@ -2400,6 +2544,7 @@ function workflowDetailScreen() {
               (detail.state.applied_amendment_ids.length > 1 ? "s" : "")
             : ""),
       }),
+      projectLine(workflow),
       decisionNote(workflow),
       workflow.status !== "archived" &&
         el(
@@ -2673,6 +2818,79 @@ function noteBlock(workflow, stepId) {
             onClick: () => setNoteDraft(key, { open: true }),
           })),
   ];
+}
+
+/** Which project this belongs to, and where it was made.
+
+    Both on one line because they answer the same question from two sides — what is this
+    part of, and which checkout was it. The label is editable here because filing is a
+    person's housekeeping and there is nowhere else it would go; the folder is not, because
+    it is a record of where the harness stood and not a field anyone should be able to
+    revise afterwards. */
+function projectLine(workflow) {
+  const filing = state.filing && state.filing.workflowId === workflow.workflow_id;
+  const known = [...new Set((state.workflows || []).map((w) => w.project).filter(Boolean))];
+
+  return el(
+    "div",
+    { class: "wf-project" },
+    filing
+      ? [
+          el("input", {
+            class: "input", id: "wf-project", type: "text", value: state.filing.draft,
+            placeholder: "Project name",
+            // The names already in use, so the fourth workflow of a project is filed under
+            // the same spelling as the first. A datalist rather than a select: the list is
+            // whatever exists, and a new project has to be typeable.
+            list: "wf-projects",
+            onInput: (e) => setState({ filing: { ...state.filing, draft: e.target.value } }),
+            onKeyDown: (e) => e.key === "Enter" && saveProject(workflow),
+          }),
+          el("datalist", { id: "wf-projects" }, known.map((p) => el("option", { value: p }))),
+          el("button", {
+            class: "btn btn-primary btn-sm", text: "Save",
+            onClick: () => saveProject(workflow),
+          }),
+          el("button", {
+            class: "btn btn-secondary btn-sm", text: "Cancel",
+            onClick: () => setState({ filing: null }),
+          }),
+        ]
+      : [
+          workflow.project
+            ? el("button", {
+                class: "chip on", text: workflow.project,
+                title: "Show everything in this project",
+                onClick: () => setState({ view: "workflows", wfProject: workflow.project }),
+              })
+            : el("span", { class: "text-muted", style: { fontSize: "12px" }, text: "Unfiled" }),
+          el("button", {
+            class: "cmt-add", style: { marginTop: "0" },
+            text: workflow.project ? "refile…" : "file under a project…",
+            onClick: () =>
+              setState({
+                filing: { workflowId: workflow.workflow_id, draft: workflow.project || "" },
+              }),
+          }),
+        ],
+    workflow.origin_dir &&
+      el("span", {
+        class: "mono wf-origin",
+        text: `made in ${workflow.origin_dir}`,
+        title: "Where the harness was when this plan was made. A record, not a live path — "
+             + "if the tree has moved, the folder for opening artifacts is set separately.",
+      }),
+  );
+}
+
+async function saveProject(workflow) {
+  try {
+    await labelWorkflow(workflow.workflow_id, (state.filing.draft || "").trim());
+    setState({ filing: null });
+    await refresh();
+  } catch (err) {
+    setState({ error: err instanceof ApiError ? err.message : String(err), filing: null });
+  }
 }
 
 /** Open the plan's own thread — the panel you get with no node selected.

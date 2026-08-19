@@ -46,6 +46,10 @@ REST_ONLY = {
     "add_review_note",
     "list_review_notes",
     "decide_review_note",
+    # A harness states the project when it creates the plan. Re-filing one afterwards, and
+    # reading the list of labels in use, are both housekeeping in front of a person.
+    "label_workflow",
+    "list_projects",
 }
 
 

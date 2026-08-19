@@ -50,6 +50,10 @@ class WorkflowTemplate(BaseModel):
     description: str | None = None
     parameters: list[TemplateParameter] = Field(default_factory=list)
     steps: list[WorkflowStep]
+    #: The project this plan shape belongs to, if it is specific to one. A workflow made
+    #: from it inherits the label unless the caller says otherwise, which is the point:
+    #: "this project's templates" is the thing worth being able to ask for.
+    project: str | None = None
     status: TemplateStatus = "active"
     version: int = 1
     # Set when the template was extracted from a workflow rather than submitted directly.
@@ -79,6 +83,7 @@ class TemplateCreate(BaseModel):
     description: str | None = None
     parameters: list[TemplateParameter] = Field(default_factory=list)
     steps: list[WorkflowStep]
+    project: str | None = None
 
 
 class TemplateFromWorkflow(BaseModel):
@@ -96,6 +101,9 @@ class TemplateFromWorkflow(BaseModel):
     description: str | None = None
     parameters: list[TemplateParameter] = Field(default_factory=list)
     substitutions: dict[str, str] = Field(default_factory=dict)
+    #: Inherits the workflow's project when omitted. Pass a value to refile it, or an empty
+    #: string to generalise it away from any one project.
+    project: str | None = None
 
     @field_validator("substitutions")
     @classmethod
@@ -119,3 +127,7 @@ class TemplateInstantiate(BaseModel):
     title: str | None = None
     parameters: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    #: Overrides the template's own label; omitted, the workflow inherits it. A shared
+    #: template used on one project is the case that needs this.
+    project: str | None = None
+    origin_dir: str | None = None

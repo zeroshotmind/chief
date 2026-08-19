@@ -204,6 +204,34 @@ control. Nothing is ever collapsed without one.
 python scripts/seed_stress.py --base http://127.0.0.1:8080/v1
 ```
 
+### Projects
+
+Every workflow can carry a **project** — a short label like `chief` or `songs`. The agent
+sets it when it plans, and the workflow list grows a row of chips to narrow by. Workflows
+with no label are not hidden: they collect under **Unfiled**, which is where everything
+planned before projects existed lives until you file it.
+
+A project is deliberately **not a directory**. One product spans several checkouts and one
+checkout carries work for more than one, so tying the two together would only ever be wrong
+for somebody. What *is* recorded per workflow is `origin_dir` — where the agent was standing
+when it planned — shown on the detail screen as *made in …*. It is a memory, not a live path:
+nothing on the server resolves against it, and if the tree has moved it is simply wrong. Its
+one job beyond the record is to offer itself as the **project folder** for opening artifacts,
+in one click, which you can override.
+
+File or refile a workflow from its detail screen, at any status — including ones that
+finished long ago, which are exactly the ones worth filing.
+
+Templates carry a project too, and a workflow made from one inherits it.
+
+### Exporting a template to a project
+
+A template detail screen has **Export to a file**. What comes out is exactly the body
+`POST /templates` takes, id included, so you can commit it beside the code it describes and
+register it again — on this machine or another — by posting it back. The file is written by
+your browser, not by Chief: the server reads nothing off disk and writes nothing to it, which
+is what keeps it a tracker rather than a file server.
+
 ### Templates
 
 A workflow is single-use — approved once, executed once — so reuse lives in **templates**: a

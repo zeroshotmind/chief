@@ -43,6 +43,7 @@ from ..models import (
     TemplateInstantiate,
     WorkflowCreate,
     WorkflowDefinition,
+    WorkflowLabel,
     WorkflowRevise,
     WorkflowTemplate,
 )
@@ -81,6 +82,20 @@ def revise_draft(
 ) -> WorkflowDefinition:
     """Replace a draft's plan. Only a draft; an approved plan changes by amendment."""
     return service.revise_draft(workflow_id, body)
+
+
+@router.patch("/workflows/{workflow_id}", response_model=WorkflowDefinition)
+def label_workflow(
+    workflow_id: str, body: WorkflowLabel, service: Service
+) -> WorkflowDefinition:
+    """File a workflow under a project, or clear the label. Allowed at any status."""
+    return service.label_workflow(workflow_id, body)
+
+
+@router.get("/projects")
+def list_projects(service: Service) -> Any:
+    """Every project label in use, with a count. Derived from the workflows, not stored."""
+    return service.list_projects()
 
 
 @router.get("/workflows/{workflow_id}/versions/{version}", response_model=WorkflowDefinition)

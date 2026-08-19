@@ -65,6 +65,14 @@ designed — before composing, ask three questions of the work: what is *indepen
   *foreseen* amendment, and saying so in the goal is what makes it legible; anything
   foreseeable that is *retry-shaped* still belongs in the graph as a loop.
 
+**Say what it belongs to.** `create_workflow` takes `project` — a short label for the body
+of work ("chief", "songs"), which is how a person finds this later among everything else —
+and `origin_dir`, the directory you are working in. Match a label already in use rather than
+inventing a variant of it (`list_workflows` shows you); a project is not a directory, so two
+checkouts can share one label and one checkout can carry work for two. Leave `project` out if
+the work does not belong to anything in particular. `origin_dir` is a record of where you
+stood, not a path anything resolves against, so give it as you see it.
+
 The workflow comes back as a **draft**. It cannot take a run until it is approved.
 
 ## Fixing a draft

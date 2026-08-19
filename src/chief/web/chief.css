@@ -314,6 +314,17 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 .dot { flex: none; border-radius: 50%; width: 8px; height: 8px; }
 .dot.pulse { animation: chiefpulse 1.6s infinite; }
 
+/* — projects — */
+.chips-project { margin-top: var(--space-1); }
+.wf-project {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.wf-project .input { flex: none; width: 220px; }
+/* Where the plan was made. Dimmer than the label beside it on purpose: one is a filing
+   decision you can change, the other is a fact about the past you cannot. */
+.wf-origin { font-size: 11px; color: var(--color-neutral-500); overflow-wrap: anywhere; }
+
 /* — graph — */
 .graph-split { display: flex; gap: var(--space-5, 14px); align-items: flex-start; }
 /* A plan wider than the window scrolls sideways rather than being clipped. `overflow-y`

@@ -49,6 +49,7 @@ from ..models import (
     TemplateOrigin,
     WorkflowCreate,
     WorkflowDefinition,
+    WorkflowLabel,
     WorkflowRevise,
     WorkflowStep,
     WorkflowTemplate,
@@ -85,6 +86,8 @@ class Chief:
             status="draft",
             version=1,
             steps=body.steps,
+            project=body.project,
+            origin_dir=body.origin_dir,
         )
         validate_definition(defn)
         self.store.create_workflow(defn)
@@ -130,6 +133,45 @@ class Chief:
                 },
             )
         return defn
+
+    def label_workflow(self, workflow_id: str, body: WorkflowLabel) -> WorkflowDefinition:
+        """Which project a workflow belongs to. Not a plan change, so not a revision.
+
+        Allowed at any status, including archived. The workflows that most need labelling
+        are the ones that already ran — nothing about a finished plan is altered by filing
+        it, and a rule that only drafts could be labelled would make the feature useless for
+        every workflow that predates it.
+        """
+        defn = self.store.get_workflow(workflow_id)
+        before = defn.project
+        defn.project = body.project
+        with self.store.transaction() as conn:
+            self.store.save_workflow(conn, defn)
+            self.store.audit(
+                conn,
+                "workflow.labelled",
+                workflow_id=workflow_id,
+                detail={"project": body.project, "was": before},
+            )
+        return self.get_workflow(workflow_id)
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Every project label in use, with how many workflows carry it.
+
+        Derived rather than stored. A project is not an object with a lifecycle — it is
+        whatever labels happen to be on the workflows — so there is nothing to create,
+        rename or delete, and nothing that can disagree with the workflows it claims. The
+        unlabelled ones are counted too, under a null name: they are the majority on any
+        database that predates this, and a list that omitted them would be a list that
+        quietly hid most of the history.
+        """
+        counts: dict[str | None, int] = {}
+        for defn in self.store.list_workflows(None):
+            counts[defn.project] = counts.get(defn.project, 0) + 1
+        return [
+            {"project": name, "workflows": counts[name]}
+            for name in sorted(counts, key=lambda n: (n is None, (n or "").lower()))
+        ]
 
     def get_workflow(self, workflow_id: str) -> WorkflowDefinition:
         defn = self.store.get_workflow(workflow_id)
@@ -327,6 +369,7 @@ class Chief:
             description=body.description,
             parameters=body.parameters,
             steps=body.steps,
+            project=body.project,
             derived_from_workflow_id=derived_from_workflow_id,
             created_at=stamp,
             updated_at=stamp,
@@ -359,6 +402,9 @@ class Chief:
                 description=body.description,
                 parameters=parameters,
                 steps=steps,
+                # Keeping a plan that worked keeps what it was worked on, unless the caller
+                # is deliberately generalising it away from that project.
+                project=(body.project or None) if body.project is not None else defn.project,
             ),
             derived_from_workflow_id=workflow_id,
         )
@@ -395,6 +441,10 @@ class Chief:
                 source="import",
                 generated_by=f"template:{template_id}",
                 steps=tmpl.render_steps(template.steps, values),
+                # The template's label unless this call names one. A project-specific
+                # template making unlabelled workflows would be the feature not working.
+                project=body.project or template.project,
+                origin_dir=body.origin_dir,
             ),
             origin=TemplateOrigin(
                 template_id=template_id, template_version=template.version, parameters=values

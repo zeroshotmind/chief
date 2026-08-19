@@ -113,6 +113,9 @@ class Api:
             f"/v1/runs/{run_id}/artifacts/{artifact_id}/comments", json={"body": body, **kw}
         )
 
+    def label(self, workflow_id: str, project: str | None):
+        return self.client.patch(f"/v1/workflows/{workflow_id}", json={"project": project})
+
     def note(self, workflow_id: str, body: str = "this needs rethinking", **kw: Any):
         return self.client.post(f"/v1/workflows/{workflow_id}/notes", json={"body": body, **kw})
 
