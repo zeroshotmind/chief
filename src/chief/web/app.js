@@ -572,6 +572,17 @@ const commentRow = (comment) =>
     }),
   );
 
+/** Roughly how many lines this will take at the panel's width.
+
+    Counted rather than measured: measuring needs a laid-out node, and this runs while the
+    tree is being built. It only has to be right about *long or not*, and it is generous —
+    offering to expand something that already fits costs a click, while not offering costs
+    the text. */
+const LINE_CHARS = 46;
+const looksLong = (text, lines) =>
+  (text || "").split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / LINE_CHARS)), 0) >
+  lines;
+
 /** One ArtifactRef as a card. `type` is an open string (REQ-46), so anything unrecognised
     degrades to its reference rendered as a link. */
 function artifactCard(artifact, label) {
@@ -580,12 +591,29 @@ function artifactCard(artifact, label) {
   const body = [];
   let meta = artifact.type;
 
+  // An artifact with no id cannot be keyed, so it renders open: better a tall card than one
+  // whose expander does nothing.
+  const key = artifact.artifact_id;
+  const clipped =
+    !!key && (looksLong(title, 2) || (artifact.type === "markdown" && looksLong(data.text, 9)));
+  const toggle = () => setState({ artOpen: { ...state.artOpen, [key]: !state.artOpen[key] } });
+  // Nothing is clamped unless there is a control to unclamp it. The line-count guess can
+  // only cost a redundant "show more" on something that already fitted, never a clamp with
+  // no way past it — which is the failure being fixed, and would be embarrassing to
+  // reintroduce two lines below its own fix.
+  const open = !clipped || !!state.artOpen[key];
+
   if (artifact.type === "markdown" && data.text) {
     meta = "markdown";
     body.push(
       el(
         "div",
-        { class: "art-md" },
+        {
+          class: open ? "art-md" : "art-md clipped",
+          // The faded block is itself the control. Clicking cut-off text to see the rest is
+          // what a person tries first, and it should not be the one thing that does nothing.
+          ...(clipped ? { title: open ? "" : "Show all of it", onClick: toggle } : {}),
+        },
         data.text
           .split("\n")
           .filter((line) => line.trim())
@@ -660,10 +688,26 @@ function artifactCard(artifact, label) {
       "span",
       { class: "art-head" },
       el("span", { class: "art-icon", text: ICONS[artifact.type] || "⌗" }),
-      el("span", { class: "art-label", text: title }),
+      // Wraps rather than ending in an ellipsis. A description is the harness saying what
+      // this file is, and a single line of it with the rest cut off is the half that
+      // happened to fit, not the half worth reading.
+      el("span", {
+        class: open || !clipped ? "art-label" : "art-label clipped",
+        text: title,
+        ...(clipped ? { title: open ? "" : "Show all of it", onClick: toggle } : {}),
+      }),
       el("span", { class: "art-meta", text: meta }),
     ),
     body,
+    // Its own control rather than the comment-link style it borrowed at first: eleven grey
+    // pixels under a faded block reads as a caption, and a person looking for the rest of a
+    // sentence does not find it.
+    clipped &&
+      el("button", {
+        class: "art-more",
+        text: open ? "Show less ▲" : "Show more ▼",
+        onClick: toggle,
+      }),
     path,
     commentBlock(artifact),
   );
@@ -811,6 +855,10 @@ const state = {
   // Half-written artifact comments, keyed by artifact id, for the same reason cpDrafts
   // exists: the poll rebuilds the DOM and takes anything held only in it.
   cmtDrafts: {},
+  // Which artifact cards have been opened out, keyed by artifact id. Collapsed is the
+  // default because the panel is a list of what a run produced, not a reader — but the
+  // collapse has to be reversible, which is the whole of this.
+  artOpen: {},
   // Half-written review notes and which threads have their resolved history open, both
   // keyed by what the note is about — a step id, or NOTE_PLAN. In state for the reason
   // cmtDrafts is: the poll rebuilds the DOM every 15 seconds and takes anything held only
@@ -1591,7 +1639,14 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   for (const step of all) (layers[depth[step.id]] ||= []).push(step);
 
   const widest = Math.max(1, ...layers.map((l) => l.length));
+  // 170 is the floor at which a node still reads. Past that the plan does not get narrower,
+  // it gets wider than the window — twelve steps side by side need 2400px however big the
+  // window is — so the layout reports what it actually needed and the viewport scrolls.
+  // Scaling to fit was the alternative and is worse: a twelve-wide fan at 0.37 is a
+  // diagram of a plan rather than a plan you can read.
   const nodeW = Math.max(170, Math.min(250, (width - 32 - (widest - 1) * GAP) / widest));
+  const needed = 32 + widest * nodeW + (widest - 1) * GAP;
+  const planeW = Math.max(width, needed);
 
   // Node heights vary: a construct grows to hold the steps in its body, so a layer advances
   // by its tallest member rather than by a constant.
@@ -1619,10 +1674,12 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
       const kids = all.filter((k) => (k.depends_on || []).includes(step.id));
       if (kids.length) pos[step.id].x = kids.reduce((a, k) => a + pos[k.id].x, 0) / kids.length;
     }
-    pos[step.id].x = Math.max(16, Math.min(pos[step.id].x, width - nodeW - 16));
+    // Against the plane, not the window: on a wide plan the two differ, and clamping to
+    // the window would drag a centred node back on top of the layer above it.
+    pos[step.id].x = Math.max(16, Math.min(pos[step.id].x, planeW - nodeW - 16));
   }
 
-  return { all, pos, nodeW, height: bottom + 24, ghostIds };
+  return { all, pos, nodeW, height: bottom + 24, ghostIds, planeW };
 }
 
 const MARKERS = { ok: OK, warn: WARN, bad: BAD, dim: DIM, acc: ACC };
@@ -2055,7 +2112,9 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   // Constructs flatten into the display graph: body steps inline, the construct as a gate.
   const display = flattenConstructs(topSteps, ctx);
   const heightFor = (step) => (step.gate ? GATE_H : NODE_H);
-  const { all, pos, nodeW, height, ghostIds } = layout(display, ghosts, rewires, width, heightFor);
+  const { all, pos, nodeW, height, ghostIds, planeW } = layout(display, ghosts, rewires, width, heightFor);
+  // Room for the horizontal scrollbar, but only when there is one to make room for.
+  const scrolls = planeW > width;
 
   // ── edges ──
   const paths = [];
@@ -2256,17 +2315,23 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
 
   const viewport = el(
     "div",
-    { class: "graph-viewport", style: { height: `${Math.ceil(height * scale)}px` } },
+    {
+      class: scrolls ? "graph-viewport scrolls" : "graph-viewport",
+      style: { height: `${Math.ceil(height * scale) + (scrolls ? 14 : 0)}px` },
+      // Says so out loud, because a plan running off the right edge otherwise reads as a
+      // plan with fewer steps in it than it has.
+      title: scrolls ? "Wider than the window — scroll sideways for the rest" : null,
+    },
     el(
       "div",
       {
         class: "graph-plane",
         style: {
-          width: `${width}px`, height: `${height}px`,
+          width: `${planeW}px`, height: `${height}px`,
           transform: scale < 1 ? `scale(${scale})` : "none",
         },
       },
-      svgEl("svg", { width: String(width), height: String(height) }, edgeDefs(), paths),
+      svgEl("svg", { width: String(planeW), height: String(height) }, edgeDefs(), paths),
       nodes,
     ),
   );

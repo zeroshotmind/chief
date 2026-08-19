@@ -316,7 +316,11 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 
 /* — graph — */
 .graph-split { display: flex; gap: var(--space-5, 14px); align-items: flex-start; }
-.graph-viewport { flex: 1; min-width: 0; overflow: hidden; }
+/* A plan wider than the window scrolls sideways rather than being clipped. `overflow-y`
+   stays hidden: the plane is exactly as tall as the layout made it, so a vertical bar would
+   only ever be a rounding artefact. */
+.graph-viewport { flex: 1; min-width: 0; overflow-x: hidden; overflow-y: hidden; }
+.graph-viewport.scrolls { overflow-x: auto; overscroll-behavior-x: contain; }
 .graph-plane { position: relative; transform-origin: top left; }
 .graph-plane svg { position: absolute; inset: 0; overflow: visible; }
 .node {
@@ -427,10 +431,26 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 /* — artifacts — */
 .art-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .art-icon { flex: none; font-size: 12px; color: var(--color-accent); }
+/* Wraps. Clamped to two lines while the card is collapsed, and the clamp is undone rather
+   than the text being cut — an ellipsis with no way past it is the bug this replaces. */
 .art-label {
   flex: 1; min-width: 0; font-size: 12px; color: var(--color-neutral-700);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.4; overflow-wrap: anywhere;
 }
+.art-label.clipped {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.art-more {
+  align-self: flex-start; margin-top: var(--space-1);
+  padding: 2px 8px; cursor: pointer; font: inherit; font-size: 11px;
+  /* Mixed rather than a fixed tint: --color-accent-100 has no dark-mode override, so a
+     literal one would be a near-white pill behind pale lavender text at night. */
+  color: var(--color-accent-700); background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border: 1px solid var(--color-accent-300); border-radius: var(--radius-sm);
+}
+.art-more:hover { border-color: var(--color-accent); color: var(--color-accent); }
+/* Cut-off text is clickable too — it is the first thing anyone tries. */
+.art-label.clipped, .art-md.clipped { cursor: pointer; }
 .art-meta { flex: none; font-size: 10px; color: var(--color-neutral-500); }
 .art-img { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--color-divider); }
 .art-missing {
@@ -442,6 +462,13 @@ main.wide { max-width: 1240px; padding-top: var(--space-4); }
 .art-md {
   display: flex; flex-direction: column; gap: 4px;
   border-left: 2px solid var(--color-divider); padding-left: var(--space-3);
+}
+/* Fades out instead of stopping mid-word, so it reads as "there is more" rather than as a
+   file that ends there. */
+.art-md.clipped {
+  max-height: 132px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
 .art-md .h { font-size: 12px; color: var(--color-text); }
 .art-md .li { font-size: 12px; color: var(--color-neutral-600); display: flex; gap: 6px; }

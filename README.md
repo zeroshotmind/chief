@@ -187,6 +187,23 @@ in the artifacts panel: paths then resolve into editor links (`vscode://file/...
 button hands you the full absolute path. The setting lives in your browser, so the same run
 opened on another machine resolves against that machine's checkout.
 
+### When a plan is bigger than the window
+
+A wide fan-out — twelve independent steps side by side — needs more width than any window
+has. The graph draws at the width the plan actually needs and the viewport **scrolls
+sideways**; it is not scaled down to fit, because a twelve-wide plan shrunk to a third is a
+picture of a plan rather than one you can read.
+
+Artifact descriptions wrap rather than ending in an ellipsis, and anything genuinely long —
+a description over two lines, a markdown preview over nine — collapses with a **show more**
+control. Nothing is ever collapsed without one.
+
+`scripts/seed_stress.py` builds both shapes against a running server if you want to see them:
+
+```bash
+python scripts/seed_stress.py --base http://127.0.0.1:8080/v1
+```
+
 ### Templates
 
 A workflow is single-use — approved once, executed once — so reuse lives in **templates**: a

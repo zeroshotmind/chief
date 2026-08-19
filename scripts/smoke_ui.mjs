@@ -77,6 +77,17 @@ const STEPS = [
 // created_at/updated_at are the store's stamps on the record, not fields a harness sends;
 // the list sorts by them, so the fixture carries them in a deliberately un-alphabetical
 // order.
+// Twelve steps in one layer. The layout floors node width at 170px, so this needs ~2400px
+// however wide the window is — which is the case the viewport used to clip silently.
+const WIDE_STEPS = [
+  { id: "w_open", type: "task", goal: "split it", harness: "claude-code", depends_on: [] },
+  ...Array.from({ length: 12 }, (_, i) => ({
+    id: `w${String(i).padStart(2, "0")}`, type: "task", goal: `shard ${i}`,
+    harness: "claude-code", depends_on: ["w_open"],
+  })),
+  { id: "w_join", type: "task", goal: "merge it", harness: "claude-code",
+    depends_on: Array.from({ length: 12 }, (_, i) => `w${String(i).padStart(2, "0")}`) },
+];
 const WORKFLOWS = [
   { created_at: "2026-03-02T09:00:00Z", updated_at: "2026-03-02T09:00:00Z", workflow_id: "wf_draft", title: "A draft", source: "generated", generated_by: "claude-code", status: "draft", version: 1, steps: STEPS },
   { created_at: "2026-01-05T09:00:00Z", updated_at: "2026-01-06T09:00:00Z", workflow_id: "wf_ok", title: "Approved one", source: "import", generated_by: null, status: "approved", version: 2, steps: STEPS },
@@ -89,7 +100,9 @@ const RUN = {
     // Two refs of the kind a harness actually reports: a file relative to wherever it was
     // working, and something already on the web. They resolve down different arms.
     a: { step_id: "a", status: "completed", summary: "did it", artifacts: [
-      { artifact_id: "art_1", type: "markdown", description: "Persona sheet", ref: "notes/personas.md", data: null,
+      { artifact_id: "art_1", type: "markdown",
+        description: "Persona sheet for the whole cast, including the three walk-on parts that only appear in the second act and the two that were cut but are kept for continuity",
+        ref: "notes/personas.md", data: null,
         comments: [{ comment_id: "cmt_1", body: "the tone here is the one to match", author: "roy", created_at: new Date().toISOString(), via: "rest" }] },
       { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null, comments: [] },
     ] },
@@ -424,6 +437,23 @@ const unlinked = !!unresolved && unresolved.tag === "span" && !unresolved.href;
 // having on the clipboard.
 const stillCopyable = countClass(mainNode(), "art-copy") === 2;
 
+// A long description wraps and is clamped, with a control to open it out. The old
+// behaviour was one line ending in an ellipsis and no way past it.
+const labelClipped = findByClass(mainNode(), "art-label").some((n) => (n.class || "").includes("clipped"));
+// Exactly one of the two: the short one must not be clamped, because nothing would offer
+// to unclamp it — which is the bug being fixed, not a smaller version of it.
+const onlyLongClipped =
+  findByClass(mainNode(), "art-label").filter((n) => (n.class || "").includes("clipped")).length === 1 &&
+  countClass(mainNode(), "art-more") === 1;
+const moreButton = findByClass(mainNode(), "art-more")[0];
+// The cut-off text is itself the control, which is what a person tries before hunting for a
+// button. Driving it that way rather than through the button asserts both at once: the
+// button exists, and clicking the text does what the button does.
+const clippedLabel = findByClass(mainNode(), "art-label").find((n) => (n.class || "").includes("clipped"));
+[...clicks].reverse().find((c) => c.node === clippedLabel)?.fn({ preventDefault() {}, stopPropagation() {} });
+await new Promise((r) => setTimeout(r, 20));
+const labelOpened = findByClass(mainNode(), "art-label").every((n) => !(n.class || "").includes("clipped"));
+
 // A comment already on an artifact is shown, and leaving a new one posts it addressed by
 // artifact id — the only handle that survives artifacts being flattened into one list.
 const commentShown = JSON.stringify(mainNode()).includes("the tone here is the one to match");
@@ -476,6 +506,26 @@ clickByText("Use this template");
 await new Promise((r) => setTimeout(r, 20));
 const paramFields = roots["dialog-root"].children.reduce((n, c) => n + countTag(c, "input"), 0);
 
+// A plan wider than the window. Added now rather than up top so the list assertions above
+// keep counting the three workflows they were written for.
+WORKFLOWS.push({
+  created_at: "2026-04-01T09:00:00Z", updated_at: "2026-04-01T09:00:00Z",
+  workflow_id: "wf_wide", title: "Wide fan-out", source: "generated",
+  generated_by: "claude-code", status: "approved", version: 1, steps: WIDE_STEPS,
+});
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 40));
+clickByText("Wide fan-out");
+await new Promise((r) => setTimeout(r, 60));
+record("open wide plan");
+const wideNodes = countClass(mainNode(), "node");
+// The plane is drawn at the width the plan needs, and the viewport is told to scroll rather
+// than clipping it. Without this the right-hand shards are simply not reachable.
+const wideViewport = findByClass(mainNode(), "graph-viewport")[0];
+const widePlane = findByClass(mainNode(), "graph-plane")[0];
+const planeWidth = parseInt(widePlane.style.width, 10);
+const viewportScrolls = (wideViewport.class || "").includes("scrolls");
+
 console.log(screens.join("\n"));
 console.log(`template graph: ${templateNodes} nodes, ${paramFields} parameter fields`);
 console.log("workflow dialog opened:", dialogOpened);
@@ -484,6 +534,7 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`wide plan:   ${wideNodes} nodes, plane ${planeWidth}px in a 900px window, scrolls=${viewportScrolls}`);
 console.log(`             plan-reachable=${planReachable}, orphan-still-there=${orphanBack}`);
 console.log(`             box=${boxIsTextarea ? "textarea" : "INPUT"}, plain-enter-held=${plainEnterHeld}`);
 console.log(`notes:       plan=${planNotes} (orphan=${orphanShown}), step=${stepNotes}, badges=${noteBadges}, sent=${JSON.stringify(noteSent && noteSent.body)}, resolved=${JSON.stringify(noteResolved && noteResolved.body)}`);
@@ -492,7 +543,7 @@ console.log(`folder:      saved=${rootSaved}, relinked=${rehomed}, unset-is-text
 
 const expected = [
   "Workflows", "Workflow detail", "Workflow detail", "Workflows", "Workflow detail",
-  "Approvals inbox", "Templates", "Template detail",
+  "Approvals inbox", "Templates", "Template detail", "Workflow detail",
 ];
 const actual = screens.map((s) => s.split(" -> ")[1]);
 const ok =
@@ -552,6 +603,16 @@ const ok =
   !!noteResolved &&
   noteResolved.url.endsWith("/workflows/wf_draft/notes/rvw_1") &&
   noteResolved.body.resolved === true &&
+  // Fourteen nodes, twelve of them in one layer: the plane is far wider than the window,
+  // and the viewport scrolls to it instead of hiding the difference.
+  wideNodes === 14 &&
+  planeWidth > 2000 &&
+  viewportScrolls &&
+  // A long artifact description wraps and is clamped, with a way to open it out.
+  labelClipped &&
+  onlyLongClipped &&
+  !!moreButton &&
+  labelOpened &&
   // Comments: the existing one is read back, and a new one goes out by artifact id.
   commentShown &&
   !!comment &&
