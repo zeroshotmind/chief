@@ -666,3 +666,33 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     prose with them named. Nothing renders an approximation of a component that never ran —
     the rule the LaTeX translator set (#33) and the reason the named frame is deliberately
     ugly (#35).
+
+38. **`ArtifactRef.data` does two jobs, and the UI has to tell them apart.** An artifact may
+    carry `data` instead of a `ref` — the model requires one or the other — so `data.text` is
+    sometimes the document *itself*. It is also where a harness puts facts about a file that
+    lives elsewhere: dimensions, a row count, a digest. On one real database the split was
+    seven of the first kind to three of the second.
+
+    That conflation is not worth a second field. `ArtifactRef` appears in six places in the
+    contract and #30 already refused to split it; two near-synonym dicts would leave both
+    conventions live forever and give a harness author a choice with no right answer.
+
+    So the *display* separates them instead. `text` is dropped from the facts, because it is
+    already rendered above as the preview and showing it twice reads as a bug. What remains
+    is shown inline on the card, the same way an instance's metadata is shown on its row —
+    scalars read without a click, structure kept behind a fold. A fold labelled "data" was
+    the first attempt and it failed the only test that matters: the person who asked for
+    metadata to be visible could not find it.
+
+    A summary needs a route to the rest. Inline scalars answer "which branch is this" at a
+    glance and answer nothing else, so every metadata block carries a `{ }` control that
+    opens the whole value in the file viewer — the same folding tree a JSON artifact gets,
+    at a width that can be dragged. One place to read something, whether it came off the
+    disk or out of a run's own record.
+
+    Which is the theme of the three attempts this took. Metadata was stored and rendered
+    nowhere; then rendered on steps, where the data was not; then folded on instances and
+    artifacts, where nobody would open it. "Present in the DOM" is not "visible", and the
+    smoke harness learned the same lesson at the same time — five metadata checks were being
+    computed, printed and asserted nowhere, so it reported `artifact folded=false` and called
+    the run green.

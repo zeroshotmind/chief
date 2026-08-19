@@ -494,6 +494,21 @@ async function openViewer(artifact, label) {
   }
 }
 
+/** Open the drawer on a value rather than a file.
+
+    The inline pairs on a card are a glance — enough to tell one branch from another, and
+    deliberately not the whole of it. Anything longer than a glance belongs where files
+    already go, in the drawer, through the same folding tree: one place to read something,
+    at a width you can drag. */
+function openJsonViewer(title, value) {
+  releaseViewerUrl();
+  viewerNode = null;
+  setState({
+    viewerPending: null,
+    viewer: { title, ref: null, json: value, loading: false, error: null, file: null },
+  });
+}
+
 function closeViewer() {
   releaseViewerUrl();
   viewerNode = null;
@@ -668,6 +683,13 @@ function frameSandbox(url) {
 
 function viewerBody(viewer) {
   const { file } = viewer;
+  // A value rather than a file: metadata opened from a card, through the same tree a JSON
+  // artifact gets. Nothing to fetch, so it is checked before the loading state.
+  if (viewer.json !== undefined && viewer.json !== null) {
+    if (viewer.node) return viewer.node;
+    viewer.node = el("div", { class: "viewer-json" }, jsonValue(viewer.json, 2));
+    return viewer.node;
+  }
   // A page renders itself. This is the only way to see MDX with the components it actually
   // imports — they live in a project Chief has never seen, and the thing that has them is
   // the dev server already serving them. See CONTRACT-NOTES.md #36.
@@ -1184,6 +1206,76 @@ const commentRow = (comment) =>
     }),
   );
 
+/** The part of an artifact's `data` that describes it, rather than *being* it.
+
+    `ArtifactRef.data` is overloaded: for a markdown artifact `data.text` is the document,
+    and for a file somewhere else `data` is facts about it — dimensions, a row count, a
+    digest. The keys already rendered as the preview are dropped here so nothing appears
+    twice. See CONTRACT-NOTES.md #38. */
+function artifactFacts(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const { text, ...facts } = data;
+  return facts;
+}
+
+/** Whatever a harness attached to a step, an instance or an artifact.
+
+    Rendered rather than only stored: it was reachable over the API and shown nowhere, which
+    made it write-only in practice — a harness could report a token count or a cost every run
+    and nobody would ever see one without curl.
+
+    Through the same folding tree the file viewer uses, because it is the same problem: a
+    value of unknown shape and unknown depth, which has to be readable when it is three keys
+    and survivable when it is thirty. */
+function metadataBlock(metadata, variant = "full", label = "Metadata") {
+  if (!metadata || typeof metadata !== "object" || !Object.keys(metadata).length) return null;
+  // The whole thing, wherever it is shown. What is inline is a summary by design, and a
+  // summary with no way to the rest is the fold problem again in a different shape.
+  const openAll = el("button", {
+    class: "meta-open",
+    text: "{ }",
+    title: `Open all of ${label.toLowerCase()} as JSON`,
+    onClick: (e) => {
+      e.stopPropagation?.();
+      openJsonViewer(label, metadata);
+    },
+  });
+  if (variant === "compact") {
+    // On an instance row, and shown rather than folded. What a harness attaches to a branch
+    // is almost always what *distinguishes* that branch — which repo, which variant, which
+    // seed — so hiding it behind a disclosure leaves eight rows reading "Branch 1..8" with
+    // the one useful field one click away each. Scalars go inline; anything with structure
+    // keeps the fold, because that does not fit on a row.
+    const entries = Object.entries(metadata);
+    const flat = entries.filter(([, v]) => v === null || typeof v !== "object");
+    const deep = entries.filter(([, v]) => v !== null && typeof v === "object");
+    return [
+      el(
+        "span",
+        { class: "meta-flat" },
+        flat.map(([key, value]) =>
+          el("span", { class: "meta-pair" },
+            el("span", { class: "meta-key", text: `${key} ` }),
+            el("span", { text: String(value) })),
+        ),
+        // Named when there is nothing inline to name it, so a card with only nested
+        // metadata still says it has some.
+        !flat.length && el("span", { class: "meta-pair meta-key", text: `${entries.length} keys` }),
+        openAll,
+      ),
+    ];
+  }
+  return [
+    el(
+      "span",
+      { class: "section-label meta-head", style: { marginTop: "var(--space-1)" } },
+      el("span", { style: { flex: "1" }, text: label }),
+      openAll,
+    ),
+    el("div", { class: "viewer-json meta-json" }, jsonValue(metadata, 0)),
+  ];
+}
+
 /** Roughly how many lines this will take at the panel's width.
 
     Counted rather than measured: measuring needs a laid-out node, and this runs while the
@@ -1302,6 +1394,11 @@ function artifactCard(artifact, label) {
       el("span", { class: "art-meta", text: meta }),
     ),
     body,
+    // `data` does two jobs, so it is shown two ways. `text` is the artifact *itself* and is
+    // already the preview above — repeating it here would be the same thing twice. Everything
+    // else is the harness describing what it produced, and that is worth reading without a
+    // click, exactly as an instance's metadata is.
+    metadataBlock(artifactFacts(artifact.data), "compact", `${title} · data`),
     // Its own control rather than the comment-link style it borrowed at first: eleven grey
     // pixels under a faded block reads as a caption, and a person looking for the rest of a
     // sentence does not find it.
@@ -2441,8 +2538,12 @@ function stepPanel(step, stepState, def) {
         summary: (instance.status === "failed" && failedBody ? failedBody.summary : instance.summary) || "",
         summaryColor: instance.status === "failed" ? BAD : "var(--color-neutral-500)",
         color: im.color, pulse: pulseOf(im),
+        metadata: instance.metadata,
       };
     }),
+    // Whatever the harness attached to this step. Merged across updates rather than
+    // replaced, so what is here is everything it has ever said, not just the last thing.
+    metadata: stepState.metadata,
     // The construct's body: the steps every instance runs. Static, so it is readable before
     // the first instance exists — which is when a person is deciding whether to approve it.
     exitLabel: step.exit_when ? `Exits when: ${step.exit_when}` : null,
@@ -2496,6 +2597,8 @@ function overviewPanel(run, detail, topSteps) {
     summary: "Select a step or a proposed change to inspect it.",
     summaryColor: "var(--color-neutral-500)",
     instances: [],
+    // What the harness said when it registered the run: what triggered it, which commit.
+    metadata: run.metadata,
     artsLabel: arts.length ? `All artifacts (${arts.length})` : null,
     arts,
   };
@@ -2551,8 +2654,10 @@ function inspector(panel) {
           dot(instance.color, instance.pulse, "6px"),
           el("span", { class: "label", text: instance.label }),
           el("span", { class: "summary", style: { color: instance.summaryColor }, text: instance.summary }),
+          metadataBlock(instance.metadata, "compact", `${instance.label} · metadata`),
         ),
       ),
+      metadataBlock(panel.metadata),
       panel.approve &&
         el(
           "div",

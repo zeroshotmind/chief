@@ -339,6 +339,191 @@ def seed_mdx(root: Path, page: str, site: Path | None) -> bool:
     return True
 
 
+def seed_metadata() -> bool:
+    """Metadata in every place it can be attached, so each one can be seen.
+
+    There are four, and they are not the same thing. The run's is what triggered it. A
+    step's accumulates across its updates. An instance's is what tells one branch from
+    another. An artifact's `data` is the harness describing its own output. A plan has none
+    — `inputs` is a value the plan states, not a record of what happened.
+    """
+    steps = [
+        {"id": "m1", "type": "task", "goal": "Measure the baseline", "harness": "claude-code",
+         "depends_on": [], "inputs": {"dataset": "held-out-v3", "note": "this is plan-time"}},
+        {"id": "m2", "type": "parallel", "goal": "Sweep the variants", "harness": "claude-code",
+         "depends_on": ["m1"], "body": ["m2a"], "on_instance_failure": "continue"},
+        {"id": "m2a", "type": "task", "goal": "Train one variant", "harness": "claude-code",
+         "depends_on": []},
+    ]
+    try:
+        call("POST", "/workflows", {
+            "workflow_id": "wf_meta", "title": "Metadata, everywhere it can be attached",
+            "source": "generated", "generated_by": "claude-code", "steps": steps,
+            "project": "research",
+        })
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            print("'wf_meta' is already there — nothing to do", file=sys.stderr)
+            return False
+        raise
+    call("POST", "/workflows/wf_meta/approve", {"decided_by": "roy"})
+    # On the run: what set it going.
+    run = call("POST", "/workflows/wf_meta/runs", {
+        "metadata": {"trigger": "nightly", "commit": "9f2c1ab", "host": "workstation"},
+    })["run_id"]
+
+    # On a step, over two updates, to show that it merges rather than replaces.
+    call("POST", f"/runs/{run}/steps/m1/updates", {
+        "status": "running", "summary": "measuring", "metadata": {"started_by": "cron"},
+    })
+    call("POST", f"/runs/{run}/steps/m1/updates", {
+        "status": "completed",
+        "summary": "Baseline 0.664 on the held-out split",
+        "metadata": {"accuracy": 0.664, "tokens": 41200, "cost_usd": 0.62,
+                     "timing": {"wall_s": 91.4, "gpu_s": 88.1}},
+        "artifacts": [
+            # One here, because this workflow is about the four *levels* metadata attaches
+            # to. The shapes `data` itself takes are wf_shapes' job.
+            {"type": "file", "ref": "data/metrics.json", "description": "Baseline metrics",
+             "data": {"rows": 4096, "sha256": "3b1f…9ac2", "schema": "metrics/v2"}},
+        ],
+    })
+
+    # On each instance: what tells one branch from another.
+    variants = [
+        {"lr": 3e-4, "beta": 0.02, "seed": 7, "result": "flat after 3k"},
+        {"lr": 1e-4, "beta": 0.02, "seed": 8, "result": "best: 0.681"},
+        {"lr": 3e-4, "beta": 0.01, "seed": 9, "result": "unstable"},
+    ]
+    for index, variant in enumerate(variants):
+        inst = call("POST", f"/runs/{run}/steps/m2/instances",
+                    {"kind": "branch", "index": index})["instance_id"]
+        call("POST", f"/runs/{run}/steps/m2/instances/{inst}/updates", {
+            "status": "completed", "summary": variant.pop("result"), "metadata": variant,
+        })
+    call("POST", f"/runs/{run}/steps/m2/updates",
+         {"instances_closed": True, "summary": "Three variants swept"})
+    return True
+
+
+def seed_shapes(root: Path) -> bool:
+    """Every shape an artifact can take, side by side.
+
+    `ArtifactRef` requires one of `ref` or `data`, and `data` is used for two different
+    things — the artifact's own content, and facts about a file that lives elsewhere. The
+    difference is invisible in the model and obvious on screen only when the cases sit
+    together, which is what this is for. See CONTRACT-NOTES.md #38.
+    """
+    steps = [
+        {"id": "a1", "type": "task", "goal": "Produce one of everything",
+         "harness": "claude-code", "depends_on": []},
+    ]
+    try:
+        call("POST", "/workflows", {
+            "workflow_id": "wf_shapes", "title": "Artifact shapes: a ref, some facts, or both",
+            "source": "generated", "generated_by": "claude-code", "steps": steps,
+            # Set, so the artifacts that name a file can actually be opened. A shape demo
+            # where the files do not resolve demonstrates half of each case.
+            "project": "research", "origin_dir": str(root),
+        })
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            print("'wf_shapes' is already there — nothing to do", file=sys.stderr)
+            return False
+        raise
+    call("POST", "/workflows/wf_shapes/approve", {"decided_by": "roy"})
+    run = call("POST", "/workflows/wf_shapes/runs", {})["run_id"]
+    call("POST", f"/runs/{run}/steps/a1/updates", {"status": "running", "summary": "producing"})
+    call("POST", f"/runs/{run}/steps/a1/updates", {
+        "status": "completed",
+        "summary": "Six artifacts, one of each shape an ArtifactRef can take",
+        "artifacts": [
+            # 1. A ref and nothing else — the plainest case, and the most common.
+            {"type": "log", "ref": "logs/run.log", "description": "Just a file, no metadata"},
+            # 2. A markdown file you can open, *and* facts about it. This is the case worth
+            #    seeing: the card opens the document and reads its metadata at once, and
+            #    neither is in the other's way.
+            {"type": "markdown", "ref": "notes/sweep.md",
+             "description": "A document you can open, with facts beside it",
+             "data": {"words": 412, "sections": 3, "reviewed_by": "roy", "sha256": "9ac2…3b1f"}},
+            # 3. The same for a binary the browser renders but Chief cannot read into text.
+            {"type": "file", "ref": "docs/summary.pdf",
+             "description": "A PDF, with what the harness knows about it",
+             "data": {"pages": 1, "generated_by": "reportlab", "bytes": 853}},
+            {"type": "file", "ref": "data/metrics.json",
+             "description": "And a data file, described the same way",
+             "data": {"rows": 4096, "sha256": "3b1f…9ac2", "schema": "metrics/v2"}},
+            # 3. Content only: `data.text` is the artifact, and no such file exists.
+            {"type": "markdown", "description": "The artifact IS the text — there is no file",
+             "data": {"text": "## Baseline\n\nHeld-out accuracy **0.664**, the number every "
+                              "variant has to beat. Inline maths works too: $A_t = R_t - "
+                              "b(s_t)$.\n"}},
+            # 4. Content and facts in the same dict, which is the conflation itself: `text`
+            #    renders as the preview, `words` and `read_seconds` as facts beside it.
+            {"type": "markdown", "description": "Content and facts in one field",
+             "data": {"text": "## Next\n\n- Whiten the advantages\n- Drop the KL weight\n",
+                      "words": 9, "read_seconds": 4}},
+            # 5. No ref, no content: an artifact that is purely metadata. Legal because the
+            #    model requires one of ref or data, not both.
+            {"type": "measurement", "description": "Nothing to open — the facts are the point",
+             "data": {"device": "M2 Max", "vram_gb": 32, "backend": "mps", "wall_s": 91.4}},
+            # 6. Structure rather than scalars, which is what the fold is for.
+            {"type": "report", "description": "Nested, so it folds instead of going inline",
+             "data": {"per_shard": [{"id": i, "rows": 340 + i * 17} for i in range(4)],
+                      "totals": {"rows": 1462, "review": 3}}},
+        ],
+    })
+    return True
+
+
+def seed_docs(root: Path) -> bool:
+    """A document you can open, carrying facts about itself.
+
+    The case wf_shapes could not be corrected into: artifacts cannot be appended to a step
+    that has finished, so the markdown-and-PDF version of "a file *and* its metadata" needed
+    a workflow of its own.
+    """
+    steps = [
+        {"id": "d1", "type": "task", "goal": "Write it up and export it",
+         "harness": "claude-code", "depends_on": []},
+    ]
+    try:
+        call("POST", "/workflows", {
+            "workflow_id": "wf_docs", "title": "Documents that carry their own metadata",
+            "source": "generated", "generated_by": "claude-code", "steps": steps,
+            "project": "research", "origin_dir": str(root),
+        })
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            print("'wf_docs' is already there — nothing to do", file=sys.stderr)
+            return False
+        raise
+    call("POST", "/workflows/wf_docs/approve", {"decided_by": "roy"})
+    run = call("POST", "/workflows/wf_docs/runs", {})["run_id"]
+    call("POST", f"/runs/{run}/steps/d1/updates", {"status": "running", "summary": "writing"})
+    call("POST", f"/runs/{run}/steps/d1/updates", {
+        "status": "completed",
+        "summary": "The write-up, a PDF of it, and a figure — each with what the harness "
+                   "knows about it",
+        "artifacts": [
+            {"type": "markdown", "ref": "notes/sweep.md",
+             "description": "The write-up — opens here, and says what it is",
+             "data": {"words": 412, "sections": 3, "reviewed_by": "roy",
+                      "sha256": "9ac2…3b1f", "sources": ["run-3", "held-out-v3"],
+                      "checks": {"spelling": "clean", "links": 4, "maths_rendered": 17}}},
+            {"type": "file", "ref": "docs/summary.pdf",
+             "description": "The same, exported — opens in the browser's own viewer",
+             "data": {"pages": 1, "bytes": 853, "generated_by": "hand-rolled writer",
+                      "fonts": ["Helvetica"]}},
+            {"type": "image", "ref": "figures/curve.png",
+             "description": "The loss curve, with how it was drawn",
+             "data": {"width": 480, "height": 240, "drawn_from": "logs/run.log",
+                      "palette": {"line": "#796cbf", "grid": "#e4e4ee"}}},
+        ],
+    })
+    return True
+
+
 def main() -> int:
     global BASE
     here = Path(__file__).resolve().parent.parent
@@ -372,6 +557,15 @@ def main() -> int:
     if seed_mdx(root, args.page, Path(args.site).expanduser() if args.site else None):
         print("seeded wf_mdx")
         print(f"open: {BASE.removesuffix('/v1')}/ui/#/workflow/wf_mdx")
+    if seed_metadata():
+        print("seeded wf_meta")
+        print(f"open: {BASE.removesuffix('/v1')}/ui/#/workflow/wf_meta")
+    if seed_shapes(root):
+        print("seeded wf_shapes")
+        print(f"open: {BASE.removesuffix('/v1')}/ui/#/workflow/wf_shapes")
+    if seed_docs(root):
+        print("seeded wf_docs")
+        print(f"open: {BASE.removesuffix('/v1')}/ui/#/workflow/wf_docs")
     return 0
 
 

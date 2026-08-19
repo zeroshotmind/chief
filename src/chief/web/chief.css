@@ -403,6 +403,35 @@ main.wide.graph { max-width: none; }
   background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 
+/* — metadata —
+   The same folding tree the file viewer uses, sized down for a panel. */
+.meta-json { margin-top: 2px; }
+/* Inline on an instance row: what tells one branch from another, read without a click. */
+.meta-flat {
+  flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: 2px;
+  padding-left: 14px;
+}
+.meta-pair { font-size: 10px; color: var(--color-neutral-600); overflow-wrap: anywhere; }
+.meta-key { color: var(--color-neutral-400); }
+.meta-head { display: flex; align-items: baseline; gap: var(--space-2); }
+/* The way to the whole of it. Small, because the summary beside it is the common case. */
+.meta-open {
+  flex: none; padding: 0 5px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.5;
+  color: var(--color-accent-700); background: none;
+  border: 1px solid var(--color-accent-300); border-radius: 3px;
+}
+.meta-open:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.meta-inline { margin-top: 4px; flex-basis: 100%; padding-left: 14px; }
+.meta-summary {
+  cursor: pointer; list-style: none;
+  font-size: 10px; color: var(--color-neutral-500);
+}
+.meta-summary::-webkit-details-marker { display: none; }
+.meta-summary::before { content: "▸ "; }
+details[open] > .meta-summary::before { content: "▾ "; }
+.meta-summary:hover { color: var(--color-accent-700); }
+
 /* — JSON as a tree — */
 .viewer-json { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; }
 .j-node > .j-summary { cursor: pointer; color: var(--color-neutral-500); list-style: none; }
@@ -775,7 +804,9 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
 }
 
-.inst-row { display: flex; align-items: baseline; gap: var(--space-2); font-size: 12px; }
+/* Wraps, so an instance's metadata drops to its own line under the summary rather than
+   competing with it for the width. */
+.inst-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: 12px; }
 .inst-row .label { flex: none; color: var(--color-neutral-700); }
 .inst-row .summary { min-width: 0; color: var(--color-neutral-500); }
 

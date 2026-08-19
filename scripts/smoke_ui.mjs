@@ -135,7 +135,9 @@ const RUN = {
   step_states: {
     // Two refs of the kind a harness actually reports: a file relative to wherever it was
     // working, and something already on the web. They resolve down different arms.
-    a: { step_id: "a", status: "completed", summary: "did it", artifacts: [
+    a: { step_id: "a", status: "completed", summary: "did it",
+      metadata: { tokens: 41200, cost_usd: 0.62, model: "claude", nested: { retries: 2 } },
+      artifacts: [
       { artifact_id: "art_1", type: "markdown",
         description: "Persona sheet for the whole cast, including the three walk-on parts that only appear in the second act and the two that were cut but are kept for continuity",
         ref: "notes/personas.md",
@@ -143,14 +145,14 @@ const RUN = {
         // span, a list, and inline maths — the shapes a harness actually reports.
         data: { text: "## Cast\nfirst line\nsecond line\n\nThe **lead** is set; see `personas.md`.\n\n- one\n- two\n\nLoss is $x^2 + \\alpha$ per pass." },
         comments: [{ comment_id: "cmt_1", body: "the tone here is the one to match", author: "roy", created_at: new Date().toISOString(), via: "rest" }] },
-      { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null, comments: [] },
+      { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: { additions: 41, files: 3 }, comments: [] },
       { artifact_id: "art_3", type: "file", description: "Metrics", ref: "data/metrics.json", data: null, comments: [] },
       { artifact_id: "art_4", type: "file", description: "Post", ref: "notes/post.mdx", data: null, comments: [] },
       // The same kind of document with nothing beside it: no modules, so nothing to run, and
       // it falls back to prose with its components named. Both paths matter.
       { artifact_id: "art_5", type: "file", description: "Lone", ref: "notes/named.mdx", data: null, comments: [] },
     ] },
-    b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {} }] },
+    b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { seed: 7, deep: { a: 1 } } }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
   },
 };
@@ -674,6 +676,44 @@ clickByText("Add");
 await new Promise((r) => setTimeout(r, 40));
 const comment = posts.find((x) => x.url.includes("/comments"));
 
+// Metadata a harness attached, which used to be stored and shown nowhere at all. On the
+// step, on an instance, and on an artifact — three places it can arrive and three places it
+// was invisible. Selecting a node changes the inspector, so the selection is put back.
+clickByText("did it");
+await new Promise((r) => setTimeout(r, 30));
+const stepMetaShown = JSON.stringify(mainNode()).includes("41200") &&
+                      countClass(mainNode(), "meta-json") === 1;
+const stepMetaFolds = countClass(mainNode(), "j-node") > 0;
+// An artifact's descriptive `data` reads inline, like an instance's — it is the harness
+// saying what it produced, and a fold labelled "data" is not something anyone finds.
+const artFactsInline = findByClass(mainNode(), "meta-pair")
+  .some((n) => JSON.stringify(n).includes("additions"));
+// An instance's metadata is read without a click: what a harness attaches to a branch is
+// what tells that branch from the others, so hiding it leaves eight rows labelled
+// "Branch 1..8" with the useful field one click away each.
+clickByText("each thing");
+await new Promise((r) => setTimeout(r, 30));
+const instPairs = findByClass(mainNode(), "meta-pair").map((n) => JSON.stringify(n));
+const instInline = instPairs.some((p) => p.includes("seed") && p.includes("7"));
+// Scalars go inline; the whole of it — nested values included — is one click away in the
+// drawer, through the same tree a JSON artifact gets. A summary with no route to the rest
+// is the fold problem in a different shape.
+const openAll = findByClass(mainNode(), "meta-open")[0];
+[...clicks].reverse().find((c) => c.node === openAll).fn({ preventDefault() {}, stopPropagation() {} });
+await new Promise((r) => setTimeout(r, 40));
+const metaDrawer = findByClass(roots.app, "viewer")[0];
+const instDeepInDrawer = !!metaDrawer && JSON.stringify(metaDrawer).includes("deep") &&
+                         countClass(metaDrawer, "viewer-json") === 1;
+// Opened from a value, so nothing was fetched for it.
+const metaNoFetch = fileRequests === 0;
+clickIn(findByClass(roots.app, "viewer")[0], "✕");
+await new Promise((r) => setTimeout(r, 20));
+clickByText("each thing");
+await new Promise((r) => setTimeout(r, 30));
+clickByText("did it");
+await new Promise((r) => setTimeout(r, 30));
+
+
 // The file viewer: click the ◱ beside a path and the drawer opens on the file itself. The
 // bytes come from the server, which is the only arrangement that works when the UI is
 // reached through a tunnel from the machine the files are on.
@@ -929,6 +969,7 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
 console.log(`frame:        framed=${framed}, not fetched=${frameNotFetched}, page inset=${pageInset}, sandbox="${frame && frame.sandbox}"`);
@@ -955,6 +996,15 @@ const expected = [
 const actual = screens.map((s) => s.split(" -> ")[1]);
 const ok =
   dialogOpened &&
+  // Metadata, in the four places it can be attached. These were computed and printed and
+  // — for a while — asserted nowhere, which is a report rather than a test: the harness
+  // said "artifact folded=false" and still called the run green.
+  stepMetaShown &&
+  stepMetaFolds &&
+  artFactsInline &&
+  instInline &&
+  instDeepInDrawer &&
+  metaNoFetch &&
   expected.every((e, i) => e === actual[i]) &&
   // a + c + d + e + the loop's gate, all ordinary nodes in one flat graph — drafted or
   // running. The checkpoint is a node like any other; what marks it is its class.

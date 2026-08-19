@@ -105,3 +105,53 @@ def test_unknown_run_and_step(api: Api) -> None:
     assert api.client.get("/v1/runs/nope").status_code == 404
     _, run_id = api.run([task("step_01")])
     assert api.update_step(run_id, "ghost", status="completed").status_code == 404
+
+
+# --- metadata, and where it survives ---------------------------------------------------------
+
+
+def test_a_run_keeps_the_metadata_it_was_registered_with(api):
+    """`RunCreate` has always accepted this. Until `RunState` declared it, the API answered
+    201 and the value was never seen again — accepted and dropped, which is worse than
+    refused, because nothing tells the caller."""
+    workflow_id = api.approved_workflow([task("s1")])
+    response = api.client.post(
+        f"/v1/workflows/{workflow_id}/runs",
+        json={"metadata": {"trigger": "nightly", "commit": "abc123"}},
+    )
+    assert response.status_code == 201, response.text
+    run_id = response.json()["run_id"]
+    assert api.get_run(run_id)["metadata"] == {"trigger": "nightly", "commit": "abc123"}
+
+
+def test_a_run_with_no_metadata_has_an_empty_one(api):
+    _, run_id = api.run([task("s1")])
+    assert api.get_run(run_id)["metadata"] == {}
+
+
+def test_step_metadata_merges_across_updates_rather_than_replacing(api):
+    """Unlike artifacts, which are append-only, and unlike summary, which is the latest
+    word. A harness reporting a cost on one update and a token count on the next ends with
+    both."""
+    _, run_id = api.run([task("s1")])
+    api.update_step(run_id, "s1", status="running", metadata={"tokens": 100})
+    api.update_step(run_id, "s1", status="completed", metadata={"cost_usd": 0.4})
+    assert api.get_run(run_id)["step_states"]["s1"]["metadata"] == {
+        "tokens": 100, "cost_usd": 0.4,
+    }
+
+
+def test_a_later_update_can_correct_one_key_without_losing_the_others(api):
+    _, run_id = api.run([task("s1")])
+    api.update_step(run_id, "s1", status="running", metadata={"tokens": 100, "model": "a"})
+    api.update_step(run_id, "s1", metadata={"tokens": 250})
+    assert api.get_run(run_id)["step_states"]["s1"]["metadata"] == {
+        "tokens": 250, "model": "a",
+    }
+
+
+def test_a_plan_has_no_metadata_of_its_own(api):
+    """Steps carry `inputs` — values the plan states — and that is a different thing from a
+    record of what happened, which is what metadata is everywhere else here."""
+    response = api.create_workflow([task("s1")], metadata={"anything": 1})
+    assert response.status_code == 422

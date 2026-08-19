@@ -517,6 +517,7 @@ class Chief:
 
         stamp = now()
         run = RunState(
+            metadata=body.metadata,
             run_id=run_id,
             workflow_id=workflow_id,
             base_version=defn.version,

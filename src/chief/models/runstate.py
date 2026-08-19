@@ -165,6 +165,10 @@ class RunState(BaseModel):
     base_version: int
     applied_amendment_ids: list[str] = Field(default_factory=list)
     status: RunStatus = "running"
+    # Whatever the harness said when it registered this run — what triggered it, which
+    # commit, which machine. `RunCreate` has always accepted it; until it was declared here
+    # it was accepted and dropped, which is worse than refusing it.
+    metadata: dict[str, Any] = Field(default_factory=dict)
     step_states: dict[str, StepState] = Field(default_factory=dict)
     created_at: str
     updated_at: str
