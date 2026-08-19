@@ -58,7 +58,19 @@ globalThis.document = {
   addEventListener() {},
   createTextNode: (t) => ({ text: t }),
 };
-globalThis.window = { addEventListener() {} };
+// Recorded rather than swallowed: a drag listens on the window for pointermove/up, so a
+// stub that dropped them could not be driven, and the resize would be untestable.
+const winListeners = [];
+globalThis.window = {
+  innerWidth: 1400,
+  addEventListener(type, fn) { winListeners.push({ type, fn }); },
+  removeEventListener(type, fn) {
+    const i = winListeners.findIndex((l) => l.type === type && l.fn === fn);
+    if (i >= 0) winListeners.splice(i, 1);
+  },
+};
+const fireWindow = (type, event) =>
+  winListeners.filter((l) => l.type === type).forEach((l) => l.fn(event));
 globalThis.location = { search: "", hash: "", replace(h) { this.hash = h; } };
 globalThis.Node = Object;
 globalThis.setInterval = () => 0;
@@ -110,7 +122,10 @@ const RUN = {
     a: { step_id: "a", status: "completed", summary: "did it", artifacts: [
       { artifact_id: "art_1", type: "markdown",
         description: "Persona sheet for the whole cast, including the three walk-on parts that only appear in the second act and the two that were cut but are kept for continuity",
-        ref: "notes/personas.md", data: null,
+        ref: "notes/personas.md",
+        // Exercises the renderer end to end: a heading, a hard line break, emphasis, a code
+        // span, a list, and inline maths — the shapes a harness actually reports.
+        data: { text: "## Cast\nfirst line\nsecond line\n\nThe **lead** is set; see `personas.md`.\n\n- one\n- two\n\nLoss is $x^2 + \\alpha$ per pass." },
         comments: [{ comment_id: "cmt_1", body: "the tone here is the one to match", author: "roy", created_at: new Date().toISOString(), via: "rest" }] },
       { artifact_id: "art_2", type: "pr", description: "The PR", ref: "https://example.com/pr/1", data: null, comments: [] },
     ] },
@@ -477,6 +492,16 @@ const unlinked = !!unresolved && unresolved.tag === "span" && !unresolved.href;
 // having on the clipboard.
 const stillCopyable = countClass(mainNode(), "art-copy") === 2;
 
+// Markdown, rendered rather than dumped as one run-on line: a heading, a hard break where
+// the harness put a newline, emphasis, a code span, a list, and maths as MathML.
+const mdParas = countClass(mainNode(), "md-p");
+const mdHeads = countClass(mainNode(), "md-h");
+const mdCode = countClass(mainNode(), "md-code");
+const mdBreaks = countTag(mainNode(), "br");
+const mdBold = countTag(mainNode(), "strong");
+const mdMath = countTag(mainNode(), "math");
+const mdRaw = countClass(mainNode(), "math-raw");
+
 // A long description wraps and is clamped, with a control to open it out. The old
 // behaviour was one line ending in an ellipsis and no way past it.
 const labelClipped = findByClass(mainNode(), "art-label").some((n) => (n.class || "").includes("clipped"));
@@ -504,6 +529,31 @@ await new Promise((r) => setTimeout(r, 10));
 clickByText("Add");
 await new Promise((r) => setTimeout(r, 40));
 const comment = posts.find((x) => x.url.includes("/comments"));
+
+// The panel is resizable from its left edge. Dragged leftwards it grows, because the handle
+// is on that edge and the panel follows the pointer into the space it opens.
+const handle = findByClass(mainNode(), "split-handle")[0];
+const grab = [...handlers].reverse().find((h) => h.type === "pointerdown" && h.node === handle);
+const inspectorBefore = parseInt(findByClass(mainNode(), "inspector")[0].style.width, 10);
+grab.fn({ clientX: 1000, preventDefault() {} });
+fireWindow("pointermove", { clientX: 880 });
+// Mid-drag the node is moved directly, without a render — a setState per pointermove would
+// tear down whatever field is being typed into elsewhere on the screen.
+const widthDuringDrag = parseInt(findByClass(mainNode(), "inspector")[0].style.width, 10);
+fireWindow("pointerup", {});
+await new Promise((r) => setTimeout(r, 20));
+const inspectorAfter = parseInt(findByClass(mainNode(), "inspector")[0].style.width, 10);
+const widthStored = Number(stored["chief.inspectorWidth"]);
+// And it cannot be dragged narrower than its contents: clamped, not merely discouraged.
+// A fresh handle, because the render after the first drag replaced the one above.
+const handle2 = findByClass(mainNode(), "split-handle")[0];
+[...handlers].reverse()
+  .find((x) => x.type === "pointerdown" && x.node === handle2)
+  .fn({ clientX: 1000, preventDefault() {} });
+fireWindow("pointermove", { clientX: 3000 });
+fireWindow("pointerup", {});
+await new Promise((r) => setTimeout(r, 20));
+const clamped = parseInt(findByClass(mainNode(), "inspector")[0].style.width, 10);
 
 // Filing a workflow under a project, from the screen you are looking at it on. Allowed at
 // any status: the workflows most in need of filing are the ones that already ran.
@@ -593,6 +643,8 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`markdown:    ${mdParas} paragraphs, ${mdHeads} heading, ${mdBreaks} line break, ${mdBold} bold, ${mdCode} code, ${mdMath} math, ${mdRaw} unrendered`);
+console.log(`inspector:   ${inspectorBefore} -> ${widthDuringDrag} (drag) -> ${inspectorAfter} (committed), stored=${widthStored}, floor=${clamped}`);
 console.log(`projects:    chips ${JSON.stringify(chipLabels)}`);
 console.log(`             unfiled=[${unfiledOnly}] chief=[${chiefOnly}] all=${backToAll}, origin-shown=${originShown}`);
 console.log(`             filed=${JSON.stringify(filed && filed.body)}, exported keys=${exportedBody && Object.keys(exportedBody).join(",")}`);
@@ -665,6 +717,22 @@ const ok =
   !!noteResolved &&
   noteResolved.url.endsWith("/workflows/wf_draft/notes/rvw_1") &&
   noteResolved.body.resolved === true &&
+  // Markdown reaches the screen as elements, not as one line of text.
+  mdParas >= 2 &&
+  mdHeads === 1 &&
+  mdBreaks === 1 &&
+  mdBold === 1 &&
+  mdCode === 1 &&
+  mdMath === 1 &&
+  mdRaw === 0 &&
+  // The panel resizes from its left edge, moves during the drag without a re-render, and
+  // the width it lands on is remembered.
+  inspectorBefore === 360 &&
+  widthDuringDrag === 480 &&
+  inspectorAfter === 480 &&
+  widthStored === 480 &&
+  // Dragged far past its floor it stops at the floor, rather than collapsing to nothing.
+  clamped === 280 &&
   // One chip per project in use, an Unfiled bucket, and an everything chip.
   chipLabels.join("|") === "Every project 3|chief 1|songs 1|Unfiled 1" &&
   unfiledOnly === "Archived one" &&

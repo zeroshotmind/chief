@@ -36,6 +36,7 @@ import {
   addReviewNote, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
+import { markdown, inline } from "./markdown.js";
 
 // ── colour and status vocabulary ─────────────────────────────────────────────────────────
 // Colours stay as CSS custom properties rather than literals so the dark palette in
@@ -389,6 +390,107 @@ const writeRoot = (value, project = null) => {
   }
 };
 
+// ── the inspector's width ────────────────────────────────────────────────────────────────
+//
+// Dragged from its left edge, and remembered. A fixed 360px is right for a step's goal and
+// wrong for a markdown artifact or a long note thread, and which of those you are reading
+// is not something the app can know.
+
+const INSPECTOR_KEY = "chief.inspectorWidth";
+const INSPECTOR_DEFAULT = 360;
+const INSPECTOR_MIN = 280;
+
+/** Never wider than most of the window, and never so narrow the cards inside it collapse.
+    Recomputed on every drag rather than stored, so a width saved on a wide monitor does not
+    swallow the graph when the same browser opens on a laptop. */
+function clampInspector(width) {
+  const room = (typeof window !== "undefined" && window.innerWidth) || 1200;
+  const max = Math.max(INSPECTOR_MIN, Math.min(720, Math.round(room * 0.6)));
+  return Math.max(INSPECTOR_MIN, Math.min(max, Math.round(width)));
+}
+
+const readInspectorWidth = () => {
+  try {
+    return clampInspector(Number(localStorage.getItem(INSPECTOR_KEY)) || INSPECTOR_DEFAULT);
+  } catch {
+    return INSPECTOR_DEFAULT;
+  }
+};
+
+const writeInspectorWidth = (width) => {
+  try {
+    localStorage.setItem(INSPECTOR_KEY, String(width));
+  } catch {
+    /* it still applies for this session; it just will not survive a reload */
+  }
+};
+
+/** The live inspector element, so a drag can move it without a re-render.
+
+    Same reason `copyPath` writes its acknowledgement straight onto the node: `setState`
+    rebuilds the whole tree, and doing that per pointermove would drop frames and tear down
+    the field someone is typing into. The state is updated once, when the drag ends. */
+let inspectorNode = null;
+
+function startInspectorResize(event) {
+  // Stops the browser deciding a drag across a panel is a text selection.
+  if (event.preventDefault) event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = state.inspectorWidth;
+  let width = startWidth;
+
+  const onMove = (moveEvent) => {
+    // Leftwards is wider: the handle is on the panel's left edge, so the panel grows into
+    // the space the pointer is moving through.
+    width = clampInspector(startWidth + (startX - moveEvent.clientX));
+    if (inspectorNode) inspectorNode.style.width = `${width}px`;
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    writeInspectorWidth(width);
+    // One render at the end. `render` re-measures the graph, so the plan relays out into
+    // whatever room the panel left it rather than staying at its old width.
+    setState({ inspectorWidth: width });
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
+/** The grip between the plan and the panel. */
+function inspectorHandle() {
+  return el("div", {
+    class: "split-handle",
+    // Announced as what it is, and usable without a pointer: a drag is not available to
+    // everyone, and the whole control would otherwise be mouse-only.
+    role: "separator",
+    "aria-orientation": "vertical",
+    "aria-label": "Resize the panel",
+    tabindex: "0",
+    title: "Drag to resize · double-click to reset",
+    onPointerdown: startInspectorResize,
+    onDblclick: () => {
+      writeInspectorWidth(INSPECTOR_DEFAULT);
+      setState({ inspectorWidth: INSPECTOR_DEFAULT });
+    },
+    onKeyDown: (e) => {
+      const step = e.shiftKey ? 64 : 16;
+      const delta = e.key === "ArrowLeft" ? step : e.key === "ArrowRight" ? -step : 0;
+      if (!delta) return;
+      if (e.preventDefault) e.preventDefault();
+      const width = clampInspector(state.inspectorWidth + delta);
+      writeInspectorWidth(width);
+      setState({ inspectorWidth: width });
+    },
+  });
+}
+
+/** The plan and the panel, with the grip between them. One helper because all three screens
+    that draw a graph compose exactly this, and a handle missing from one of them is the
+    kind of difference nobody notices until they are on that screen. */
+const splitView = (viewport, panel) =>
+  el("div", { class: "graph-split" }, viewport, inspectorHandle(), inspector(panel));
+
 /** Anything with a scheme is somewhere else — http, but also mailto: or a git+ssh remote. */
 const isUrlRef = (ref) => /^[a-z][a-z0-9+.-]*:/i.test(ref || "");
 const isFileRef = (ref) => !!ref && !isUrlRef(ref);
@@ -617,7 +719,7 @@ const commentRow = (comment) =>
   el(
     "div",
     { class: "cmt" },
-    el("span", { class: "cmt-body", text: comment.body }),
+    el("span", { class: "cmt-body md-block" }, markdown(comment.body)),
     el("span", {
       class: "cmt-meta",
       text: `${comment.author}${comment.created_at ? ` · ${relAgo(comment.created_at)}` : ""}`,
@@ -666,16 +768,7 @@ function artifactCard(artifact, label) {
           // what a person tries first, and it should not be the one thing that does nothing.
           ...(clipped ? { title: open ? "" : "Show all of it", onClick: toggle } : {}),
         },
-        data.text
-          .split("\n")
-          .filter((line) => line.trim())
-          .map((line) =>
-            line.startsWith("## ")
-              ? el("span", { class: "h", text: line.slice(3) })
-              : line.startsWith("- ")
-                ? el("span", { class: "li" }, el("span", { text: line.slice(2) }))
-                : el("span", { class: "p", text: line }),
-          ),
+        markdown(data.text),
       ),
     );
   } else if (artifact.type === "image" && artifact.ref) {
@@ -921,6 +1014,9 @@ const state = {
   // is being changed. Read from localStorage once, here, so every render is a plain field
   // lookup rather than a trip through storage.
   filesRoot: readRoot(),
+  // How wide the right-hand panel is. Read from storage once, here, so every render is a
+  // field lookup rather than a trip through localStorage.
+  inspectorWidth: readInspectorWidth(),
   rootEditing: false,
   rootDraft: "",
   detail: null, // { runId, state, def, amendments }
@@ -1921,9 +2017,12 @@ function overviewPanel(run, detail, topSteps) {
 }
 
 function inspector(panel) {
-  return el(
+  const aside = el(
     "aside",
-    { class: "inspector", "data-screen-label": "Inspector" },
+    {
+      class: "inspector", "data-screen-label": "Inspector",
+      style: { width: `${state.inspectorWidth}px` },
+    },
     el(
       "section",
       { class: "card" },
@@ -1941,7 +2040,11 @@ function inspector(panel) {
       }),
       panel.warn && el("div", { class: "accent-note", text: panel.warn }),
       panel.summary &&
-        el("span", { style: { fontSize: "12px", color: panel.summaryColor }, text: panel.summary }),
+        el(
+          "span",
+          { class: "md-inline", style: { fontSize: "12px", color: panel.summaryColor } },
+          inline(panel.summary),
+        ),
       panel.opsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.opsLabel }),
       (panel.ops || []).map(opRow),
@@ -1982,6 +2085,8 @@ function inspector(panel) {
     panel.artsLabel && rootRow(panel.arts || []),
     (panel.arts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
   );
+  inspectorNode = aside;
+  return aside;
 }
 
 // ── templates ────────────────────────────────────────────────────────────────────────────
@@ -2183,7 +2288,7 @@ function templateDetailScreen() {
           }),
         ),
     ),
-    el("div", { class: "graph-split" }, viewport, inspector(panel || templatePanel(template, topSteps))),
+    splitView(viewport, panel || templatePanel(template, topSteps)),
   );
 }
 
@@ -2609,18 +2714,14 @@ function workflowDetailScreen() {
           ),
         ),
     ),
-    el(
-      "div",
-      { class: "graph-split" },
+    // Whichever panel is showing gets the workflow, and with it the note thread. With no
+    // node selected that is the plan overview, which is exactly the right home for a note
+    // about the plan rather than about any one step.
+    splitView(
       viewport,
-      // Whichever panel is showing gets the workflow, and with it the note thread. With no
-      // node selected that is the plan overview, which is exactly the right home for a note
-      // about the plan rather than about any one step.
-      inspector(
-        Object.assign(
-          panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
-          { noteWorkflow: workflow },
-        ),
+      Object.assign(
+        panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
+        { noteWorkflow: workflow },
       ),
     ),
   );
@@ -2726,7 +2827,7 @@ function noteRow(workflow, note) {
           "A revision removed that step. Whether that answered this note, or worked around " +
           "it, is yours to say — so it stays open until you close it.",
       }),
-    el("span", { class: "cmt-body", text: note.body }),
+    el("span", { class: "cmt-body md-block" }, markdown(note.body)),
     el(
       "span",
       { class: "note-foot" },
@@ -3020,7 +3121,7 @@ function detailScreen() {
             : ""),
       }),
     ),
-    el("div", { class: "graph-split" }, viewport, inspector(panel || overviewPanel(run, detail, topSteps))),
+    splitView(viewport, panel || overviewPanel(run, detail, topSteps)),
   );
 }
 

@@ -204,6 +204,40 @@ control. Nothing is ever collapsed without one.
 python scripts/seed_stress.py --base http://127.0.0.1:8080/v1
 ```
 
+### Markdown and maths
+
+Artifact bodies, step summaries, comments and review notes are rendered rather than dumped
+as one run-on line. **Newlines are kept** — a single one is a line break, not a space, because
+a harness reporting a summary and a person typing in a textarea both mean the break they
+typed. On top of that: headings, bold and italic, `code` and fenced blocks, lists,
+blockquotes, links, and **LaTeX** between `$…$` or `$$…$$`.
+
+The maths is translated to MathML and typeset by the browser. That is what makes it possible
+without a dependency — no CDN tag on a loopback tool, and no 300KB of vendored KaTeX for text
+that is usually three lines of prose.
+
+It is a **subset**, and it says so when it meets something outside it: unrenderable maths is
+shown as its own source on a marked background, so `$\begin{matrix}…$` reads as *not
+rendered* rather than disappearing. Covered: fractions, roots, sub- and superscripts, sums and
+integrals with limits, Greek, the usual relations and arrows, `\left…\right` fences, `\text`,
+`\mathbb`/`\mathbf`, accents. Not covered: environments (`matrix`, `align`, `cases`), macros,
+and alignment.
+
+Nothing is ever built as an HTML string — every node is created and its text set through
+`textContent`. Artifact bodies come from outside, so that is a security property rather than a
+style preference, and `scripts/test_markdown.mjs` asserts it directly.
+
+### Sizing the panel
+
+The panel on the right — run overview, step detail, artifacts, feedback — is dragged from
+its **left edge**, and the width is remembered per browser. Double-click the grip to go back
+to the default; with it focused, arrow keys move it (hold shift for bigger steps), because a
+drag is not available to everyone.
+
+It has a floor, so it cannot be collapsed to a sliver its cards cannot render in, and a
+ceiling relative to the window, so a width saved on a large monitor does not swallow the
+graph when the same browser opens on a laptop.
+
 ### Projects
 
 Every workflow can carry a **project** — a short label like `chief` or `songs`. The agent
@@ -250,7 +284,7 @@ the policy is written rather than when a decision is made.
 
 ## The web UI
 
-`src/chief/web/` — four static files, no build step and no CDN, served by the same process
+`src/chief/web/` — five static files, no build step and no CDN, served by the same process
 (REQ-21). It is a pure API client (REQ-18): a workflow list, a detail screen that draws the
 plan as a dependency graph with per-instance state and artifacts, an approvals inbox covering
 both pending amendments and blocked checkpoints, and the decision controls.
@@ -349,7 +383,7 @@ src/chief/
   api/        REST routes
   mcp_server.py MCP tools (REQ-2), mounted at /mcp on the same app
   transport.py  which transport the current call arrived on
-  web/        the UI: four static files, no build step
+  web/        the UI: five static files, no build step
 tests/        227 tests
 scripts/      seed_demo.py, smoke_ui.mjs (headless UI check)
 integrations/claude-code/   MCP registration + the skill that drives it
@@ -362,10 +396,11 @@ than trusting it.
 ### Developing on it
 
 ```bash
-pytest                          # 227 tests
+pytest                          # 276 tests
 ruff check src tests scripts
 node scripts/smoke_ui.mjs       # headless render of every UI screen; needs node
 NO_TEMPLATES=1 node scripts/smoke_ui.mjs   # same, against a server without /templates
+node scripts/test_markdown.mjs  # the markdown and maths renderer, case by case
 ```
 
 Python changes need the server restarted. Changes to `src/chief/web/` need only a browser

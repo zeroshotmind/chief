@@ -417,8 +417,26 @@ main.wide.graph { max-width: none; }
   background: color-mix(in srgb, var(--warn) 6%, var(--color-surface));
 }
 
+/* The grip between the plan and the panel. Wider than it looks — a 3px target is a target
+   you miss — with the visible line drawn by a pseudo-element inside it. */
+.split-handle {
+  flex: none; width: 11px; align-self: stretch; min-height: 120px;
+  cursor: col-resize; position: relative; border: 0; background: none; padding: 0;
+  border-radius: var(--radius-sm);
+}
+.split-handle::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 5px;
+  width: 1px; background: var(--color-divider);
+}
+.split-handle:hover::before, .split-handle:focus-visible::before {
+  background: var(--color-accent); width: 2px; left: 4px;
+}
+.split-handle:focus-visible { outline: none; }
+
 /* — inspector — */
 .inspector {
+  /* Width is set inline from the remembered value; this is only the fallback for a render
+     that has not applied one yet. */
   flex: none; width: 360px; position: sticky; top: 64px;
   display: flex; flex-direction: column; gap: var(--space-3);
   max-height: calc(100vh - 96px); overflow-y: auto;
@@ -486,10 +504,50 @@ main.wide.graph { max-width: none; }
   -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
-.art-md .h { font-size: 12px; color: var(--color-text); }
-.art-md .li { font-size: 12px; color: var(--color-neutral-600); display: flex; gap: 6px; }
-.art-md .li::before { content: "·"; flex: none; color: var(--color-neutral-400); }
-.art-md .p { font-size: 12px; color: var(--color-neutral-600); }
+
+/* — rendered markdown —
+   Sized for the inspector rather than for a document: this is a preview next to a plan, so
+   the headings are barely larger than the body and the vertical rhythm is tight. */
+.md-block, .art-md { font-size: 12px; line-height: 1.5; color: var(--color-neutral-700); }
+.md-p { margin: 0 0 var(--space-2); }
+.md-p:last-child { margin-bottom: 0; }
+.md-h { font-size: 12px; font-weight: 600; color: var(--color-text); margin: var(--space-2) 0 4px; }
+.md-h:first-child { margin-top: 0; }
+.md-list { margin: 0 0 var(--space-2); padding-left: var(--space-4); }
+.md-list li { margin: 2px 0; }
+.md-quote {
+  margin: 0 0 var(--space-2); padding-left: var(--space-2);
+  border-left: 2px solid var(--color-divider); color: var(--color-neutral-600);
+}
+.md-hr { border: 0; border-top: 1px solid var(--color-divider); margin: var(--space-2) 0; }
+.md-code {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 1px 4px; border-radius: 3px;
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+.md-pre {
+  margin: 0 0 var(--space-2); padding: var(--space-2);
+  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-text) 5%, transparent);
+  /* Code does not reflow, so it scrolls in its own box rather than widening the panel. */
+  overflow-x: auto;
+}
+.md-pre code { font-family: var(--font-mono); font-size: 11px; white-space: pre; }
+.md-link { color: var(--color-accent-700); text-decoration: underline; }
+.md-inline { display: block; }
+
+/* — maths —
+   MathML is laid out by the browser; all that is needed here is size and centring. */
+math { font-size: 1.05em; }
+.md-math { margin: 0 0 var(--space-2); overflow-x: auto; }
+math[display="block"] { display: block; margin: var(--space-1) auto; }
+/* Maths this renderer could not translate, shown as its own source. Marked so it reads as
+   "not rendered" rather than as a typo in the text. */
+.math-raw {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 0 3px; border-radius: 3px;
+  color: var(--color-neutral-600);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
 .art-video {
   aspect-ratio: 16 / 9; border-radius: var(--radius-sm);
   background: linear-gradient(140deg, #33344a, #232435);
@@ -595,5 +653,8 @@ main.wide.graph { max-width: none; }
 
 @media (max-width: 900px) {
   .graph-split { flex-direction: column; }
-  .inspector { width: 100%; position: static; max-height: none; }
+  /* Stacked, so there is no left edge to pull and the remembered width would only make the
+     panel narrower than the column it now owns. `!important` beats the inline width. */
+  .inspector { width: 100% !important; position: static; max-height: none; }
+  .split-handle { display: none; }
 }

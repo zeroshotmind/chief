@@ -466,3 +466,38 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     a `POST /templates` body, id included, so it can be committed beside the project and
     registered again idempotently. That is as close to "the project owns its templates" as
     Chief can get without becoming a file server, which #29 already ruled out.
+
+33. **Rendering what a harness wrote.** Summaries, artifact bodies, comments and review notes
+    were all rendered as flat text, which meant a newline collapsed to a space and a
+    twenty-line write-up arrived as one paragraph. Artifact bodies had a stand-in renderer
+    that understood `## ` and `- ` and nothing else.
+
+    The obvious fix is a library, and REQ-21 rules it out: Chief is static files served by
+    the same process, no build step and no CDN. A CDN tag makes a loopback tool depend on the
+    network; vendoring KaTeX is 300KB of JavaScript plus a font family for text that is
+    usually three lines. So `web/markdown.js` is a deliberate subset, and the interesting
+    decisions are in what it does when it reaches the edge of that subset.
+
+    **Nothing is assembled as an HTML string.** Every node is created and its text set
+    through `textContent`, which escapes by construction, and link hrefs are checked against
+    a scheme allowlist so a `javascript:` URL in a reported artifact cannot be clicked into
+    execution. There is no sanitiser because there is nothing to sanitise — the parser emits
+    elements, never markup. `scripts/test_markdown.mjs` asserts this for headings, lists,
+    quotes and emphasis rather than trusting it.
+
+    **Maths is LaTeX in, MathML out**, typeset by the browser's own engine. That is the whole
+    reason a dependency-free path exists: the hard part is the typesetting, and every current
+    browser already does it.
+
+    **What cannot be rendered is shown, not swallowed.** An expression the translator does not
+    understand falls back to its own source on a marked background. A reader who sees
+    `$\begin{matrix} a \end{matrix}$` knows what was meant and that it did not render; one
+    who sees a blank, or a silently mangled fragment, knows neither. The same principle as
+    the artifact `show more` control and the orphaned review note: the failure is visible, and
+    the reader decides what to do about it.
+
+    One divergence from CommonMark, on purpose: a single newline inside a paragraph becomes a
+    line break rather than a space. CommonMark reflows soft breaks, which is right for prose
+    written in a text editor and wrong for both writers here — a harness reporting a summary
+    and a person typing in a textarea each mean the break they typed. GitHub made the same
+    choice for comments.

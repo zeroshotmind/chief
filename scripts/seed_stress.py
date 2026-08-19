@@ -175,6 +175,70 @@ def seed_wordy() -> None:
     })
 
 
+RICH_MARKDOWN = """\
+## What the sweep found
+
+The reward curve is **flat** after step 3k, which rules out the schedule and leaves the
+advantage estimator. Ran it three ways; see `configs/grpo.yaml` for the exact settings.
+
+The objective as implemented is
+
+$$
+J(\\theta) = \\mathbb{E}_{x \\sim D}\\left[
+  \\sum_{t=1}^{T} \\log \\pi_\\theta(a_t) A_t
+\\right]
+$$
+
+with $A_t = R_t - b(s_t)$ and a KL penalty of $\\beta = 0.02$. Note that
+$\\nabla_\\theta J$ is estimated per batch, not per step.
+
+### What to try next
+
+1. Whiten the advantages per batch
+2. Drop $\\beta$ to 0.01 and re-run the audit
+3. If neither moves it, the bug is upstream in the reward
+
+> The held-out split is stale — regenerate it before trusting any of this.
+
+```python
+adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+loss = -(logp * adv).mean() + beta * kl
+```
+
+Unsupported maths still shows what it was: $\\begin{matrix} a \\end{matrix}$.
+"""
+
+
+def seed_prose() -> None:
+    """An artifact whose body is real prose: markdown, and maths in it.
+
+    A separate workflow because the point is the *rendering*, not the plan — headings,
+    hard line breaks, a fenced block, display and inline maths, and one expression the
+    renderer does not understand, which has to show its own source rather than vanish.
+    """
+    steps = [task("p1", "Sweep the reward schedule and write up what moved")]
+    try:
+        call("POST", "/workflows", {
+            "workflow_id": "wf_prose", "title": "Artifacts with markdown and maths",
+            "source": "generated", "generated_by": "claude-code", "steps": steps,
+            "project": "research",
+        }, quiet=(409,))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            raise AlreadySeeded("wf_prose") from None
+        raise
+    call("POST", "/workflows/wf_prose/approve", {"decided_by": "roy"})
+    run = call("POST", "/workflows/wf_prose/runs", {})["run_id"]
+    call("POST", f"/runs/{run}/steps/p1/updates", {
+        "status": "completed",
+        "summary": "Flat after 3k steps — the estimator, not the schedule. $\\beta = 0.02$.",
+        "artifacts": [
+            {"type": "markdown", "ref": "notes/sweep.md",
+             "description": "Sweep write-up", "data": {"text": RICH_MARKDOWN}},
+        ],
+    })
+
+
 def main() -> int:
     global BASE
     ap = argparse.ArgumentParser(description=__doc__)
@@ -182,7 +246,7 @@ def main() -> int:
     BASE = ap.parse_args().base.rstrip("/")
 
     seeded = 0
-    for seed in (seed_wide, seed_wordy):
+    for seed in (seed_wide, seed_wordy, seed_prose):
         name = seed.__name__.removeprefix("seed_")
         try:
             seed()
