@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 44 REST routes and requires them to correspond one-to-one. This doc
+against what is now 46 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by
@@ -175,6 +175,8 @@ person does, and no session behaviour depends on it.
 | `PATCH /workflows/{id}/notes/{note_id}` | Closing the feedback you were given is deciding your own work was accepted — the loop §1 is about. |
 | `PATCH /workflows/{id}` (project label) | The harness states the project when it creates the plan; re-filing one afterwards is filing, which is a person's housekeeping and not a step in any session. |
 | `GET /projects` | Derived from the workflows `list_workflows` already returns, so a tool would buy nothing. |
+| `GET /runs/{id}/artifacts/{id}/content` | A harness has the file already — it is the one that wrote it, and it has a filesystem. This exists so a *browser* can see it. |
+| `GET /runs/{id}/artifacts/{id}/modules` | Same: the harness wrote the components too. |
 
 These remain fully reachable over REST, so REQ-4 holds: the *union* of transports is not
 narrowed, only the agent-facing subset.

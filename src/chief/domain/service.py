@@ -56,7 +56,7 @@ from ..models import (
 )
 from ..storage import Store
 from ..transport import current_transport
-from . import patch, paths, policy_eval
+from . import files, patch, paths, policy_eval
 from . import templates as tmpl
 from .derive import recompute, set_status
 from .graph import top_level_ids, validate_definition
@@ -143,15 +143,22 @@ class Chief:
         every workflow that predates it.
         """
         defn = self.store.get_workflow(workflow_id)
-        before = defn.project
-        defn.project = body.project
+        # Only what the caller actually sent. `project=None` clears the project; omitting it
+        # leaves it as it was, and the two arrive looking identical without this.
+        sent = body.model_fields_set
+        detail: dict[str, Any] = {}
+        for field in ("project", "origin_dir"):
+            if field not in sent:
+                continue
+            detail[field] = getattr(body, field)
+            detail[f"{field}_was"] = getattr(defn, field)
+            setattr(defn, field, getattr(body, field))
+        if not detail:
+            raise ValidationFailed("nothing to change: send a project or an origin_dir")
         with self.store.transaction() as conn:
             self.store.save_workflow(conn, defn)
             self.store.audit(
-                conn,
-                "workflow.labelled",
-                workflow_id=workflow_id,
-                detail={"project": body.project, "was": before},
+                conn, "workflow.labelled", workflow_id=workflow_id, detail=detail
             )
         return self.get_workflow(workflow_id)
 
@@ -652,6 +659,44 @@ class Chief:
                 detail={"artifact_id": artifact_id, "author": body.author},
             )
         return artifact
+
+    def artifact_content(self, run_id: str, artifact_id: str) -> files.ArtifactFile:
+        """The bytes of the file an artifact names.
+
+        The only path Chief ever reads, and it never comes from the caller: run id plus
+        artifact id in, the artifact's own ``ref`` resolved against the workflow's recorded
+        ``origin_dir`` out. See ``domain/files.py`` for why that is narrower than any root a
+        flag could have named.
+        """
+        run, _, _ = self._load_for_update(run_id)
+        artifact = self._find_artifact(run, artifact_id)
+        if artifact is None:
+            raise NotFound(
+                f"run '{run_id}' has no artifact '{artifact_id}'",
+                details={"run_id": run_id, "artifact_id": artifact_id},
+            )
+        # The workflow as it stands, not the run's effective plan: `origin_dir` is a property
+        # of the record rather than of the plan, so it is not carried on the run's copy.
+        workflow = self.store.get_workflow(run.workflow_id)
+        path = files.resolve(artifact.ref, workflow.origin_dir)
+        data, media = files.read(path)
+        return files.ArtifactFile(path=path, data=data, media_type=media, name=path.name)
+
+    def artifact_modules(self, run_id: str, artifact_id: str) -> dict[str, str]:
+        """An MDX artifact and the components sitting beside it, as sources.
+
+        Same addressing as ``artifact_content``: two ids in, and every path derived from
+        what the files themselves import. The runtime that renders this executes in a
+        sandbox at an opaque origin, so what is served here never runs anywhere it could
+        reach Chief. See CONTRACT-NOTES.md #37.
+        """
+        found = self.artifact_content(run_id, artifact_id)
+        if found.path.suffix.lower() not in (".mdx", ".md"):
+            raise ValidationFailed(
+                "only an .mdx document has components to resolve",
+                details={"path": str(found.path)},
+            )
+        return files.module_graph(found.path)
 
     def _check_addressable(self, defn: WorkflowDefinition, path: list[str]) -> None:
         paths.validate_against_definition(defn.steps_by_id(), path)

@@ -184,10 +184,27 @@ class WorkflowCreate(BaseModel):
     source: WorkflowSource
     generated_by: str | None = None
     steps: list[WorkflowStep]
-    #: Both are the harness's to state at creation: it knows what it is working on and
-    #: where it is standing. Neither is accepted on a revision — see ``WorkflowRevise``.
-    project: str | None = None
-    origin_dir: str | None = None
+    # Described rather than commented: these two reach a harness through the MCP tool's
+    # JSON schema, and a `#:` comment does not travel there. A field an agent sees as a
+    # bare nullable string is a field it leaves null.
+    project: str | None = Field(
+        default=None,
+        description=(
+            "Short label for the body of work this belongs to, e.g. 'chief' or 'songs'. "
+            "Match a label already in use rather than inventing a variant. Not a directory: "
+            "one project spans several checkouts. Omit if it belongs to nothing in "
+            "particular."
+        ),
+    )
+    origin_dir: str | None = Field(
+        default=None,
+        description=(
+            "Absolute path of the directory you are working in. Record it whenever you "
+            "know it: it is how a person later tells which checkout this was, and it is "
+            "what lets the web UI open the files this run reports. Nothing resolves "
+            "against it on the server, so give it as you see it."
+        ),
+    )
 
 
 class WorkflowRevise(BaseModel):
@@ -228,10 +245,20 @@ class WorkflowLabel(BaseModel):
     finished — workflow under a project is the main use: every workflow that existed before
     projects did has no label, and no amount of care at creation time can fix those.
 
-    ``null`` clears it, which has to be possible: a label applied to the wrong workflow is
-    otherwise permanent.
+    ``null`` clears a field and omitting it leaves that field alone — the two are told apart
+    by ``model_fields_set``, not by the value. Without that distinction a request setting the
+    project would silently erase the directory beside it, which is the sort of data loss
+    nobody notices until they look for something that used to be there.
+
+    ``origin_dir`` is here as well as on creation, and that is not a contradiction of
+    ``WorkflowRevise`` refusing it. A revision is a harness rewriting the plan, and one made
+    somewhere else overwriting where the work happened would turn a record into a lie. This
+    is a person correcting the record by hand, which is the only way a workflow planned
+    before Chief asked for a directory can ever have one — and without it those workflows can
+    never show their files.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     project: str | None = None
+    origin_dir: str | None = None

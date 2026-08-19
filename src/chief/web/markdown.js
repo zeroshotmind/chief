@@ -70,6 +70,15 @@ const SYMBOLS = {
   wedge: "∧", vee: "∨", setminus: "∖", simeq: "≃", cong: "≅", models: "⊨", vdash: "⊢",
   odot: "⊙", bullet: "∙", dagger: "†", top: "⊤", bot: "⊥",
   hbar: "ℏ", ell: "ℓ", Re: "ℜ", Im: "ℑ", aleph: "ℵ", colon: ":",
+  // Found by running every expression in a real corpus of write-ups through this and
+  // reading what came back unrendered, rather than by guessing at what people write.
+  succ: "≻", prec: "≺", succeq: "⪰", preceq: "⪯", varnothing: "∅",
+  Leftrightarrow: "⇔", iff: "⟺", Longrightarrow: "⟹", Longleftarrow: "⟸",
+  gets: "←", uparrow: "↑", downarrow: "↓", hookrightarrow: "↪", rightsquigarrow: "⇝",
+  triangleq: "≜", asymp: "≍", doteq: "≐", coloneqq: "≔",
+  vdots: "⋮", ddots: "⋱", hdots: "⋯",
+  // Escaped punctuation: these are characters, not commands.
+  "%": "%", "&": "&", "#": "#", _: "_", $: "$", "{": "{", "}": "}",
 };
 
 /** Commands that take limits above and below when displayed. */
@@ -82,8 +91,18 @@ const BIG_OPERATORS = {
 /** Commands rendered as an upright multi-letter name rather than italic variables. */
 const FUNCTIONS = [
   "sin", "cos", "tan", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
-  "log", "ln", "exp", "det", "dim", "ker", "deg", "gcd", "mod", "Pr",
+  "log", "ln", "exp", "det", "dim", "ker", "deg", "gcd", "mod", "Pr", "arg",
+  "softmax", "sign", "diag", "tr", "rank", "var", "cov", "relu",
 ];
+
+/** `\begin{…}` environments, and the fences they are drawn inside. */
+const ENVIRONMENTS = {
+  matrix: ["", ""], pmatrix: ["(", ")"], bmatrix: ["[", "]"], Bmatrix: ["{", "}"],
+  vmatrix: ["|", "|"], Vmatrix: ["‖", "‖"], cases: ["{", ""],
+  aligned: ["", ""], align: ["", ""], "align*": ["", ""], gathered: ["", ""],
+  gather: ["", ""], "gather*": ["", ""], array: ["", ""], split: ["", ""],
+  smallmatrix: ["", ""],
+};
 
 const OPEN = {
   "(": "(", "[": "[", "\\{": "{", "\\lbrace": "{", "\\langle": "⟨", "\\lfloor": "⌊",
@@ -268,6 +287,69 @@ function command(name, tokens, state) {
   if (name === "text" || name === "textrm" || name === "mbox") {
     return m("mtext", textArgument(tokens, state));
   }
+  if (name === "texttt" || name === "mathtt") {
+    const node = m("mtext", textArgument(tokens, state));
+    node.setAttribute("mathvariant", "monospace");
+    return node;
+  }
+  // An operator named on the spot: `\operatorname{clip}` is upright, like `\log` is, and by
+  // far the most common thing this did not understand.
+  if (name === "operatorname" || name === "operatorname*") {
+    return m("mi", textArgument(tokens, state));
+  }
+  if (name === "boxed") {
+    // No frame drawn: MathML's `menclose` is not in MathML Core, and the contents are the
+    // part that carries the meaning.
+    return argument(tokens, state);
+  }
+  if (name === "underbrace" || name === "overbrace") {
+    const brace = m("mo", name === "underbrace" ? "⏟" : "⏞");
+    return add(m(name === "underbrace" ? "munder" : "mover"), [argument(tokens, state), brace]);
+  }
+  if (name === "boldsymbol" || name === "bm") {
+    const node = argument(tokens, state);
+    node.setAttribute("mathvariant", "bold");
+    return node;
+  }
+  if (name === "underset" || name === "overset") {
+    const mark = argument(tokens, state);
+    const base = argument(tokens, state);
+    return add(m(name === "underset" ? "munder" : "mover"), [base, mark]);
+  }
+  if (name === "xrightarrow" || name === "xleftarrow") {
+    const label = argument(tokens, state);
+    const arrow = m("mo", name === "xrightarrow" ? "→" : "←");
+    return add(m("mover"), [arrow, label]);
+  }
+  if (name === "substack") {
+    // Rows stacked with no fence, which is the whole of what it is.
+    expect(tokens, state, "{");
+    const rows = [[]];
+    let depth = 0;
+    while (state.i < tokens.length) {
+      const token = tokens[state.i];
+      if (token.kind === "char" && token.value === "{") depth += 1;
+      if (token.kind === "char" && token.value === "}") {
+        if (depth === 0) { state.i += 1; break; }
+        depth -= 1;
+      }
+      if (depth === 0 && token.kind === "cmd" && token.value === "\\") {
+        rows.push([]);
+        state.i += 1;
+        continue;
+      }
+      rows[rows.length - 1].push(token);
+      state.i += 1;
+    }
+    const table = m("mtable");
+    for (const row of rows) {
+      if (row.every((t) => t.kind === "space")) continue;
+      add(table, [add(m("mtr"), [add(m("mtd"), [build(row, { i: 0 }, null)])])]);
+    }
+    return table;
+  }
+  if (name === "begin") return environment(textArgument(tokens, state), tokens, state);
+  if (name === "end") throw new MathError("\\end without \\begin");
   if (name === "mathbb" || name === "mathbf" || name === "mathrm" || name === "mathcal") {
     const node = m("mi", textArgument(tokens, state));
     node.setAttribute("mathvariant", {
@@ -280,6 +362,21 @@ function command(name, tokens, state) {
     const mark = m("mo", accent);
     mark.setAttribute("stretchy", "false");
     return add(m("mover"), [argument(tokens, state), mark]);
+  }
+  // \big( \Bigl[ \bigg\} … — manual sizing. MathML sizes fences itself, so the size is
+  // dropped and the delimiter kept: the expression reads correctly, just without the
+  // author's emphasis on how tall a bracket should be. Falling back to raw source over a
+  // bracket size would be a poor trade.
+  if (/^(?:big|Big|bigg|Bigg)[lrm]?$/.test(name)) {
+    const token = tokens[state.i];
+    if (!token) throw new MathError(`\\${name} without a delimiter`);
+    state.i += 1;
+    const raw = token.kind === "cmd" ? `\\${token.value}` : token.value;
+    const glyph = raw in OPEN ? OPEN[raw] : raw in CLOSE ? CLOSE[raw] : raw;
+    if (!glyph) return null;
+    const node = m("mo", glyph);
+    node.setAttribute("stretchy", "false");
+    return node;
   }
   if (name === "left" || name === "right") {
     const token = tokens[state.i];
@@ -306,6 +403,68 @@ function command(name, tokens, state) {
   }
   if (name === "\\") return m("mspace"); // a line break inside maths: not supported, not fatal
   throw new MathError(`unknown command \\${name}`);
+}
+
+/** A `\begin{…}` environment as a table.
+
+    Rows split on `\\`, cells on `&` — which is all any of these are underneath, whether they
+    are drawn as a matrix, a case split or a run of aligned equations. The alignment itself
+    is not reproduced: MathML can do it, but getting it wrong reads worse than a tidy table,
+    and the equations are legible either way. */
+function environment(name, tokens, state) {
+  if (!(name in ENVIRONMENTS)) throw new MathError(`unknown environment ${name}`);
+  const rows = [[[]]];
+  let depth = 0;
+  while (state.i < tokens.length) {
+    const token = tokens[state.i];
+    if (token.kind === "cmd" && token.value === "begin") depth += 1;
+    if (token.kind === "cmd" && token.value === "end") {
+      if (depth === 0) {
+        state.i += 1;
+        const closing = textArgument(tokens, state);
+        if (closing !== name) throw new MathError(`\\end{${closing}} closes ${name}`);
+        break;
+      }
+      depth -= 1;
+    }
+    if (depth === 0 && token.kind === "cmd" && token.value === "\\") {
+      rows.push([[]]);
+      state.i += 1;
+      continue;
+    }
+    if (depth === 0 && token.kind === "char" && token.value === "&") {
+      rows[rows.length - 1].push([]);
+      state.i += 1;
+      continue;
+    }
+    rows[rows.length - 1][rows[rows.length - 1].length - 1].push(token);
+    state.i += 1;
+  }
+
+  const table = m("mtable");
+  // "Empty" means nothing but whitespace: the lexer keeps space tokens (\text needs them),
+  // so a trailing `\\` leaves a row holding one space rather than nothing at all.
+  const blank = (row) => row.every((cell) => cell.every((t) => t.kind === "space"));
+  for (const row of rows) {
+    if (blank(row)) continue;
+    const tr = m("mtr");
+    for (const cell of row) {
+      add(tr, [add(m("mtd"), [build(cell, { i: 0 }, null)])]);
+    }
+    add(table, [tr]);
+  }
+  const [open, close] = ENVIRONMENTS[name];
+  const out = m("mrow");
+  if (open) add(out, [fence(open)]);
+  add(out, [table]);
+  if (close) add(out, [fence(close)]);
+  return out;
+}
+
+function fence(glyph) {
+  const node = m("mo", glyph);
+  node.setAttribute("fence", "true");
+  return node;
 }
 
 /** One `$…$` or `$$…$$` as MathML, or its own source if it cannot be translated.
@@ -372,7 +531,7 @@ function link(href, text, source) {
 
 /** Inline markdown as a list of nodes. Safe on any input: everything becomes text or a
     element built here, never markup parsed out of the string. */
-export function inline(text) {
+export function inline(text, mdx = false) {
   const out = [];
   let buffer = "";
   let rest = String(text == null ? "" : text);
@@ -387,6 +546,18 @@ export function inline(text) {
       buffer += rest[1];
       rest = rest.slice(2);
       continue;
+    }
+    if (mdx && rest[0] === "{") {
+      // A JSX expression. Nothing evaluates it, so it is shown as what it says.
+      const close = rest.indexOf("}");
+      if (close > 0) {
+        flush();
+        const expr = h("code", "mdx-expr", rest.slice(0, close + 1));
+        expr.setAttribute("title", "Not evaluated: this is a JSX expression");
+        out.push(expr);
+        rest = rest.slice(close + 1);
+        continue;
+      }
     }
     const hit = INLINE.find((rule) => rule.re.test(rest));
     if (hit) {
@@ -405,6 +576,12 @@ export function inline(text) {
 
 // ── block markdown ───────────────────────────────────────────────────────────────────────
 
+// MDX: a component tag on its own line. Capitalised by convention — a lowercase tag is HTML,
+// which is never rendered as HTML here and falls through to being read as text.
+const JSX_OPEN = /^[ \t]*<([A-Z][\w.]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/)?>[ \t]*$/;
+const JSX_CLOSE = (tag) => new RegExp(`^[ \\t]*</${tag.replace(".", "\\.")}>[ \\t]*$`);
+const MODULE_LINE = /^[ \t]*(import|export)\s/;
+
 const BULLET = /^[ \t]*[-*+][ \t]+(.*)$/;
 const NUMBER = /^[ \t]*(\d+)[.)][ \t]+(.*)$/;
 const HEADING = /^(#{1,6})[ \t]+(.*)$/;
@@ -418,13 +595,94 @@ const RULE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
     in a text editor and wrong for everything here — a harness reporting a summary and a
     person typing in a textarea both mean the newline they typed. GitHub made the same choice
     for comments, for the same reason. */
-export function markdown(text) {
-  const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
+export function markdown(text, options = {}) {
+  // `nodes` says a runtime is going to compile the JSX, so hand it back as source instead of
+  // drawing the named frame. The frame is what you get when there is nothing to run it.
+  const { mdx = false, top = true, nodes = false } = options;
+  let lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
   const blocks = [];
   let i = 0;
 
+  // Frontmatter, on both flavours. Without this the opening `---` reads as a horizontal rule
+  // and the metadata under it as a paragraph of stray colons, which is worse than either
+  // showing it or hiding it.
+  if (top && lines[0] !== undefined && lines[0].trim() === "---") {
+    const end = lines.findIndex((l, n) => n > 0 && l.trim() === "---");
+    if (end > 0) {
+      const rows = lines.slice(1, end).filter((l) => l.trim());
+      blocks.push(
+        add(
+          h("div", "md-front"),
+          rows.map((row) => {
+            const [, key, value] = /^([^:]+):\s*(.*)$/.exec(row) || [null, null, row];
+            return add(
+              h("div", "md-front-row"),
+              key ? [h("span", "md-front-key", key.trim()), h("span", null, value)] : [h("span", null, row)],
+            );
+          }),
+        ),
+      );
+      lines = lines.slice(end + 1);
+    }
+  }
+
   while (i < lines.length) {
     const line = lines[i];
+
+    if (mdx && MODULE_LINE.test(line)) {
+      // `import`/`export` are the file's plumbing, not its content. Collected and shown as
+      // one dim line rather than dropped: a reader should be able to see that a component
+      // came from somewhere, without the imports being the first thing they read.
+      const code = [];
+      while (i < lines.length && (MODULE_LINE.test(lines[i]) || (code.length && !lines[i].trim()))) {
+        if (lines[i].trim()) code.push(lines[i].trim());
+        i += 1;
+      }
+      blocks.push(
+        add(h("details", "md-module"), [
+          h("summary", "md-module-head", `${code.length} import/export line${code.length === 1 ? "" : "s"}`),
+          add(h("pre", "md-pre"), [h("code", null, code.join("\n"))]),
+        ]),
+      );
+      continue;
+    }
+
+    const jsx = mdx && JSX_OPEN.exec(line);
+    if (jsx) {
+      const [, tag, props, selfClosing] = jsx;
+      if (selfClosing) {
+        // Structured, not raw source: a component's children are *markdown* in MDX, so the
+        // runtime has to render them as such rather than treat them as literal text.
+        blocks.push(nodes ? { jsx: { tag, props, body: null } } : component(tag, props, null));
+        i += 1;
+        continue;
+      }
+      // Paired: the children are usually prose, and prose is the part worth reading. Depth
+      // is tracked so a component nested inside one of its own kind closes the right box.
+      const closing = JSX_CLOSE(tag);
+      const body = [];
+      let depth = 1;
+      i += 1;
+      while (i < lines.length) {
+        if (JSX_OPEN.test(lines[i]) && JSX_OPEN.exec(lines[i])[1] === tag && !JSX_OPEN.exec(lines[i])[3]) {
+          depth += 1;
+        } else if (closing.test(lines[i])) {
+          depth -= 1;
+          if (depth === 0) {
+            i += 1;
+            break;
+          }
+        }
+        body.push(lines[i]);
+        i += 1;
+      }
+      blocks.push(
+        nodes
+          ? { jsx: { tag, props, body: body.join("\n") } }
+          : component(tag, props, body.join("\n"), mdx),
+      );
+      continue;
+    }
 
     if (!line.trim()) {
       i += 1;
@@ -524,7 +782,8 @@ export function markdown(text) {
       i < lines.length && lines[i].trim() &&
       !HEADING.test(lines[i]) && !QUOTE.test(lines[i]) && !RULE.test(lines[i]) &&
       !BULLET.test(lines[i]) && !NUMBER.test(lines[i]) &&
-      !/^[ \t]*(```|~~~)/.test(lines[i]) && !/^[ \t]*\$\$/.test(lines[i])
+      !/^[ \t]*(```|~~~)/.test(lines[i]) && !/^[ \t]*\$\$/.test(lines[i]) &&
+      !(mdx && (MODULE_LINE.test(lines[i]) || JSX_OPEN.test(lines[i])))
     ) {
       para.push(lines[i]);
       i += 1;
@@ -532,12 +791,31 @@ export function markdown(text) {
     const p = h("p", "md-p");
     para.forEach((text, index) => {
       if (index) p.appendChild(h("br"));
-      add(p, inline(text));
+      add(p, inline(text, mdx));
     });
     blocks.push(p);
   }
 
   return blocks;
+}
+
+/** One MDX component, named but never run.
+
+    Rendering it would mean evaluating JSX from a file a harness reported, which is a build
+    step this project does not have and an execution surface it does not want. What is shown
+    instead is the tag, its props as written, and — for a component wrapping prose — that
+    prose rendered as the markdown it is. A reader loses the styling and keeps the content,
+    and can see exactly what was there. Same bargain as unparseable maths. */
+function component(tag, props, body, mdx = true) {
+  const box = h("div", "mdx-node");
+  const head = add(h("div", "mdx-head"), [h("span", "mdx-tag", `<${tag}>`)]);
+  const written = (props || "").trim();
+  if (written) head.appendChild(h("code", "mdx-props", written));
+  box.appendChild(head);
+  if (body && body.trim()) {
+    add(box, [add(h("div", "mdx-body"), markdown(body, { mdx, top: false }))]);
+  }
+  return box;
 }
 
 /** Markdown into an element, replacing whatever was there. Convenience for the callers that

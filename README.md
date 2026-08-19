@@ -204,6 +204,59 @@ control. Nothing is ever collapsed without one.
 python scripts/seed_stress.py --base http://127.0.0.1:8080/v1
 ```
 
+### Reading an artifact's file
+
+**Click the path** and it opens in a drawer down the right. A URL artifact is **framed** —
+your dev server renders it, Chief only shows it — and a file — markdown through the
+is read by the server: markdown
+through the renderer, images inline, PDFs in the browser's own viewer, **JSON as a tree you
+can fold**, code and logs as text, anything else as a size and a download. Clicking the name of a thing to
+see the thing is what a reader tries first, so that is what it does; the editor deep link is
+the small **↗** beside it, since most of the time the question is "what is in this" rather
+than "let me change it".
+
+**The open file is in the URL** — `#/workflow/wf_wide/art_1957` — so a refresh lands back on
+it and the link can be sent to someone. Nothing else about how you are looking at the page is:
+filters, the selected node and the panel widths stay out, because they are *how* you are
+looking rather than *where* you are. An id that names an artifact the run does not have is
+dropped rather than retried, and the URL heals itself back to the workflow.
+
+It opens down the **right** of the window, because a file is read *against* the run that
+produced it and a panel along the bottom pushes the plan off the screen to do that. Drag its
+left edge to resize — up to 70% of the window, so a wide log still has room — and the width is
+remembered. The page is inset rather than covered, so the artifact list you opened it from
+stays reachable for the next one.
+
+**Chief's server reads the file**, which is the point: it works when you reach the UI through
+an SSH tunnel from the machine the files are actually on. A browser-side file picker cannot
+do that — it would read your laptop, not the host.
+
+That is the one place Chief touches the filesystem, and it is deliberately narrow:
+
+- **You never send a path.** The URL names a run and an artifact, both ids Chief issued, and
+  the path comes from the artifact's own `ref` resolved against the workflow's `origin_dir`.
+  There is no `?path=` to traverse. The only readable files are ones a harness already
+  reported.
+- **A relative ref cannot climb out** of the directory the workflow ran in.
+- **Nothing is served under its own type.** The response is always opaque bytes; the type the
+  browser may apply travels in a header and the page applies it itself. An `.html` or `.svg`
+  artifact served under its own type from Chief's origin would be script running next to the
+  run you are reading.
+- **A `Host` header that is not loopback is refused**, which blocks DNS rebinding — a page on
+  the open web pointing its own domain at `127.0.0.1` so a fetch looks same-origin. If you
+  reach the UI under a name rather than `localhost`, allow it explicitly:
+
+  ```bash
+  chief --port 8080 --allow-host chief.internal
+  ```
+- **25MB cap**, and directories, devices and missing files are refused with a reason.
+
+A workflow with no `origin_dir` cannot resolve a relative ref, and says so rather than
+guessing. New plans record it themselves — the agent passes the directory it is working in
+when it calls `create_workflow`. For anything planned before Chief asked for one, **set the
+directory on the workflow detail screen** and its files become readable; that is the only
+route, since a revision is deliberately not allowed to rewrite where the work happened.
+
 ### Markdown and maths
 
 Artifact bodies, step summaries, comments and review notes are rendered rather than dumped
@@ -216,12 +269,44 @@ The maths is translated to MathML and typeset by the browser. That is what makes
 without a dependency — no CDN tag on a loopback tool, and no 300KB of vendored KaTeX for text
 that is usually three lines of prose.
 
-It is a **subset**, and it says so when it meets something outside it: unrenderable maths is
+**MDX** files render **with their components**, when the components sit beside them. Put
+`Callout.jsx` next to `post.mdx`, import it as `./Callout`, and it compiles and runs —
+hooks, state, event handlers and all. Chief ships a JSX transform and a small component
+runtime (`jsx.js`, `mdx-runtime.js`) rather than React itself: what agent-written components
+use is function components and five hooks, and that is a few hundred lines rather than a
+vendored framework and a build step.
+
+Two rules make it safe and bounded. The document's code runs in a **sandboxed frame at an
+opaque origin** — it cannot reach the page reading the run, its API or its storage. And the
+module graph is derived server-side from the file's own imports, confined to **its own
+directory**: `./Chart` resolves, `../secret` and `/etc/passwd` are not resolved at all, and a
+bare `react` is left to the runtime. The client still never names a path.
+
+What it does not do: TypeScript (`.tsx`), npm packages, or components living elsewhere in a
+repo behind a bundler alias. For an MDX page that belongs to a built site — one importing
+`@/components/…` — report the URL your dev server serves it at instead; Chief frames that
+page and you get the real thing. A document whose components cannot be found falls back to
+prose with them named, rather than showing nothing.
+Evaluating JSX out of an artifact would need a build step this project does not have and an
+execution surface it does not want. So `<Callout>…</Callout>` becomes a framed block labelled
+with its tag and props, with the prose inside it rendered as the markdown it is; a
+self-closing `<Chart data={rows} />` becomes the same frame with nothing in it; `import` and
+`export` lines fold away into one line you can open. You lose the styling and keep the
+content, and you can see exactly what was there. **Frontmatter** is read as metadata rather
+than as a horizontal rule followed by stray colons — in `.md` as well as `.mdx`.
+
+The maths is a **subset**, and it says so when it meets something outside it: unrenderable maths is
 shown as its own source on a marked background, so `$\begin{matrix}…$` reads as *not
 rendered* rather than disappearing. Covered: fractions, roots, sub- and superscripts, sums and
-integrals with limits, Greek, the usual relations and arrows, `\left…\right` fences, `\text`,
-`\mathbb`/`\mathbf`, accents. Not covered: environments (`matrix`, `align`, `cases`), macros,
-and alignment.
+integrals with limits, Greek, the usual relations and arrows, `\left…\right` fences and
+manual sizing, `\text`/`\operatorname`, font commands, accents, `\underbrace`, and
+environments — `matrix`, `cases`, `aligned` and friends — as tables. Not covered: macros, and
+alignment within an environment.
+
+The coverage is measured rather than asserted: every `$…$` and `$$…$$` in a corpus of 2230
+real `.mdx` write-ups — 10,838 expressions — renders at **99.6%**, and the commands in
+`scripts/test_markdown.mjs` were chosen by reading what came back as source, in frequency
+order. Of the 39 that still do not, 38 are PromQL and shell snippets that were never maths.
 
 Nothing is ever built as an HTML string — every node is created and its text set through
 `textContent`. Artifact bodies come from outside, so that is a security property rather than a
@@ -396,7 +481,7 @@ than trusting it.
 ### Developing on it
 
 ```bash
-pytest                          # 276 tests
+pytest                          # 301 tests
 ruff check src tests scripts
 node scripts/smoke_ui.mjs       # headless render of every UI screen; needs node
 NO_TEMPLATES=1 node scripts/smoke_ui.mjs   # same, against a server without /templates

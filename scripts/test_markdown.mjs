@@ -33,6 +33,7 @@ globalThis.document = {
 };
 
 const { markdown, inline, renderMath } = await import("../src/chief/web/markdown.js");
+const mdx = (src) => markdown(src, { mdx: true });
 
 /** All the text in a subtree, which is what the reader ends up seeing. */
 function text(n) {
@@ -259,6 +260,63 @@ check("a whole objective, of the kind a sweep write-up carries", () => {
   assert.ok(text(rendered).includes("∣"));
 });
 
+check("manual bracket sizing keeps the bracket and drops the size", () => {
+  // From a real write-up: MathML sizes fences itself, so \big is about emphasis rather than
+  // meaning, and losing the emphasis beats falling back to raw source over it.
+  const src = "h = h + \\alpha_1(c)\\,\\mathrm{MSA}\\big(\\mathrm{AdaLN}(h, c)\\big)";
+  const rendered = mathML(src, true);
+  assert.equal(rendered.tagName, "math", "should not fall back");
+  assert.ok(text(rendered).includes("MSA"));
+  assert.equal((text(rendered).match(/\(/g) || []).length, 3, "every bracket survives");
+});
+
+check("every sizing prefix is accepted", () => {
+  for (const cmd of ["big", "Big", "bigg", "Bigg", "bigl", "Bigr", "biggl"]) {
+    assert.equal(mathML(`\\${cmd}( x \\${cmd}[`).tagName, "math", cmd);
+  }
+});
+
+check("environments become tables", () => {
+  const cases = mathML("f(x) = \\begin{cases} 1 & x > 0 \\\\ 0 & x \\le 0 \\end{cases}", true);
+  assert.equal(cases.tagName, "math", "should not fall back");
+  assert.equal(find(cases, "mtr").length, 2, "two rows");
+  assert.equal(find(cases, "mtd").length, 4, "two cells each");
+
+  const aligned = mathML("\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}", true);
+  assert.equal(find(aligned, "mtr").length, 2);
+
+  // A trailing row separator must not draw a blank line.
+  assert.equal(find(mathML("\\begin{matrix} a \\\\ b \\\\ \\end{matrix}"), "mtr").length, 2);
+});
+
+check("a mismatched environment falls back rather than eating the document", () => {
+  assert.equal(mathML("\\begin{aligned} a \\end{matrix}").getAttribute("class"), "math-raw");
+  assert.equal(mathML("\\begin{nosuchenv} a \\end{nosuchenv}").getAttribute("class"), "math-raw");
+});
+
+check("the commands a real corpus actually uses", () => {
+  // Each of these was found by rendering every expression in 2230 real .mdx files and
+  // reading what came back as source. In frequency order.
+  for (const src of [
+    "\\operatorname{clip}(r_t, 1-\\epsilon, 1+\\epsilon)",
+    "\\{o_1, \\dots, o_G\\}",
+    "y_w \\succ y_l",
+    "\\varnothing",
+    "\\underbrace{a + b}_{c}",
+    "\\arg\\min_\\theta L",
+    "99\\%",
+    "A \\Leftrightarrow B",
+    "\\boxed{H(p, q)}",
+    "\\texttt{blockIdx}",
+    "\\boldsymbol{x}",
+    "\\underset{x}{\\arg\\min}",
+    "\\xrightarrow{f} y",
+    "\\substack{i = 1 \\\\ j = 2}",
+  ]) {
+    assert.equal(mathML(src).tagName, "math", `should render: ${src}`);
+  }
+});
+
 check("display maths is marked as display", () => {
   assert.equal(mathML("x", true).getAttribute("display"), "block");
   assert.equal(mathML("x", false).getAttribute("display"), "inline");
@@ -297,6 +355,96 @@ check("unbalanced braces fall back rather than throwing", () => {
 
 check("the fallback keeps display fences for display maths", () => {
   assert.equal(text(mathML("\\nope", true)), "$$\\nope$$");
+});
+
+// ── frontmatter ──────────────────────────────────────────────────────────────────────────
+
+check("frontmatter is read as metadata, not as a rule and some stray colons", () => {
+  const [front, body] = markdown("---\ntitle: Sweep 3\ndraft: true\n---\n\nBody text");
+  assert.equal(front.attrs.class, "md-front");
+  assert.equal(find(front, "div").filter((d) => d.attrs.class === "md-front-row").length, 2);
+  assert.ok(text(front).includes("title"));
+  assert.equal(text(body), "Body text");
+});
+
+check("a rule that is not frontmatter is still a rule", () => {
+  assert.equal(markdown("above\n\n---\n\nbelow")[1].tagName, "hr");
+});
+
+check("an unterminated frontmatter fence is left alone", () => {
+  assert.equal(markdown("---\ntitle: x\n\nbody").at(0).tagName, "hr");
+});
+
+// ── mdx ──────────────────────────────────────────────────────────────────────────────────
+
+check("mdx prose renders as markdown", () => {
+  const blocks = mdx("# Title\n\nSome **bold** prose.");
+  assert.deepEqual(blocks.map((b) => b.tagName), ["h3", "p"]);
+  assert.equal(findAll(blocks, "strong").length, 1);
+});
+
+check("imports are collected and folded away rather than read as prose", () => {
+  const [module, body] = mdx('import Chart from "./chart"\nexport const meta = {a: 1}\n\nProse.');
+  assert.equal(module.tagName, "details");
+  assert.equal(module.attrs.class, "md-module");
+  assert.ok(text(module).includes("2 import/export lines"));
+  assert.equal(text(body), "Prose.");
+});
+
+check("a component wrapping prose keeps the prose", () => {
+  const [node] = mdx("<Callout type=\"warn\">\n\nThe split is **stale**.\n\n</Callout>");
+  assert.equal(node.attrs.class, "mdx-node");
+  assert.ok(text(node).includes("<Callout>"));
+  assert.ok(text(node).includes('type="warn"'));
+  // The content survives, rendered as what it is.
+  assert.equal(findAll([node], "strong").length, 1);
+  assert.ok(text(node).includes("The split is"));
+});
+
+check("a self-closing component is named with its props", () => {
+  const [node] = mdx('<Chart data={rows} height={200} />');
+  assert.equal(node.attrs.class, "mdx-node");
+  assert.ok(text(node).includes("<Chart>"));
+  assert.ok(text(node).includes("data={rows}"));
+});
+
+check("nesting closes the right box", () => {
+  const [outer] = mdx("<Box>\n<Box>\ninner\n</Box>\nafter\n</Box>");
+  // `find` includes the root, so this is the outer plus exactly one nested box — the
+  // closing tag matched the inner one rather than ending the outer early.
+  assert.equal(find(outer, "div").filter((d) => d.attrs.class === "mdx-node").length, 2);
+  const body = find(outer, "div").find((d) => d.attrs.class === "mdx-body");
+  assert.deepEqual(
+    body.childNodes.map((c) => c.attrs.class || c.tagName),
+    ["mdx-node", "md-p"],
+    "the inner box, then the text that followed it — both inside the outer",
+  );
+  assert.equal(text(body.childNodes[1]), "after");
+});
+
+check("a jsx expression is shown, never evaluated", () => {
+  const nodes = inline("the value is {props.count} today", true);
+  const expr = nodes.find((n) => n.attrs && n.attrs.class === "mdx-expr");
+  assert.ok(expr, "expression marked");
+  assert.equal(text(expr), "{props.count}");
+  assert.ok(expr.getAttribute("title").includes("Not evaluated"));
+});
+
+check("braces in ordinary markdown are left alone", () => {
+  assert.equal(inline("a {literal} brace").map(text).join(""), "a {literal} brace");
+  assert.equal(inline("a {literal} brace").filter((n) => n.tagName === "code").length, 0);
+});
+
+check("a lowercase tag is not treated as a component, and never becomes html", () => {
+  const blocks = mdx("<script>alert(1)</script>");
+  assert.equal(findAll(blocks, "script").length, 0);
+  assert.ok(text(blocks[0]).includes("alert(1)"));
+});
+
+check("mdx markup in a plain markdown file stays literal", () => {
+  const blocks = markdown("<Callout>\nhi\n</Callout>");
+  assert.equal(findAll(blocks, "div").filter((d) => d.attrs.class === "mdx-node").length, 0);
+  assert.ok(text(blocks[0]).includes("<Callout>"));
 });
 
 // ── report ───────────────────────────────────────────────────────────────────────────────

@@ -29,8 +29,8 @@ Status vocabulary:
 
 | REQ | Requirement | Status | Where / note |
 |---|---|---|---|
-| 1 | REST API for all core operations | Built | 44 routes under `/v1`; `api/routes.py` |
-| 2 | MCP interface covering the same operations | Built | 24 tools against 44 routes, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
+| 1 | REST API for all core operations | Built | 46 routes under `/v1`; `api/routes.py` |
+| 2 | MCP interface covering the same operations | Built | 24 tools against 46 routes, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
 | 3 | Not coupled to any agentic framework | Built | Plain REST + JSON; `harness` is an open string, not an enum |
 | 4 | All functionality reachable through the API; nothing UI-exclusive | Built | Invariants live in `domain/service.py`, not in route handlers, which is why the MCP surface inherited them unchanged rather than reimplementing them. Asserted, not just claimed: `test_transport_parity.py` |
 
@@ -157,7 +157,7 @@ inherit them unchanged. It did: `src/chief/mcp_server.py` holds no logic, only t
 
 **The tool list is reconciled in MCP-SURFACE.md**, which supersedes contract §3 and is the
 source for the §3 rewrite the doc still needs. Twenty-four tools, not the 14 §3 names nor the
-44 routes: the seven update/instance routes are three path-parameterised service methods, so
+46 routes: the seven update/instance routes are three path-parameterised service methods, so
 `report_instance_body_step_update` disappears into `report_step_update`; and the one-to-one
 correspondence rule is replaced by a soundness rule (every tool resolves to a method a REST
 route also reaches) plus a coverage rule over the operations an agent session legitimately
@@ -404,6 +404,8 @@ POST   /v1/runs/{run_id}/instance-updates/{state_path}     (extension, nesting)
 POST   /v1/runs/{run_id}/steps/{step_id}/resolution        (extension, checkpoints)
 POST   /v1/runs/{run_id}/resolutions/{state_path}          (extension, checkpoints)
 
+GET    /v1/runs/{run_id}/artifacts/{artifact_id}/content   (extension, file preview)
+GET    /v1/runs/{run_id}/artifacts/{artifact_id}/modules   (extension, mdx + co-located components)
 POST   /v1/runs/{run_id}/artifacts/{artifact_id}/comments  (extension, artifact comments)
 
 POST   /v1/runs/{run_id}/amendments
@@ -424,7 +426,7 @@ GET    /v1/projects                                        (extension, labels in
 GET    /v1/audit                                           (extension)
 ```
 
-44 routes, also served without the `/v1` prefix; `/healthz` is not counted here. Full
+46 routes, also served without the `/v1` prefix; `/healthz` is not counted here. Full
 schemas at `/docs` when running. The count is asserted against the router in
 `tests/test_transport_parity.py` — this list went stale twice before that guard existed.
 

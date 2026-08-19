@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response, status
 
 from ..domain import paths as pathlib_
 from ..domain.service import Chief
+from ..errors import ValidationFailed
 from ..models import (
     Amendment,
     AmendmentCreate,
@@ -327,6 +328,77 @@ def resolve_nested_checkpoint(
 ) -> RunState:
     """A checkpoint inside a loop or parallel body, addressed by state path."""
     return service.resolve_checkpoint(run_id, pathlib_.parse_path(state_path), body)
+
+
+#: Hosts this API answers file content on. A `Host` header naming anything else is a
+#: DNS-rebinding attempt: a page on the open web resolving its own domain to 127.0.0.1 so
+#: that a fetch reaches a loopback service the browser thinks is same-origin. The MCP
+#: transport already carries this check; it matters more here, because this is the one route
+#: that returns something off the disk. Applied to this route alone rather than to the whole
+#: API, so nothing that works today can stop working.
+def _check_host(request: Request, host: str | None) -> None:
+    from ..app import allowed_hosts
+
+    if host is None:
+        return
+    name = host.rsplit(":", 1)[0].strip("[]").lower()
+    if name not in allowed_hosts():
+        raise ValidationFailed(
+            f"file content is not served to host '{name}'",
+            details={"host": name},
+        )
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_id}/content")
+def artifact_content(
+    run_id: str,
+    artifact_id: str,
+    service: Service,
+    request: Request,
+    host: Annotated[str | None, Header()] = None,
+) -> Response:
+    """The file this artifact names, for the viewer to render.
+
+    The caller supplies no path — only the two ids — so there is nothing to traverse. See
+    ``domain/files.py``.
+
+    Always ``application/octet-stream``, whatever the file is. The type the browser may
+    render it as travels in ``X-Chief-Media-Type`` and the UI applies it client-side, so
+    browsing straight to this URL can never execute an artifact: an SVG or an HTML file
+    served under its own type from Chief's origin would be script running next to the run
+    you are reading.
+    """
+    _check_host(request, host)
+    found = service.artifact_content(run_id, artifact_id)
+    return Response(
+        content=found.data,
+        media_type="application/octet-stream",
+        headers={
+            "X-Chief-Media-Type": found.media_type,
+            "X-Chief-File-Name": found.name,
+            "Content-Disposition": f'attachment; filename="{found.name}"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_id}/modules")
+def artifact_modules(
+    run_id: str,
+    artifact_id: str,
+    service: Service,
+    request: Request,
+    host: Annotated[str | None, Header()] = None,
+) -> Any:
+    """An MDX document and the co-located modules it imports, as sources.
+
+    Text rather than bytes, because the caller is a compiler rather than a viewer. The same
+    two ids and no path — see ``domain/files.py`` for why the graph can be derived without
+    the client ever naming one.
+    """
+    _check_host(request, host)
+    return {"modules": service.artifact_modules(run_id, artifact_id)}
 
 
 @router.post(

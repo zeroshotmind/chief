@@ -18,7 +18,10 @@ def store() -> Store:
 
 @pytest.fixture()
 def client(store: Store) -> TestClient:
-    with TestClient(create_app(store)) as client:
+    # A loopback base URL rather than TestClient's default "testserver": the artifact-content
+    # route checks Host to block DNS rebinding, so a fixture sending an unrealistic one would
+    # make every test of that route pass or fail for the wrong reason.
+    with TestClient(create_app(store), base_url="http://127.0.0.1:8080") as client:
         yield client
 
 

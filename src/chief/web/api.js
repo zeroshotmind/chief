@@ -61,6 +61,39 @@ export const resolveCheckpoint = (runId, path, body) =>
 export const commentOnArtifact = (runId, artifactId, body) =>
   post(`/runs/${runId}/artifacts/${artifactId}/comments`, body);
 
+/** The bytes of the file an artifact names, for the viewer.
+
+    No path is sent — only the two ids — so there is nothing here that could ask for a file
+    other than the one the artifact already points at. The server answers with opaque bytes
+    whatever the file is, and names the type it may be rendered as in a header; the caller
+    applies that itself, so browsing to the URL can never execute an artifact. */
+export async function artifactContent(runId, artifactId) {
+  const response = await fetch(
+    `${API_BASE}/runs/${runId}/artifacts/${artifactId}/content`,
+  ).catch(() => null);
+  if (!response) throw new ApiError(`cannot reach the Chief API at ${API_BASE}`, { code: "unreachable" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const err = body && body.error;
+    throw new ApiError((err && err.message) || `could not read the file (${response.status})`, {
+      status: response.status, code: err && err.code,
+    });
+  }
+  return {
+    bytes: await response.arrayBuffer(),
+    // The type Chief says this may be shown as, never the response's own content type —
+    // that is always octet-stream, deliberately.
+    mediaType: response.headers.get("X-Chief-Media-Type") || "application/octet-stream",
+    name: response.headers.get("X-Chief-File-Name") || "file",
+  };
+}
+
+/** An MDX document and the modules sitting beside it, as sources.
+
+    Still no path: two ids, and the server derives the graph from what the files import. */
+export const artifactModules = (runId, artifactId) =>
+  request(`/runs/${runId}/artifacts/${artifactId}/modules`);
+
 /** Feedback on a plan, for whoever revises it. The other direction of the comment channel:
     a comment is said about work that is done, a note about work that has not started.
 
@@ -81,11 +114,13 @@ export const decideReviewNote = (workflowId, noteId, resolved) =>
 /** File a workflow under a project, or clear the label with null. Not a revision: it says
     nothing about the plan, so it is allowed at any status — which matters, because the
     workflows most in need of filing are the ones that already ran. */
-export const labelWorkflow = (workflowId, project) =>
+export const labelWorkflow = (workflowId, patch) =>
   request(`/workflows/${workflowId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project: project || null }),
+    // Only the keys the caller passed. The server tells an omitted field from an explicit
+    // null, and sending both every time would clear whichever one was not being edited.
+    body: JSON.stringify(patch),
   });
 
 /** Templates: the reusable plan. A workflow is single-use, so reuse lives here. */

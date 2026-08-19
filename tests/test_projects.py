@@ -208,4 +208,67 @@ def test_filing_is_audited_with_what_it_was_before(api):
     entries = api.client.get("/v1/audit", params={"workflow_id": workflow_id}).json()
     (entry,) = [e for e in entries if e["event"] == "workflow.labelled"]
     assert entry["detail"]["project"] == "chief"
-    assert entry["detail"]["was"] == "wrong"
+    assert entry["detail"]["project_was"] == "wrong"
+
+
+# --- correcting where it ran ----------------------------------------------------------------
+
+
+def test_the_directory_can_be_set_after_the_fact(api):
+    """The only route by which a workflow planned before Chief asked for one can have one —
+    and without it, those workflows can never show their files."""
+    workflow_id = api.draft([task("s1")])
+    response = api.client.patch(
+        f"/v1/workflows/{workflow_id}", json={"origin_dir": "/w/chief"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["origin_dir"] == "/w/chief"
+
+
+def test_setting_one_field_leaves_the_other_alone(api):
+    """`null` clears; omitting does not. They arrive identical without `model_fields_set`,
+    and the bug would be silently erasing a directory while filing a project."""
+    workflow_id = api.draft([task("s1")], project="chief", origin_dir="/w/chief")
+
+    api.client.patch(f"/v1/workflows/{workflow_id}", json={"project": "songs"})
+    after = api.client.get(f"/v1/workflows/{workflow_id}").json()
+    assert after["project"] == "songs"
+    assert after["origin_dir"] == "/w/chief"
+
+    api.client.patch(f"/v1/workflows/{workflow_id}", json={"origin_dir": "/w/songs"})
+    after = api.client.get(f"/v1/workflows/{workflow_id}").json()
+    assert after["project"] == "songs"
+    assert after["origin_dir"] == "/w/songs"
+
+
+def test_an_explicit_null_still_clears(api):
+    workflow_id = api.draft([task("s1")], project="chief", origin_dir="/w/chief")
+    api.client.patch(f"/v1/workflows/{workflow_id}", json={"origin_dir": None})
+    after = api.client.get(f"/v1/workflows/{workflow_id}").json()
+    assert after["origin_dir"] is None
+    assert after["project"] == "chief"
+
+
+def test_an_empty_patch_is_refused_rather_than_silently_doing_nothing(api):
+    workflow_id = api.draft([task("s1")])
+    response = api.client.patch(f"/v1/workflows/{workflow_id}", json={})
+    assert response.status_code == 422
+    assert "nothing to change" in response.json()["error"]["message"]
+
+
+def test_both_can_be_set_at_once(api):
+    workflow_id = api.draft([task("s1")])
+    response = api.client.patch(
+        f"/v1/workflows/{workflow_id}", json={"project": "chief", "origin_dir": "/w/chief"}
+    )
+    assert response.json()["project"] == "chief"
+    assert response.json()["origin_dir"] == "/w/chief"
+
+
+def test_a_finished_workflow_can_have_its_directory_corrected(api):
+    """The case this exists for: a run that already happened, whose files are still there."""
+    workflow_id, _ = api.run([task("s1")])
+    response = api.client.patch(
+        f"/v1/workflows/{workflow_id}", json={"origin_dir": "/w/chief"}
+    )
+    assert response.status_code == 200, response.text

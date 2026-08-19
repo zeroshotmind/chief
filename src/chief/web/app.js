@@ -33,7 +33,7 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
   decideAmendment, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
-  addReviewNote, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
+  addReviewNote, artifactContent, artifactModules, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
@@ -390,6 +390,442 @@ const writeRoot = (value, project = null) => {
   }
 };
 
+// ── the file viewer ──────────────────────────────────────────────────────────────────────
+//
+// A drawer along the bottom that shows the file an artifact names. The bytes come from the
+// server, because the server is the machine that has them — which is the case a browser-side
+// file picker cannot serve at all when the UI is reached through a tunnel.
+//
+// What arrives is opaque bytes plus a separate header saying what they may be shown as. The
+// type is applied here, to a blob this page makes, so nothing an artifact contains is ever
+// live at Chief's own origin. See CONTRACT-NOTES.md #34.
+
+const VIEWER_WIDTH_KEY = "chief.viewerWidth";
+const VIEWER_WIDTH_DEFAULT = 520;
+const VIEWER_WIDTH_MIN = 280;
+
+function clampViewerWidth(width) {
+  const room = (typeof window !== "undefined" && window.innerWidth) || 1400;
+  const max = Math.max(VIEWER_WIDTH_MIN, Math.min(1100, Math.round(room * 0.7)));
+  return Math.max(VIEWER_WIDTH_MIN, Math.min(max, Math.round(width)));
+}
+
+const readViewerWidth = () => {
+  try {
+    return clampViewerWidth(Number(localStorage.getItem(VIEWER_WIDTH_KEY)) || VIEWER_WIDTH_DEFAULT);
+  } catch {
+    return VIEWER_WIDTH_DEFAULT;
+  }
+};
+
+/** Keep the page out from under the drawer.
+
+    An overlay would cover the artifact list you opened the file from, which is exactly where
+    you go next to open another. The page is inset by the drawer's width instead, so both stay
+    reachable — set as a custom property so a drag can move it without a re-render. */
+function setViewerInset(width) {
+  const root = document.documentElement;
+  // Guarded on the method, not just the object: a stub DOM has a `style` that is a plain
+  // object, and the difference only shows up as a crash on the first file opened.
+  if (!root || !root.style || typeof root.style.setProperty !== "function") return;
+  root.style.setProperty("--viewer-right", width ? `${width}px` : "0px");
+}
+
+/** Blob URLs are held until replaced: revoking one while an <img> or <embed> still points at
+    it blanks the frame, and a render can happen at any time. One at a time, so the pages
+    a session opens do not accumulate. */
+let viewerObjectUrl = null;
+
+/** The live drawer element, so a drag can move it without a re-render — the same
+    arrangement the inspector uses, and one fewer DOM lookup per pointermove. */
+let viewerNode = null;
+
+function releaseViewerUrl() {
+  if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+  viewerObjectUrl = null;
+}
+
+/** Open the drawer on an artifact and fetch it. */
+async function openViewer(artifact, label) {
+  const runId = state.detail && state.detail.runId;
+  if (!runId || !artifact.artifact_id) return;
+  const web = /^https?:/i.test(artifact.ref || "");
+  setState({
+    viewerPending: null,
+    viewer: {
+      runId, artifactId: artifact.artifact_id, ref: artifact.ref,
+      title: label || artifact.description || artifact.ref,
+      // A URL is not Chief's to fetch and never was — it is framed, not read. The page on
+      // the other end renders itself, with whatever it is built from.
+      url: web ? artifact.ref : null,
+      loading: !web, error: null, file: null,
+    },
+  });
+  if (web) return;
+  // An MDX document needs its neighbours and a runtime as well as its own bytes.
+  try {
+    const file = await artifactContent(runId, artifact.artifact_id);
+    let extra = {};
+    if (file.mediaType === "text/mdx") {
+      try {
+        const [{ modules }, runtime] = await Promise.all([
+          artifactModules(runId, artifact.artifact_id),
+          loadRuntime(),
+        ]);
+        extra = { modules, runtime, entry: file.name };
+      } catch {
+        // The prose still renders without them, which is better than an error where a
+        // document should be. A component with nothing to run it shows as its named frame.
+        extra = {};
+      }
+    }
+    // A slow read that lands after the reader moved on must not reopen the drawer or
+    // overwrite what they are looking at now.
+    if (!state.viewer || state.viewer.artifactId !== artifact.artifact_id) return;
+    setState({ viewer: { ...state.viewer, loading: false, file, ...extra } });
+  } catch (err) {
+    if (!state.viewer || state.viewer.artifactId !== artifact.artifact_id) return;
+    setState({
+      viewer: {
+        ...state.viewer, loading: false,
+        error: err instanceof ApiError ? err.message : String(err),
+      },
+    });
+  }
+}
+
+function closeViewer() {
+  releaseViewerUrl();
+  viewerNode = null;
+  setViewerInset(0);
+  setState({ viewer: null, viewerPending: null });
+}
+
+/** Open the artifact the URL named, once there is a run loaded to find it in.
+
+    A reload lands with an id and nothing to resolve it against, so this runs after each
+    fetch. An id that is not in the run is dropped rather than retried: the artifact may have
+    been on a link someone kept from a different run, and a viewer that kept trying would
+    re-open on every poll forever. */
+function restorePendingViewer() {
+  const wanted = state.viewerPending;
+  if (!wanted || state.viewer || !state.detail) return;
+  const found = runArtifacts(state.detail.def, state.detail.state.step_states || {})
+    .find(({ artifact }) => artifact.artifact_id === wanted);
+  if (!found) {
+    setState({ viewerPending: null });
+    return;
+  }
+  openViewer(found.artifact, found.label);
+}
+
+/** JSON as a tree you can fold, rather than as text you have to scroll.
+
+    Native `<details>`, so folding needs no state of its own and the keyboard works for free.
+    That only holds because the rendered body is built once and kept — see `viewerBody` — as
+    a re-render would otherwise rebuild every node and spring the whole file open again on
+    the next poll.
+
+    Two levels open to start: enough to see the shape of a metrics file, not so much that a
+    twelve-element array of objects fills the panel before you have read the top of it. */
+const JSON_OPEN_DEPTH = 2;
+
+function jsonValue(value, depth) {
+  if (value === null) return el("span", { class: "j-null", text: "null" });
+  if (typeof value === "string") return el("span", { class: "j-str", text: JSON.stringify(value) });
+  if (typeof value === "number") return el("span", { class: "j-num", text: String(value) });
+  if (typeof value === "boolean") return el("span", { class: "j-bool", text: String(value) });
+
+  const array = Array.isArray(value);
+  const entries = array ? value.map((v, i) => [String(i), v]) : Object.entries(value);
+  if (entries.length === 0) {
+    return el("span", { class: "j-empty", text: array ? "[]" : "{}" });
+  }
+
+  const node = el(
+    "details",
+    { class: "j-node", ...(depth < JSON_OPEN_DEPTH ? { open: "" } : {}) },
+    el("summary", {
+      class: "j-summary",
+      text: array
+        ? `[ ${entries.length} item${entries.length === 1 ? "" : "s"} ]`
+        : `{ ${entries.length} key${entries.length === 1 ? "" : "s"} }`,
+    }),
+    el(
+      "div",
+      { class: "j-children" },
+      entries.map(([key, child]) =>
+        el(
+          "div",
+          { class: "j-row" },
+          el("span", { class: array ? "j-index" : "j-key", text: array ? key : `${key}:` }),
+          jsonValue(child, depth + 1),
+        ),
+      ),
+    ),
+  );
+  return node;
+}
+
+const isText = (type) =>
+  type.startsWith("text/") || type === "application/json" || type === "text/csv";
+
+/** The file itself, rendered by what Chief said it may be shown as. */
+/** The frame has no stylesheet of its own, so it carries just enough to be readable. It is
+    deliberately plain: a component styled by Chief would look like it had styled itself. */
+const MDX_FRAME_CSS = `
+  :root { color-scheme: light dark }
+  body { margin: 0; padding: 14px 18px; font: 13px/1.55 ui-sans-serif, system-ui, sans-serif }
+  h1,h2,h3,h4,h5,h6 { font-size: 1.05em; margin: 1em 0 .4em }
+  p { margin: 0 0 .7em }
+  pre { overflow-x: auto; padding: 8px; border-radius: 4px; background: rgba(128,128,128,.12) }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .92em }
+  table { border-collapse: collapse } td, th { border: 1px solid rgba(128,128,128,.35); padding: 3px 7px }
+  img { max-width: 100% }
+  .mdx-error { white-space: pre-wrap; color: #b4443a; background: rgba(180,68,58,.1); padding: 10px; border-radius: 4px }
+`;
+
+/** The compiled sources this page holds, so the frame can be built without a second fetch. */
+let runtimeSources = null;
+
+/** Chief's own renderer and runtime, as text, for inlining into the frame.
+
+    Fetched rather than imported: the frame is at an opaque origin and a module fetch from
+    there would need CORS Chief does not serve, so the sources are inlined into `srcdoc`
+    instead. `export` is stripped because the frame runs them as classic scripts — the one
+    place in this codebase where a regex touches JavaScript, and it holds because these two
+    files only ever export at the top level. */
+async function loadRuntime() {
+  if (runtimeSources) return runtimeSources;
+  const [markdownSrc, jsxSrc, runtimeSrc] = await Promise.all(
+    ["markdown.js", "jsx.js", "mdx-runtime.js"].map((name) =>
+      fetch(new URL(name, import.meta.url)).then((r) => r.text()),
+    ),
+  );
+  runtimeSources = {
+    markdown: markdownSrc.replace(/^export /gm, ""),
+    jsx: jsxSrc,
+    runtime: runtimeSrc,
+  };
+  return runtimeSources;
+}
+
+/** The frame that renders an MDX document with its components.
+
+    `srcdoc` with `allow-scripts` and *not* `allow-same-origin`: the document runs at an
+    opaque origin, so the components a harness wrote cannot reach this page, its API, or its
+    storage. Everything they need is inlined; the frame fetches nothing. */
+function mdxFrame(viewer) {
+  const frame = el("iframe", {
+    class: "viewer-frame", title: viewer.title,
+    sandbox: "allow-scripts allow-popups",
+    referrerpolicy: "no-referrer",
+  });
+  const { markdown: md, jsx, runtime } = viewer.runtime;
+  const payload = JSON.stringify({ entry: viewer.entry, modules: viewer.modules });
+  frame.setAttribute(
+    "srcdoc",
+    `<!doctype html><meta charset="utf-8">` +
+      `<style>${MDX_FRAME_CSS}</style>` +
+      `<body><div id="root"></div>` +
+      `<script>${md}<\/script><script>${jsx}<\/script><script>${runtime}<\/script>` +
+      `<script>(function(){` +
+      `  var data = ${payload.replace(/</g, "\\u003c")};` +
+      `  try {` +
+      `    ChiefMDX.renderMdx({ entry: data.entry, modules: data.modules,` +
+      `      host: document.getElementById("root"), markdown: markdown });` +
+      `  } catch (err) {` +
+      `    var p = document.createElement("pre");` +
+      `    p.className = "mdx-error";` +
+      `    p.textContent = "This document did not compile:\\n\\n" + (err && err.message || err);` +
+      `    document.getElementById("root").appendChild(p);` +
+      `  }` +
+      `})();<\/script>`,
+  );
+  return frame;
+}
+
+/** Whether a framed page may keep its own origin.
+
+    `allow-same-origin` does not make the frame same-origin with *this* page — the browser
+    still separates two different origins. It only stops the frame being forced into an
+    opaque one, which a dev server needs: without it the page loses its own storage and
+    every fetch it makes to itself becomes a cross-origin failure.
+
+    The exception is a URL on Chief's own origin. There `allow-scripts` and
+    `allow-same-origin` together let the frame reach out of the sandbox and into this page,
+    so it is refused the second flag — and it would be Chief framing itself, which is not
+    what any of this is for. */
+function frameSandbox(url) {
+  const base = "allow-scripts allow-forms allow-popups allow-modals";
+  try {
+    if (new URL(url, location.href).origin === location.origin) return base;
+  } catch {
+    return base;
+  }
+  return `${base} allow-same-origin`;
+}
+
+function viewerBody(viewer) {
+  const { file } = viewer;
+  // A page renders itself. This is the only way to see MDX with the components it actually
+  // imports — they live in a project Chief has never seen, and the thing that has them is
+  // the dev server already serving them. See CONTRACT-NOTES.md #36.
+  if (viewer.url) {
+    return el("iframe", {
+      class: "viewer-frame", src: viewer.url, title: viewer.title,
+      sandbox: frameSandbox(viewer.url),
+      referrerpolicy: "no-referrer",
+    });
+  }
+  if (viewer.loading) return el("p", { class: "text-muted", text: "Reading…" });
+  if (viewer.error) return el("div", { class: "banner", text: viewer.error });
+  if (!file) return null;
+  // Built once and kept. Every fifteen seconds the poll re-renders the page, and rebuilding
+  // this would decode the bytes again and — worse — spring every folded branch of a JSON
+  // tree back open under the reader.
+  if (viewer.node) return viewer.node;
+
+  const bytes = new Uint8Array(file.bytes);
+  const keep = (node) => {
+    viewer.node = node;
+    return node;
+  };
+
+  if (isText(file.mediaType)) {
+    const text = new TextDecoder().decode(bytes);
+    // The entry has to be in the graph, not merely a graph having been fetched: an empty
+    // answer means there was nothing to resolve, and compiling nothing renders nothing.
+    if (file.mediaType === "text/mdx" && viewer.modules && viewer.modules[viewer.entry]) {
+      // Components to run, so run them — in a frame at an opaque origin, which is the only
+      // place a document's own code may execute. See CONTRACT-NOTES.md #37.
+      return keep(mdxFrame(viewer));
+    }
+    if (file.mediaType === "text/markdown" || file.mediaType === "text/mdx") {
+      // MDX gets the same renderer with its components named rather than run: evaluating
+      // JSX out of an artifact is a build step this has not got and an execution surface it
+      // does not want. See CONTRACT-NOTES.md #35.
+      const mdx = file.mediaType === "text/mdx";
+      return keep(el("div", { class: "viewer-doc md-block" }, markdown(text, { mdx })));
+    }
+    if (file.mediaType === "application/json") {
+      try {
+        return keep(el("div", { class: "viewer-json" }, jsonValue(JSON.parse(text), 0)));
+      } catch {
+        // Malformed JSON is still worth reading, and the text is the only honest way to
+        // show what is wrong with it.
+        return keep(el("pre", { class: "viewer-pre" }, el("code", { text })));
+      }
+    }
+    // Code and logs, where the shape of the whitespace is the information and reflowing it
+    // would destroy it.
+    return keep(el("pre", { class: "viewer-pre" }, el("code", { text })));
+  }
+
+  releaseViewerUrl();
+  viewerObjectUrl = URL.createObjectURL(new Blob([bytes], { type: file.mediaType }));
+  if (file.mediaType.startsWith("image/")) {
+    return keep(el("div", { class: "viewer-media" }, el("img", { src: viewerObjectUrl, alt: file.name })));
+  }
+  if (file.mediaType === "application/pdf") {
+    // The browser's own viewer, on a blob this page owns.
+    return keep(el("iframe", { class: "viewer-frame", src: viewerObjectUrl, title: file.name }));
+  }
+  return keep(el(
+    "div",
+    { class: "viewer-binary" },
+    el("p", { text: `${file.name} — ${bytes.length.toLocaleString()} bytes, not a previewable type` }),
+    el("a", { class: "btn btn-secondary btn-sm", href: viewerObjectUrl, download: file.name, text: "Download" }),
+  ));
+}
+
+/** The drawer. Absent entirely when nothing is open, so it costs a closed reader nothing. */
+/** The drawer, down the right of the window.
+
+    Beside the plan rather than under it: a file is read *against* the run that produced it,
+    and a panel along the bottom pushes the graph off the screen to do it. The one thing the
+    bottom would have been better for — a wide log — is served instead by the drawer being
+    resizable to most of the window. */
+function fileViewer() {
+  const viewer = state.viewer;
+  if (!viewer) return null;
+  const file = viewer.file;
+  const width = state.viewerWidth;
+  setViewerInset(width);
+
+  const aside = el(
+    "aside",
+    {
+      id: "chief-viewer", class: "viewer", "data-screen-label": "File viewer",
+      style: { width: `${width}px` },
+    },
+    el("div", {
+      class: "viewer-grip", role: "separator", "aria-orientation": "vertical",
+      "aria-label": "Resize the file viewer", tabindex: "0",
+      title: "Drag to resize",
+      onPointerdown: startViewerResize,
+      onKeyDown: (e) => {
+        const step = e.shiftKey ? 64 : 16;
+        // Leftwards is wider: the grip is the drawer's left edge, and the drawer grows into
+        // the space the pointer opens.
+        const delta = e.key === "ArrowLeft" ? step : e.key === "ArrowRight" ? -step : 0;
+        if (!delta) return;
+        if (e.preventDefault) e.preventDefault();
+        commitViewerWidth(width + delta);
+      },
+    }),
+    el(
+      "div",
+      { class: "viewer-panel" },
+      el(
+      "div",
+      { class: "viewer-head" },
+      el("span", { class: "viewer-title", text: viewer.title }),
+      el("span", { class: "mono viewer-ref", text: viewer.ref || "" }),
+      file &&
+        el("span", {
+          class: "art-meta",
+          text: `${file.mediaType} · ${new Uint8Array(file.bytes).length.toLocaleString()} bytes`,
+        }),
+      el("button", { class: "close-x", text: "✕", title: "Close", onClick: closeViewer }),
+      ),
+      el("div", { class: "viewer-body" }, viewerBody(viewer)),
+    ),
+  );
+  viewerNode = aside;
+  return aside;
+}
+
+function commitViewerWidth(next) {
+  const width = clampViewerWidth(next);
+  try {
+    localStorage.setItem(VIEWER_WIDTH_KEY, String(width));
+  } catch {
+    /* this session only */
+  }
+  setState({ viewerWidth: width });
+}
+
+function startViewerResize(event) {
+  if (event.preventDefault) event.preventDefault();
+  const startX = event.clientX;
+  const from = state.viewerWidth;
+  let width = from;
+  const onMove = (moveEvent) => {
+    width = clampViewerWidth(from + (startX - moveEvent.clientX));
+    if (viewerNode) viewerNode.style.width = `${width}px`;
+    // The page's inset follows the drag, or the content jumps at the end of it.
+    setViewerInset(width);
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    commitViewerWidth(width);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}
+
 // ── the inspector's width ────────────────────────────────────────────────────────────────
 //
 // Dragged from its left edge, and remembered. A fixed 360px is right for a step's goal and
@@ -537,7 +973,7 @@ function copyPath(button, text) {
 }
 
 /** Where an artifact is, as a row you can act on: open it, or take the path elsewhere. */
-function pathRow(ref) {
+function pathRow(ref, artifact = null, label = null) {
   if (!ref) return null;
   const web = /^https?:/i.test(ref);
   const absolute = absolutePath(ref);
@@ -546,23 +982,47 @@ function pathRow(ref) {
   // no folder set there is still the raw ref, and handing that over beats handing over
   // nothing, so the copy control is unconditional.
   const target = web ? ref : absolute || ref;
+  // Readable here when there is a run behind the screen to ask against. A URL is not ours
+  // to fetch, and without a run there is no artifact id to name.
+  // A web ref is framed rather than read, so it is openable here too — that is how a page
+  // your own dev server renders gets to sit beside the run that produced it.
+  const viewable = artifact && artifact.artifact_id && !!state.detail;
 
   return el(
     "span",
     { class: "art-path" },
-    web
-      ? el("a", { class: "art-href", text: ref, href: ref, target: "_blank", rel: "noreferrer" })
-      : absolute
-        ? el("a", {
-            class: "art-href", text: ref, href: editorHref(absolute), title: `Open ${absolute}`,
-          })
-        // Either no folder has been named, or the ref carries a scheme Chief cannot open.
-        // A `vscode://` link built on a guessed base would open a "file not found" in the
-        // editor, which reads as the editor being broken rather than the base being unset.
-        : el("span", {
-            class: "art-href", text: ref,
-            title: isFileRef(ref) ? "Set a project folder to open this" : ref,
-          }),
+    // The path itself opens it, rather than a control beside it: clicking the name of a
+    // thing to see the thing is what a reader tries first. Leaving the page is the second
+    // choice — the editor for a file, a new tab for a URL — and lives in the ↗.
+    viewable
+      ? el("button", {
+          class: "art-href art-open", text: ref,
+          title: web ? `Show ${ref} here` : `Open ${ref} here`,
+          onClick: () => openViewer(artifact, label),
+        })
+      : web
+        ? el("a", { class: "art-href", text: ref, href: ref, target: "_blank", rel: "noreferrer" })
+        : absolute
+          ? el("a", {
+              class: "art-href", text: ref, href: editorHref(absolute), title: `Open ${absolute}`,
+            })
+          // Either no folder has been named, or the ref carries a scheme Chief cannot open.
+          // A `vscode://` link built on a guessed base would open a "file not found" in the
+          // editor, which reads as the editor being broken rather than the base being unset.
+          : el("span", {
+              class: "art-href", text: ref,
+              title: isFileRef(ref) ? "Set a project folder to open this" : ref,
+            }),
+    // The editor, kept but demoted: a deep link still beats copying a path and pasting it,
+    // and it is the only way out of Chief to the file. Only when a folder is set, since a
+    // link built on a guessed base opens a "file not found".
+    viewable && (web || absolute) &&
+      el("a", {
+        class: "art-edit", text: "↗",
+        href: web ? ref : editorHref(absolute),
+        ...(web ? { target: "_blank", rel: "noreferrer" } : {}),
+        title: web ? `Open ${ref} in a tab` : `Open ${absolute} in the editor`,
+      }),
     el("button", {
       // Say which path is on offer. A relative one is a real answer — it is what the
       // harness reported — but handing it over without saying so reads as the resolution
@@ -575,8 +1035,6 @@ function pathRow(ref) {
   );
 }
 
-/** The control that names the base, shown with the artifacts rather than parked in a
-    settings screen: it only matters when you are looking at a path that needs it. */
 function rootRow(arts) {
   if (!arts.some(({ artifact }) => isFileRef(artifact.ref) && !artifact.ref.startsWith("/"))) {
     return null;
@@ -824,7 +1282,7 @@ function artifactCard(artifact, label) {
   // an image and a markdown file both get the same row. It used to be the chain's last
   // branch, which meant the one artifact that rendered a preview was the one whose location
   // you could not read.
-  const path = pathRow(artifact.ref);
+  const path = pathRow(artifact.ref, artifact, title);
 
   return el(
     "section",
@@ -1017,6 +1475,14 @@ const state = {
   // How wide the right-hand panel is. Read from storage once, here, so every render is a
   // field lookup rather than a trip through localStorage.
   inspectorWidth: readInspectorWidth(),
+  // The open file, if any: { runId, artifactId, ref, title, loading, error, file }. Null is
+  // the closed drawer, and the drawer is not rendered at all when it is null.
+  viewer: null,
+  // An artifact id from the URL that has not been opened yet, because the run it hangs off
+  // was still being fetched when the page loaded. Cleared as soon as it is opened, or as
+  // soon as it turns out not to exist.
+  viewerPending: null,
+  viewerWidth: readViewerWidth(),
   rootEditing: false,
   rootDraft: "",
   detail: null, // { runId, state, def, amendments }
@@ -1057,7 +1523,16 @@ const ROUTE_KIND = { workflow: "workflow", detail: "run", template: "template" }
 
 function hashFor(s) {
   const key = ROUTED[s.view];
-  if (key && s[key]) return `#/${ROUTE_KIND[s.view]}/${encodeURIComponent(s[key])}`;
+  if (key && s[key]) {
+    const base = `#/${ROUTE_KIND[s.view]}/${encodeURIComponent(s[key])}`;
+    // The open file is part of where you are, not of how you are looking at it: a link to
+    // "this run, this artifact" is worth being able to send, and a reload that dropped it
+    // would send you back to a panel you then have to find your way into again. The other
+    // browser state — filters, selection, panel widths — stays out of the URL for the
+    // opposite reason: it is how, not where.
+    const open = s.viewer ? s.viewer.artifactId : s.viewerPending;
+    return open ? `${base}/${encodeURIComponent(open)}` : base;
+  }
   return `#/${LIST_VIEWS[s.view] ? s.view : "workflows"}`;
 }
 
@@ -1073,14 +1548,21 @@ function writeHash() {
 }
 
 function stateFromHash() {
-  const [kind, raw] = location.hash.replace(/^#\/?/, "").split("/");
+  const [kind, raw, rawArtifact] = location.hash.replace(/^#\/?/, "").split("/");
   const id = raw && decodeURIComponent(raw);
   const blank = {
     runId: null, workflowId: null, templateId: null,
     selected: null, detail: null, dialog: null, workflowAudit: null, workflowNotes: null,
+    viewer: null, viewerPending: null,
   };
   const view = Object.keys(ROUTED).find((v) => ROUTE_KIND[v] === kind);
-  if (view && id) return { ...blank, view, [ROUTED[view]]: id };
+  if (view && id) {
+    // Held as "pending" rather than opened here: the run this artifact belongs to has not
+    // been fetched yet, so there is nothing to open it from. `refresh` picks it up once the
+    // state arrives. See `restorePendingViewer`.
+    const pending = rawArtifact ? decodeURIComponent(rawArtifact) : null;
+    return { ...blank, view, [ROUTED[view]]: id, viewerPending: pending };
+  }
   return { ...blank, view: LIST_VIEWS[kind] ? kind : "workflows" };
 }
 
@@ -1207,6 +1689,9 @@ async function refresh() {
       patch.amendmentsByRun[state.runId] = detail.amendments;
     }
     setState({ ...patch, error: null });
+    // After the state lands, not before: a URL naming an artifact has nothing to resolve
+    // against until the run it belongs to has been fetched.
+    restorePendingViewer();
   } catch (err) {
     setState({ error: err instanceof ApiError ? err.message : String(err) });
   }
@@ -2931,31 +3416,38 @@ function noteBlock(workflow, stepId) {
 function projectLine(workflow) {
   const filing = state.filing && state.filing.workflowId === workflow.workflow_id;
   const known = [...new Set((state.workflows || []).map((w) => w.project).filter(Boolean))];
+  const editing = (field) => filing && state.filing.field === field;
+
+  const editor = (field, placeholder, list) =>
+    el(
+      "span",
+      { class: "wf-edit" },
+      el("input", {
+        class: "input", id: `wf-${field}`, type: "text", value: state.filing.draft,
+        placeholder, ...(list ? { list } : {}),
+        onInput: (e) => setState({ filing: { ...state.filing, draft: e.target.value } }),
+        onKeyDown: (e) => e.key === "Enter" && saveFiling(workflow),
+      }),
+      el("button", {
+        class: "btn btn-primary btn-sm", text: "Save", onClick: () => saveFiling(workflow),
+      }),
+      el("button", {
+        class: "btn btn-secondary btn-sm", text: "Cancel",
+        onClick: () => setState({ filing: null }),
+      }),
+    );
+
+  const begin = (field, value) => () =>
+    setState({ filing: { workflowId: workflow.workflow_id, field, draft: value || "" } });
 
   return el(
     "div",
     { class: "wf-project" },
-    filing
+    // The project.
+    editing("project")
       ? [
-          el("input", {
-            class: "input", id: "wf-project", type: "text", value: state.filing.draft,
-            placeholder: "Project name",
-            // The names already in use, so the fourth workflow of a project is filed under
-            // the same spelling as the first. A datalist rather than a select: the list is
-            // whatever exists, and a new project has to be typeable.
-            list: "wf-projects",
-            onInput: (e) => setState({ filing: { ...state.filing, draft: e.target.value } }),
-            onKeyDown: (e) => e.key === "Enter" && saveProject(workflow),
-          }),
+          editor("project", "Project name", "wf-projects"),
           el("datalist", { id: "wf-projects" }, known.map((p) => el("option", { value: p }))),
-          el("button", {
-            class: "btn btn-primary btn-sm", text: "Save",
-            onClick: () => saveProject(workflow),
-          }),
-          el("button", {
-            class: "btn btn-secondary btn-sm", text: "Cancel",
-            onClick: () => setState({ filing: null }),
-          }),
         ]
       : [
           workflow.project
@@ -2968,25 +3460,43 @@ function projectLine(workflow) {
           el("button", {
             class: "cmt-add", style: { marginTop: "0" },
             text: workflow.project ? "refile…" : "file under a project…",
-            onClick: () =>
-              setState({
-                filing: { workflowId: workflow.workflow_id, draft: workflow.project || "" },
-              }),
+            onClick: begin("project", workflow.project),
           }),
         ],
-    workflow.origin_dir &&
-      el("span", {
-        class: "mono wf-origin",
-        text: `made in ${workflow.origin_dir}`,
-        title: "Where the harness was when this plan was made. A record, not a live path — "
-             + "if the tree has moved, the folder for opening artifacts is set separately.",
-      }),
+    // Where it ran. Editable, unlike on a revision: a harness rewriting where the work
+    // happened would be rewriting history, but a person correcting the record is the only
+    // way a workflow planned before Chief asked for a directory can ever have one — and
+    // without one the viewer cannot open a single file it reported.
+    editing("origin_dir")
+      ? editor("origin_dir", "/Users/you/projects/thing")
+      : el(
+          "span",
+          { class: "wf-origin-line" },
+          workflow.origin_dir
+            ? el("span", {
+                class: "mono wf-origin", text: `made in ${workflow.origin_dir}`,
+                title: "Where the harness was when this plan was made, and what its "
+                     + "relative artifact paths resolve against.",
+              })
+            : el("span", {
+                class: "wf-origin",
+                text: "no directory recorded — files cannot be opened",
+                title: "A relative artifact path has nothing to resolve against until this "
+                     + "is set. New plans record it themselves.",
+              }),
+          el("button", {
+            class: "cmt-add", style: { marginTop: "0" },
+            text: workflow.origin_dir ? "change…" : "set the directory…",
+            onClick: begin("origin_dir", workflow.origin_dir),
+          }),
+        ),
   );
 }
 
-async function saveProject(workflow) {
+async function saveFiling(workflow) {
+  const { field, draft } = state.filing;
   try {
-    await labelWorkflow(workflow.workflow_id, (state.filing.draft || "").trim());
+    await labelWorkflow(workflow.workflow_id, { [field]: (draft || "").trim() || null });
     setState({ filing: null });
     await refresh();
   } catch (err) {
@@ -3327,6 +3837,7 @@ function render() {
       state.error &&
         el("div", { class: "banner", style: { margin: "0 var(--space-4)" }, text: state.error }),
       screenFor(state.view),
+      fileViewer(),
     ].filter((n) => n instanceof Node),
   );
 

@@ -222,7 +222,13 @@ a:hover { color: var(--color-accent-700); }
    Screens
    ══════════════════════════════════════════════════════════════════════ */
 
-#app { min-height: 100vh; display: flex; flex-direction: column; }
+/* Inset by whatever the file viewer is occupying, so the drawer never covers the artifact
+   list you opened it from — which is exactly where you go to open the next one. Both are
+   0px until something is open. */
+#app {
+  min-height: 100vh; display: flex; flex-direction: column;
+  padding-right: var(--viewer-right, 0px);
+}
 main { width: 100%; padding: var(--space-8) var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 main.narrow { max-width: 760px; }
 main.wide { max-width: 1240px; padding-top: var(--space-4); }
@@ -319,13 +325,123 @@ main.wide.graph { max-width: none; }
 .dot { flex: none; border-radius: 50%; width: 8px; height: 8px; }
 .dot.pulse { animation: chiefpulse 1.6s infinite; }
 
+/* — the file viewer —
+   A drawer along the bottom of the window rather than a panel in the layout: it is opened
+   on one file, read, and closed, and giving it a permanent column would cost the graph room
+   it needs far more often. */
+/* Down the right of the window: a file is read *against* the run that produced it, and a
+   panel along the bottom would push the plan off the screen to do that. */
+.viewer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; flex-direction: row; background: var(--color-surface);
+  border-left: 1px solid var(--color-divider);
+  box-shadow: -8px 0 24px color-mix(in srgb, #000 10%, transparent);
+}
+/* Holds the head and the body; the grip is its sibling, so it sits on whichever edge the
+   flex direction puts it. */
+.viewer-panel {
+  flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+}
+/* Wider than it looks, like the inspector's: a 1px line is not a drag target. */
+.viewer-grip { flex: none; width: 11px; position: relative; cursor: col-resize; }
+.viewer-grip::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 5px;
+  width: 1px; background: var(--color-divider);
+}
+.viewer-grip:hover::before, .viewer-grip:focus-visible::before {
+  background: var(--color-accent); width: 2px; left: 4px;
+}
+.viewer-grip:focus-visible { outline: none; }
+.viewer-head {
+  flex: none; display: flex; align-items: baseline; gap: var(--space-2); min-width: 0;
+  padding: var(--space-3) var(--space-3) var(--space-2) 0;
+}
+.viewer-title { font-size: 13px; color: var(--color-text); }
+.viewer-ref {
+  flex: 1; min-width: 0; font-size: 11px; color: var(--color-neutral-500);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.viewer-body { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--space-3) var(--space-4) 0; }
+.viewer-doc { max-width: 760px; }
+.viewer-pre {
+  margin: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  white-space: pre; color: var(--color-neutral-800);
+}
+/* — mdx and frontmatter —
+   A component that cannot be run is shown as what it is: its tag, its props as written, and
+   its prose rendered. Framed rather than styled to look like output, so it never reads as
+   the component having rendered. */
+.md-front {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 0 0 var(--space-2); padding: var(--space-2);
+  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  font-size: 11px; color: var(--color-neutral-600);
+}
+.md-front-row { display: flex; gap: var(--space-2); }
+.md-front-key { flex: none; color: var(--color-neutral-500); }
+.md-module { margin: 0 0 var(--space-2); }
+.md-module-head {
+  cursor: pointer; font-size: 11px; color: var(--color-neutral-500); list-style: none;
+}
+.md-module-head::-webkit-details-marker { display: none; }
+.md-module-head::before { content: "▸ "; }
+.md-module[open] .md-module-head::before { content: "▾ "; }
+.mdx-node {
+  margin: 0 0 var(--space-2); padding: var(--space-2);
+  border: 1px dashed var(--color-accent-300); border-radius: var(--radius-sm);
+}
+.mdx-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.mdx-tag { font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700); }
+.mdx-props {
+  font-family: var(--font-mono); font-size: 10px; color: var(--color-neutral-500);
+  overflow-wrap: anywhere;
+}
+.mdx-body { margin-top: var(--space-2); }
+.mdx-expr {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 0 3px; border-radius: 3px; color: var(--color-neutral-600);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+/* — JSON as a tree — */
+.viewer-json { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; }
+.j-node > .j-summary { cursor: pointer; color: var(--color-neutral-500); list-style: none; }
+.j-summary::-webkit-details-marker { display: none; }
+/* The marker is drawn rather than inherited, so it points the same way in every browser. */
+.j-summary::before { content: "▸ "; color: var(--color-neutral-400); }
+.j-node[open] > .j-summary::before { content: "▾ "; }
+.j-summary:hover { color: var(--color-accent-700); }
+.j-children {
+  margin-left: 7px; padding-left: var(--space-2);
+  border-left: 1px solid var(--color-divider);
+}
+.j-row { display: flex; gap: var(--space-2); align-items: baseline; min-width: 0; }
+.j-key { flex: none; color: var(--color-accent-700); }
+.j-index { flex: none; color: var(--color-neutral-400); }
+.j-str { color: var(--ok); overflow-wrap: anywhere; }
+.j-num { color: var(--color-accent); }
+.j-bool { color: var(--warn); }
+.j-null, .j-empty { color: var(--color-neutral-500); }
+
+.viewer-media { display: flex; justify-content: center; }
+/* Fits the drawer rather than overflowing it: an artifact is usually a screenshot, and a
+   screenshot at natural size is taller than any drawer worth having. */
+.viewer-media img { max-width: 100%; object-fit: contain; }
+.viewer-frame { width: 100%; height: 100%; min-height: 200px; border: 0; }
+.viewer-binary {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2);
+  font-size: 12px; color: var(--color-neutral-600);
+}
+
 /* — projects — */
 .chips-project { margin-top: var(--space-1); }
 .wf-project {
   display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   margin-top: var(--space-3);
 }
-.wf-project .input { flex: none; width: 220px; }
+.wf-project .input { flex: none; width: 260px; }
+.wf-edit { display: flex; align-items: center; gap: var(--space-2); }
+.wf-origin-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 /* Where the plan was made. Dimmer than the label beside it on purpose: one is a filing
    decision you can change, the other is a fact about the past you cannot. */
 .wf-origin { font-size: 11px; color: var(--color-neutral-500); overflow-wrap: anywhere; }
@@ -582,6 +698,18 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   font-size: 11px; line-height: 1.4; color: var(--color-neutral-400);
 }
 .art-copy:hover { color: var(--color-accent-700); }
+/* The path as a control. Styled as the link it replaced, because it does what a reader
+   expects a filename to do — it just does it here rather than in an editor. */
+.art-open {
+  padding: 0; border: none; background: none; cursor: pointer; text-align: left;
+  font: inherit; font-family: var(--font-mono); font-size: 11px;
+}
+.art-open:hover { text-decoration: underline; }
+.art-edit {
+  flex: none; font-size: 11px; line-height: 1; color: var(--color-neutral-500);
+  text-decoration: none;
+}
+.art-edit:hover { color: var(--color-accent-700); }
 /* Copies the relative ref, because that is all there is until a folder is named. */
 .art-copy.partial { opacity: 0.55; }
 
@@ -652,6 +780,10 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
 .inst-row .summary { min-width: 0; color: var(--color-neutral-500); }
 
 @media (max-width: 900px) {
+  /* No room for a side panel over a phone-width page: it takes the screen, and the page
+     stops being inset because there is nothing left to inset. */
+  .viewer { left: 0; width: auto !important; }
+  #app { padding-right: 0; }
   .graph-split { flex-direction: column; }
   /* Stacked, so there is no left edge to pull and the remembered width would only make the
      panel narrower than the column it now owns. `!important` beats the inline width. */

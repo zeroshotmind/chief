@@ -501,3 +501,168 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     written in a text editor and wrong for both writers here — a harness reporting a summary
     and a person typing in a textarea each mean the break they typed. GitHub made the same
     choice for comments.
+
+34. **Reading the file an artifact names — reversing #29 without reopening it.** #29 refused
+    `GET /files?path=` because a path parameter is a traversal surface on a service with no
+    auth, and containment would have to be invented and then defended forever. The UI still
+    needed to show a file: a page served over http cannot read `file://`, so the bytes have
+    to come from somewhere.
+
+    The browser could have read them. The File System Access API grants a page access to a
+    folder the person picks, with no server involvement at all, and that was the first
+    answer. It is the wrong one here for a reason that has nothing to do with security: the
+    UI is often reached through an SSH tunnel from the machine the run happened on, and the
+    browser would then read the *laptop's* files, not the host's. A design that fails
+    precisely when the files are somewhere else is not a design for a tool used remotely.
+
+    A startup flag naming a root was the second answer, and it does not survive contact with
+    #32: every workflow records its own `origin_dir`, and a single root is wrong the moment
+    the second workflow runs somewhere else.
+
+    What is here is neither. **The client never supplies a path.** It names a run and an
+    artifact — ids Chief issued — and the path is the artifact's own `ref` resolved against
+    that workflow's recorded `origin_dir`. The set of readable files is exactly the set a
+    harness already reported. There is nothing to traverse because there is nothing to ask
+    with, which is a stronger property than any containment check: `secret.txt` next to the
+    artifact is unreachable not because a rule refuses it but because no request can name it.
+
+    Four things guard the rest.
+
+    A relative ref is *joined* to a base rather than used as given, so `../../..` could walk
+    out of the directory the workflow ran in. That is the one containment this has to enforce
+    itself, and it does. An absolute ref is left alone: the harness named that exact file.
+
+    **Nothing is served under its own type.** The response is always `application/octet-stream`
+    with `nosniff` and an attachment disposition; the type the browser may render it as
+    travels in `X-Chief-Media-Type`, and the UI applies it to a blob it makes itself. An
+    `.html` or `.svg` artifact served under its own type would be script executing at Chief's
+    origin, next to the run being read. `.html` is readable — as source.
+
+    **A `Host` header outside loopback is refused**, the same DNS-rebinding defence the MCP
+    transport already carries, applied to this route alone so nothing that works today can
+    stop working. `--allow-host` covers a UI reached under a name.
+
+    Two follow-ons this forced. `origin_dir` and `project` are declared with real pydantic
+    field descriptions rather than `#:` comments, because those are what reach a harness
+    through the MCP tool's JSON schema — a field an agent sees as a bare nullable string is a
+    field it leaves null, and a null directory means no file it reports can ever be opened.
+    And `PATCH /workflows/{id}` accepts `origin_dir` as well as `project`, distinguishing an
+    omitted field from an explicit null through `model_fields_set`: without that, filing a
+    project would silently erase the directory beside it, and without the field at all every
+    workflow planned before this could never show a file.
+
+    And a **25MB cap**, with directories, devices and unreadable paths refused by reason
+    rather than by exception. `tests/conftest.py` now gives `TestClient` a loopback base URL:
+    its default `Host: testserver` would otherwise make every test of this route pass or fail
+    for the wrong reason, which it briefly did.
+
+35. **MDX — rendering a file whose point is that it runs.** An MDX artifact is markdown with
+    JSX in it: components, imports, and `{expressions}` that a build step turns into a page.
+    Chief has no build step (REQ-21) and, more to the point, should not acquire the ability
+    to evaluate code out of a file a harness reported — the viewer exists so a person can
+    read an artifact, and running one would make reading it an execution.
+
+    So the prose renders and the components are **named rather than run**. A paired
+    `<Callout>…</Callout>` becomes a framed block carrying the tag and the props as written,
+    with its children parsed as the markdown they almost always are; a self-closing component
+    becomes the same frame with nothing inside. Imports and exports fold into one line. A
+    `{expression}` is shown on a marked background, unevaluated.
+
+    The frame is deliberately dashed and labelled rather than styled to look like output. A
+    component rendered *as if it had worked* would be the worst outcome available — the
+    reader would trust a layout that never existed. This is the same bargain as unrenderable
+    maths (#33) and the orphaned review note (#31): the failure is visible, the content
+    survives, and the reader decides.
+
+    The maths coverage was then measured rather than guessed at. Every `$…$` and `$$…$$` in
+    2230 real `.mdx` files — 10,838 expressions — was pushed through `renderMath`, and the
+    failures read in frequency order: `\operatorname` (257), `\{` (70), environments (68),
+    `\succ` (44), `\varnothing` (39), `\underbrace` (33). Adding those took it from 94.2%
+    to 99.6%, and the tests name them in that order so the next reader knows the list came
+    from a corpus rather than from someone's memory of LaTeX. The 39 left are almost all
+    PromQL and shell fragments that were never maths; the fallback showing their source is
+    the right answer for those.
+
+    Frontmatter came along with it and applies to plain markdown too. A leading `---` block
+    was previously read as a horizontal rule followed by a paragraph of stray colons, which
+    is worse than either rendering or hiding it.
+
+    Vendoring React and the MDX compiler was asked for and refused, and the evidence is what
+    settled it rather than the argument. Of 2230 `.mdx` files on the machine this was built
+    for, the most-used components are `Callout`, `Quiz`, and a long tail of bespoke
+    interactive explorers — `RewardHackingDemo`, `CrossEntropyExplorer`,
+    `PerTokenRatioExplorer` — every one of them imported from `@/components/mdx-components`
+    or a sibling `.tsx`. Not one file is self-contained. React in the browser would render
+    the markdown (already done) and leave every component undefined, or worse, replace it
+    with a stand-in Chief invented — a layout that exists nowhere, shown without a hint that
+    it is a guess. See #36 for what was built instead.
+
+    One thing worth keeping: a lowercase tag is *not* treated as a component. MDX allows raw
+    HTML, and rendering it would undo the guarantee that nothing in an artifact becomes
+    markup — so `<script>alert(1)</script>` in an MDX file is text, exactly as it is in a
+    markdown one.
+
+36. **Framing a page rather than rendering it.** The thing that can render an MDX file with
+    its own components is the project that owns them, and it is usually already running —
+    a Next or Astro dev server on another port. So a URL artifact is now *framed* in the
+    viewer rather than only linked: the page renders itself, with its real components,
+    beside the run that produced it. Nothing is fetched by Chief and nothing is evaluated by
+    it. That is the whole feature, and it generalises past MDX — a Storybook story, a
+    coverage report, a notebook export.
+
+    The sandbox is the part with a decision in it. `allow-same-origin` is granted, which
+    reads alarming and is not: it does not make the frame same-origin with *this* page, it
+    only stops the frame being forced into an opaque origin. Without it a dev server loses
+    its own storage and every fetch it makes to itself becomes a cross-origin failure — the
+    page would frame and then not work. Two different origins stay separated by the browser
+    regardless.
+
+    The exception is a URL on Chief's own origin, where `allow-scripts` and
+    `allow-same-origin` together *do* let the frame reach out of the sandbox into this page.
+    That combination is refused, and the check fails safe: anything it cannot parse gets the
+    stricter sandbox.
+
+    Worth recording how nearly that went untested. `smoke_ui.mjs` had replaced
+    `globalThis.URL` wholesale to stub `createObjectURL`, which took the constructor with it
+    — so `new URL(...)` threw, the origin check fell into its fail-safe branch, and the test
+    happily asserted a sandbox the browser would never produce. A stub that replaces a
+    built-in instead of extending it does not fail; it answers a different question.
+
+37. **Running a document's own components.** #35 rendered MDX as prose with its components
+    named, and that was the wrong place to stop: MDX minus components is markdown with extra
+    syntax, so supporting the format at all was close to pointless. The objection that kept
+    it there was that components live in a repo behind a bundler — true of a site's MDX, and
+    not true of what a workflow produces, which is written by the agent that also writes the
+    document.
+
+    Two constraints made it tractable, and both came from the person asking for it. **The
+    components sit beside the document**, so the module graph is derived from the file's own
+    imports and confined to its directory — the client still never names a path (#34 holds).
+    And a document is **agent output**, so it can be asked to use plain `.jsx` rather than
+    TypeScript.
+
+    What was refused is vendoring React and a compiler. React 19 ships no UMD build and
+    Sucrase no browser bundle, so either means adding a build step to a UI that is
+    deliberately static files with none. Neither turned out to be necessary. A survey of
+    2230 real component files found exactly one dependency — `react` — and five hooks in use.
+    So `mdx-runtime.js` is a hyperscript renderer with those five hooks, and `jsx.js` is a
+    scanner rather than a parser: **JSX does not need its expressions parsed**, only
+    brace-balanced, because the browser evaluates them. That is why a hand-written transform
+    is a few hundred lines instead of a compiler.
+
+    Three things are load-bearing.
+
+    **Execution happens in a sandboxed frame at an opaque origin** — `srcdoc` with
+    `allow-scripts` and deliberately without `allow-same-origin`. Everything the frame needs
+    is inlined, so it fetches nothing and nothing it runs can reach the page reading the run.
+    This is the same boundary #36 established for framing a URL, used for a different reason.
+
+    **A component's children are markdown, not text.** `<Callout>` around three paragraphs
+    has to render as three paragraphs, so the children go back through the markdown renderer
+    and the result is one tree — which is also what lets a component hold state normally.
+
+    **Failure is loud.** The transform throws on anything it cannot account for, the frame
+    shows the compile error, and a document whose components cannot be resolved falls back to
+    prose with them named. Nothing renders an approximation of a component that never ran —
+    the rule the LaTeX translator set (#33) and the reason the named frame is deliberately
+    ugly (#35).

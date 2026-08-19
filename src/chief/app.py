@@ -56,6 +56,20 @@ def _clean_errors(errors: list[dict]) -> list[dict]:
     return cleaned
 
 
+def allowed_hosts() -> set[str]:
+    """Host names this server answers file content on.
+
+    Loopback plus whatever ``--host`` was given, and ``CHIEF_ALLOW_HOSTS`` for the case the
+    UI is reached under a name — a tunnel endpoint, a container alias. Kept here rather than
+    in the route so there is one answer for the whole process, and deliberately narrow: this
+    is the DNS-rebinding defence for the one route that reads the disk.
+    """
+    hosts = {"localhost", "127.0.0.1", "::1", os.environ.get("CHIEF_HOST", "127.0.0.1")}
+    extra = os.environ.get("CHIEF_ALLOW_HOSTS", "")
+    hosts.update(h.strip().lower() for h in extra.split(",") if h.strip())
+    return hosts
+
+
 def create_app(store: Store | None = None) -> FastAPI:
     owned = store is None
     store = store or Store(os.environ.get("CHIEF_DB", DEFAULT_DB))

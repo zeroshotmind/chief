@@ -1,6 +1,6 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Twenty-four tools against 44 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Twenty-four tools against 46 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
 and the approval-policy config, the audit query, artifact comments and draft review notes
 are deliberately REST-only — a session that can edit the policy governing its own approvals
@@ -163,6 +163,11 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         fan back in); retry / iterate-until work is a `loop` with the check as a body step
         and the exit condition in `exit_when`; a `parallel` construct is only for branches
         you cannot count until running. A draft cannot take a run until it is approved.
+
+        Set `origin_dir` to the absolute path of the directory you are working in, and
+        `project` to the label for the body of work. Neither can be worked out here — this
+        server runs in its own process and has no idea where you are — and without the
+        directory the web UI cannot open a single file this run goes on to report.
         """
         return service.create_workflow(body)
 
