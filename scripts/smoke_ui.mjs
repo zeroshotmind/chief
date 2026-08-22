@@ -452,6 +452,12 @@ function record(label) {
   screens.push(`${label} -> ${main ? main["data-screen-label"] : "?"}`);
 }
 
+// The brand is the mark itself, served beside the app, not a coloured square standing in
+// for it — and the file has to actually be referenced, or the nav shows a broken image.
+const navNode = roots.app.children.find((c) => c.tag === "nav");
+const mark = navNode && collectClasses(navNode, "nav-mark");
+if (!mark || mark.length !== 1) throw new Error("no mark in the nav brand");
+
 record("initial");
 clickByText("A draft");
 await new Promise((r) => setTimeout(r, 50));

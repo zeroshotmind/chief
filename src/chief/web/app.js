@@ -2095,7 +2095,13 @@ function navBar() {
   return el(
     "nav",
     { class: "nav" },
-    el("span", { class: "nav-brand" }, el("span", { class: "nav-dot" }), "Chief"),
+    // The mark itself, not a coloured square standing in for it: it is the same file the
+    // tab icon is drawn from, served beside this script.
+    el(
+      "span", { class: "nav-brand" },
+      el("img", { class: "nav-mark", src: "./chief-mark.svg", alt: "" }),
+      "Chief",
+    ),
     // No Runs entry: an execution is a workflow in the running state, and its detail sits
     // under Workflows. `detail` is the rare second-execution escape hatch, and belongs there
     // too.

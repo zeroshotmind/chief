@@ -236,7 +236,7 @@ a:hover { color: var(--color-accent-700); }
   font-size: 16px; margin-right: auto;
   display: inline-flex; align-items: center; gap: 8px;
 }
-.nav-dot { width: 9px; height: 9px; border-radius: 3px; background: var(--color-accent); }
+.nav-mark { width: 22px; height: 22px; border-radius: 6px; display: block; }
 /* The current tab is marked by a rule sitting on the nav's own seam, which is why the
    negative margin has to match the nav's bottom padding. */
 .nav a {
