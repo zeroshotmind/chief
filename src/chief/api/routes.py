@@ -124,6 +124,18 @@ def archive_workflow(
     return service.archive_workflow(workflow_id, body)
 
 
+@router.delete("/workflows/{workflow_id}")
+def delete_workflow(workflow_id: str, service: Service) -> dict:
+    """Remove a workflow and its whole history, permanently.
+
+    Not on the MCP surface, deliberately. Approving a workflow is already a human decision
+    the harness may not make on its own initiative; erasing one, along with the record of
+    what a run did, is strictly further down that road. There is no agent session that
+    legitimately needs it — MCP-SURFACE.md 3.
+    """
+    return service.delete_workflow(workflow_id)
+
+
 # --- extension: review notes on a plan ----------------------------------------------------
 #
 # Feedback a person leaves on a draft, for whoever revises it. The other direction of the

@@ -32,7 +32,7 @@
 
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
-  decideAmendment, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
+  decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addReviewNote, artifactContent, artifactModules, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
 } from "./api.js";
@@ -48,23 +48,27 @@ const BAD = "var(--bad)";
 const ACC = "var(--color-accent)";
 const DIM = "var(--dim)";
 
+/* `color` is for the small indicators — a dot in an instance cluster, a node's edge in the
+   graph — where the hue carries the whole message. `tone` is the same meaning for the places
+   that have room to say it in a word; see `badge`. Both live on one record so a status can
+   never be green in the graph and amber in the list. */
 const STEP_META = {
-  pending: { color: "var(--color-neutral-400)" },
-  running: { color: ACC, pulse: true },
-  completed: { color: OK },
-  failed: { color: BAD },
-  skipped: { color: "var(--color-neutral-300)" },
-  // A checkpoint that has been reached. Warm rather than accent-blue: this one is not the
+  pending: { color: "var(--color-neutral-400)", tone: "dim" },
+  running: { color: ACC, pulse: true, tone: "acc" },
+  completed: { color: OK, tone: "ok" },
+  failed: { color: BAD, tone: "bad" },
+  skipped: { color: "var(--color-neutral-300)", tone: "dim" },
+  // A checkpoint that has been reached. Warm rather than the accent: this one is not the
   // machine working, it is the machine stopped, waiting for you.
-  blocked: { color: WARN, pulse: true },
+  blocked: { color: WARN, pulse: true, tone: "warn" },
 };
 
 const RUN_META = {
-  running: { label: "running", color: ACC, pulse: true },
-  paused_for_approval: { label: "awaiting approval", color: ACC, pulse: true },
-  waiting_on_human: { label: "waiting on you", color: WARN, pulse: true },
-  completed: { label: "completed", color: OK },
-  failed: { label: "failed", color: BAD },
+  running: { label: "running", color: ACC, pulse: true, tone: "acc" },
+  paused_for_approval: { label: "awaiting approval", color: ACC, pulse: true, tone: "acc" },
+  waiting_on_human: { label: "waiting on you", color: WARN, pulse: true, tone: "warn" },
+  completed: { label: "completed", color: OK, tone: "ok" },
+  failed: { label: "failed", color: BAD, tone: "bad" },
 };
 
 /** One lifecycle, derived from two documents.
@@ -78,9 +82,9 @@ const RUN_META = {
     execution. `register_run` does not enforce that, so extra executions are surfaced rather
     than assumed away — see `executionsOf`. */
 const LIFECYCLE = {
-  draft: { label: "awaiting approval", color: ACC, pulse: true },
-  ready: { label: "ready to run", color: "var(--color-neutral-500)" },
-  archived: { label: "archived", color: "var(--color-neutral-400)" },
+  draft: { label: "awaiting approval", color: ACC, pulse: true, tone: "acc" },
+  ready: { label: "ready to run", color: "var(--color-neutral-500)", tone: "dim" },
+  archived: { label: "archived", color: "var(--color-neutral-400)", tone: "dim" },
 };
 
 function lifecycleOf(workflow, runs) {
@@ -386,6 +390,17 @@ const dot = (color, pulse, size) =>
   el("span", {
     class: pulse === "none" || !pulse ? "dot" : "dot pulse",
     style: { background: color, ...(size ? { width: size, height: size } : {}) },
+  });
+
+/** A status as a word, tinted by its tone — for the places a status has a column to itself.
+
+    A dot asks the reader to hold a legend in their head, and the distinctions here are not
+    ones two shades of a hue can carry: "awaiting approval" and "waiting on you" are both
+    stopped-and-waiting, and which one it is decides who has to do something. */
+const badge = (meta) =>
+  el("span", {
+    class: `badge b-${meta.tone || "dim"}${meta.pulse ? " pulse" : ""}`,
+    text: meta.label,
   });
 
 // ── local files ──────────────────────────────────────────────────────────────────────────
@@ -1669,7 +1684,9 @@ const state = {
   wfProject: null,
   // The workflow whose project label is being edited, and the half-typed name.
   filing: null,
-  wfSort: { key: "lifecycle", dir: "asc" },
+  // Newest activity first: the list is a place you come back to, and what moved since you
+  // last looked is what you are coming back for.
+  wfSort: { key: "updated", dir: "desc" },
 };
 
 function setState(patch) {
@@ -1905,6 +1922,84 @@ function openDialog(amendment, approve) {
 /** The workflow-lifecycle decisions (REQ-32). Same dialog, because the thing that matters
     about it is not the wording but that the server's answer is believed rather than
     assumed — the status may have moved under us since the list was loaded. */
+/** Asking before erasing a plan and everything it ran.
+
+    Its own dialog rather than a third `action` on the one above, because the question is a
+    different shape: archiving asks for a reason to record, and there will be no record here
+    to attach one to. What this owes the reader instead is an accurate list of what goes and
+    what does not — which is why the copy names the audit trail and the files on disk. */
+function openDeleteDialog(workflow) {
+  setState({
+    dialog: {
+      subject: "delete",
+      workflow,
+      busy: false,
+      error: null,
+      key: `del:${workflow.workflow_id}`,
+    },
+  });
+}
+
+function deleteDialogNode() {
+  const { workflow, busy, error } = state.dialog;
+  return el(
+    "div",
+    { class: "dialog-backdrop", onClick: () => !busy && setState({ dialog: null }) },
+    el(
+      "div",
+      {
+        class: "confirm-pop", role: "dialog", "aria-modal": "true",
+        onClick: (event) => event.stopPropagation(),
+      },
+      el("span", { class: "section-label", text: "Delete workflow" }),
+      el(
+        "p",
+        {},
+        el("strong", { text: workflow.title }),
+        // Said plainly and in full. A confirmation that undersells what it removes is worse
+        // than none, because it buys agreement the person did not actually give.
+        " and its full history — steps, iterations, artifacts, approvals — will be " +
+          "permanently removed. This cannot be undone.",
+      ),
+      el("p", {
+        class: "text-muted", style: { fontSize: "12px" },
+        text:
+          "Files on disk are not touched, and the audit log keeps a record of the deletion. " +
+          "A template saved from this workflow is kept.",
+      }),
+      error && el("p", { style: { fontSize: "12px", color: "var(--bad)" }, text: error }),
+      el(
+        "div",
+        { class: "dialog-actions" },
+        el("button", {
+          class: "btn btn-secondary btn-sm", text: "Cancel", disabled: busy,
+          onClick: () => setState({ dialog: null }),
+        }),
+        el("button", {
+          class: "btn btn-secondary btn-danger btn-sm",
+          text: busy ? "Deleting…" : "Delete workflow", disabled: busy,
+          onClick: async () => {
+            state.dialog.busy = true;
+            render();
+            try {
+              await deleteWorkflow(workflow.workflow_id);
+              setState({ dialog: null });
+              // Back to the list either way: the screen behind this one may have been the
+              // workflow that no longer exists.
+              go("workflows");
+              await refresh();
+            } catch (err) {
+              state.dialog.busy = false;
+              state.dialog.error = err instanceof ApiError ? err.message : String(err);
+              render();
+            }
+          },
+        }),
+      ),
+    ),
+  );
+}
+
 function openWorkflowDialog(workflow, action) {
   setState({
     dialog: {
@@ -2031,7 +2126,6 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
   return el(
     "button",
     { class: "run-row", onClick: () => openWorkflow(workflow.workflow_id) },
-    dot(life.color, life.pulse ? "chiefpulse 1.6s infinite" : false),
     el(
       "span",
       { class: "title" },
@@ -2040,7 +2134,7 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       runs.length > 1 &&
         el("span", { class: "tag", text: `${runs.length} executions` }),
     ),
-    el("span", { class: "status", style: { color: life.color }, text: life.label }),
+    el("span", { class: "status" }, badge(life)),
     el("span", {
       class: "when",
       text: progress ? `${progress.done}/${progress.total}` : `${workflow.steps.length} steps`,
@@ -2054,6 +2148,16 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       title: updated ? `${relAgo(updated)} \u00b7 ${new Date(updated).toLocaleString()}` : null,
     }),
     el("span", { class: "dur", text: fmtDuration(duration) }),
+    // A button inside the row button: the click has to be stopped or the workflow opens
+    // underneath the confirmation asking whether to delete it.
+    el("button", {
+      class: "row-del", text: "\u2715", title: `Delete ${workflow.title}…`,
+      "aria-label": `Delete ${workflow.title}`,
+      onClick: (event) => {
+        event.stopPropagation();
+        openDeleteDialog(workflow);
+      },
+    }),
   );
 }
 
@@ -2129,8 +2233,10 @@ const WF_FILTERS = [
 
 /** Each sortable column, as the value it sorts on.
 
-    `lifecycle` is the default and sorts by LIFECYCLE_ORDER, not by the status string — the
-    whole point of that order is that alphabetical buries the drafts.
+    `updated` is the default — the list is a thing you return to, and what has moved since
+    you last looked is what you came back for. `lifecycle` sorts by LIFECYCLE_ORDER rather
+    than by the status string, because the whole point of that order is that alphabetical
+    buries the drafts.
 
     `updated` is the newest execution's timestamp, and a workflow that has never run simply
     has none. Those sort last in *both* directions rather than pretending to a date: the
@@ -2151,8 +2257,11 @@ const WF_COLUMNS = [
   { key: "duration", label: "Duration", cls: "dur", dir: "desc", of: (w, ctx) => ctx.duration },
 ];
 
+// The column an unknown sort key falls back to, and the one the list opens on.
+const WF_DEFAULT_COLUMN = WF_COLUMNS.find((c) => c.key === "updated");
+
 function sortWorkflows(key, dir) {
-  const col = WF_COLUMNS.find((c) => c.key === key) || WF_COLUMNS[1];
+  const col = WF_COLUMNS.find((c) => c.key === key) || WF_DEFAULT_COLUMN;
   setState({ wfSort: { key, dir: dir || col.dir } });
 }
 
@@ -2193,7 +2302,7 @@ function workflowsScreen() {
   const shown = rows.filter((r) => filter.of(r.workflow, r.life) && inProject(r) && matches(r));
 
   const { key, dir } = state.wfSort;
-  const col = WF_COLUMNS.find((c) => c.key === key) || WF_COLUMNS[1];
+  const col = WF_COLUMNS.find((c) => c.key === key) || WF_DEFAULT_COLUMN;
   const sign = dir === "desc" ? -1 : 1;
   const cmp = (a, b) => {
     const [x, y] = [col.of(a.workflow, a), col.of(b.workflow, b)];
@@ -2253,25 +2362,27 @@ function workflowsScreen() {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
         text: "Nothing yet. A harness submits a plan with POST /workflows.",
       }),
+    // Header and rows are one panel, so the columns are a table rather than five things that
+    // happen to line up. The trailing spacer stands in for each row's delete control.
     shown.length > 0 &&
       el(
         "div",
-        { class: "list-head" },
-        el("span", { class: "dot", style: { visibility: "hidden" } }),
-        WF_COLUMNS.map((c) =>
-          el("button", {
-            class: `col-head col-${c.key} ${c.cls}` + (c.key === key ? " on" : ""),
-            text: c.label + (c.key === key ? (dir === "desc" ? " ↓" : " ↑") : ""),
-            onClick: () =>
-              sortWorkflows(c.key, c.key === key ? (dir === "asc" ? "desc" : "asc") : c.dir),
-          }),
+        { class: "list-wrap" },
+        el(
+          "div",
+          { class: "list-head" },
+          WF_COLUMNS.map((c) =>
+            el("button", {
+              class: `col-head col-${c.key} ${c.cls}` + (c.key === key ? " on" : ""),
+              text: c.label + (c.key === key ? (dir === "desc" ? " ↓" : " ↑") : ""),
+              onClick: () =>
+                sortWorkflows(c.key, c.key === key ? (dir === "asc" ? "desc" : "asc") : c.dir),
+            }),
+          ),
+          el("span", { class: "row-del-spacer" }),
         ),
+        sorted.map((r) => workflowRow(r)),
       ),
-    el(
-      "div",
-      { style: { display: "flex", flexDirection: "column" } },
-      sorted.map((r) => workflowRow(r)),
-    ),
     workflows.length > 0 && shown.length === 0 &&
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "var(--space-3) 0 0" },
@@ -3344,7 +3455,7 @@ function workflowDetailScreen() {
         "div",
         { class: "screen-head", style: { marginTop: "var(--space-3)" } },
         el("h4", { text: workflow.title }),
-        el("span", { style: { fontSize: "13px", color: life.color }, text: life.label }),
+        badge(life),
         progress &&
           el("span", {
             class: "text-muted", style: { fontSize: "12px" },
@@ -3381,6 +3492,10 @@ function workflowDetailScreen() {
             class: "btn btn-secondary btn-sm", text: draft ? "Discard…" : "Archive…",
             onClick: () => openWorkflowDialog(workflow, "archive"),
           }),
+          el("button", {
+            class: "btn btn-secondary btn-danger btn-sm", text: "Delete…",
+            onClick: () => openDeleteDialog(workflow),
+          }),
           // Keeping a plan that worked. Parameterising it means saying which literals become
           // knobs, which this screen has no way to ask — so the copy is unparameterised and
           // the harness (or the API) adds substitutions. See MCP create_template_from_workflow.
@@ -3413,14 +3528,13 @@ function workflowDetailScreen() {
               return el(
                 "button",
                 { class: "run-row", onClick: () => openRun(r.run_id) },
-                dot(meta.color, pulseOf(meta)),
                 el(
                   "span",
                   { class: "title" },
                   el("span", { text: i === 0 ? "latest" : `execution ${runs.length - i}` }),
                   el("span", { class: "id text-muted", text: r.run_id }),
                 ),
-                el("span", { class: "status", style: { color: meta.color }, text: meta.label }),
+                el("span", { class: "status" }, badge(meta)),
                 el("span", { class: "when", text: rel(r.updated_at) }),
               );
             }),
@@ -3846,7 +3960,7 @@ function detailScreen() {
         "div",
         { class: "screen-head", style: { marginTop: "var(--space-3)" } },
         el("h4", { text: def.title }),
-        el("span", { style: { fontSize: "13px", color: meta.color }, text: meta.label }),
+        badge(meta),
       ),
       el("p", {
         class: "text-muted mono",
@@ -3981,6 +4095,7 @@ function templateDialogNode() {
 }
 
 function dialogNode() {
+  if (state.dialog.subject === "delete") return deleteDialogNode();
   if (state.dialog.subject === "template") return templateDialogNode();
   if (state.dialog.subject === "workflow") return workflowDialogNode();
   const { amendment, approve, busy, error, reason } = state.dialog;

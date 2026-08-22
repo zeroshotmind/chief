@@ -160,6 +160,12 @@ export const approveWorkflow = (workflowId, reason) =>
 export const archiveWorkflow = (workflowId, reason) =>
   post(`/workflows/${workflowId}/archive`, decision(reason));
 
+/** Permanent, and not the same act as archiving: the workflow, its versions, its runs, its
+    amendments and its review notes all go. The audit trail and any template saved from it
+    stay. Nothing on disk is touched. There is no MCP tool for this — see the route. */
+export const deleteWorkflow = (workflowId) =>
+  request(`/workflows/${workflowId}`, { method: "DELETE" });
+
 /** Approve or reject. The server can refuse either (REQ-14 is enforced at approval time),
     so the caller must surface the rejection rather than assume it took. */
 export const decideAmendment = (amendmentId, approve, reason) =>

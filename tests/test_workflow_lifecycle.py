@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 from .conftest import Api, construct, task
@@ -339,3 +341,32 @@ def test_exit_when_is_refused_on_a_parallel(api: Api) -> None:
     response = api.create_workflow(steps)
     assert response.status_code == 422
     assert "exit_when" in response.text
+
+
+def test_workflows_are_listed_most_recently_touched_first(api: Api) -> None:
+    """The list is something you come back to, so what moved last comes first.
+
+    Ordering by creation instead would put a workflow you just approved wherever it happened
+    to be written, which is the one place you would not look for it.
+    """
+    ids = []
+    for title in ("first", "second", "third"):
+        response = api.create_workflow([task("a")], title=title)
+        assert response.status_code == 201, response.text
+        ids.append(response.json()["workflow_id"])
+        time.sleep(0.002)  # `now()` is millisecond-resolution; a tie would sort by id instead
+
+    listed = [w["workflow_id"] for w in api.client.get("/v1/workflows").json()]
+    assert listed == list(reversed(ids))
+
+    # Touching the oldest moves it to the head — the point of the ordering.
+    assert api.client.post(f"/v1/workflows/{ids[0]}/approve").status_code == 200
+    listed = [w["workflow_id"] for w in api.client.get("/v1/workflows").json()]
+    assert listed[0] == ids[0]
+
+    # And the filtered query orders the same way, rather than falling back to creation.
+    listed = [
+        w["workflow_id"]
+        for w in api.client.get("/v1/workflows", params={"status": "draft"}).json()
+    ]
+    assert listed == [ids[2], ids[1]]

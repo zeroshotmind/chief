@@ -1,56 +1,76 @@
-/* Nocturne — design-system tokens and component classes, as imported from the Chief Runs
-   design project. Retuning the look happens here.
+/* Workbench — design-system tokens and component classes, as imported from the Chief
+   cosmetics revamp. Retuning the look happens here.
 
-   The imported screen specifies a light ground built from the same hues, so that is the
-   default; the system's native dark palette returns under a dark colour-scheme preference.
-   The web-font @import the design system carries was dropped deliberately: Chief is
-   self-hosted (REQ-21) and must render without reaching the network. */
+   Warm paper, an ember accent, and IDE-ish seams: a surface with a border rather than a
+   surface floating on a ring. The tonal ramps are the previous palette's lightness scale
+   rehued — same steps, same relationships, warm — so the many components the revamp never
+   named move with it instead of staying cool against a warm ground.
+
+   The imported screens specify a light ground, so that is the default; a warm dark palette
+   returns under a dark colour-scheme preference. The web-font @import the design system
+   carries was dropped deliberately, as it was for the palette before this one: Chief is
+   self-hosted (REQ-21) and must render without reaching the network. Archivo and JetBrains
+   Mono lead the stacks so a reader who has them gets the intended faces, and everyone else
+   gets the system's. */
 
 :root {
-  /* Light variant of the Nocturne tokens — same hues, ground lifted. */
-  --color-bg: #eef0f8;
-  --color-surface: #fbfcff;
-  --color-text: #262837;
-  --color-accent: #796cbf;
-  --color-accent-2: #7972a9;
-  --color-divider: color-mix(in srgb, #262837 14%, transparent);
+  /* Form controls, scrollbars and the canvas follow the palette instead of staying in the
+     browser's light default — without this the one input on a checkpoint card is a white
+     box on a dark ground. Both keywords, because which one applies is the reader's
+     preference, the same thing the dark block below keys on. */
+  color-scheme: light dark;
 
-  --shadow-sm: 0 0 0 1px #dcdfee;
-  --shadow-md: 0 0 0 1px #d3d6e8, 0 6px 18px rgba(38, 40, 70, 0.10);
-  --shadow-lg: 0 0 0 1px #c6cade, 0 16px 40px rgba(38, 40, 70, 0.16);
+  --color-bg: #f6f4f0;
+  --color-surface: #fdfcfa;
+  --color-text: #2a2521;
+  --color-accent: oklch(0.58 0.13 45);
+  --color-accent-2: oklch(0.48 0.12 45);
+  --color-accent-contrast: #fff;
+  /* Two seam weights, not one: the hairline between rows inside a panel is lighter than the
+     line that closes the panel itself, and collapsing them flattens every list. */
+  --color-divider: #eae5dd;
+  --color-divider-strong: #dcd5ca;
+
+  /* Depth, with no ring in it. The ring these used to carry is a real `border` on the few
+     things that need one — a shadow drawing its own outline cannot be combined with a
+     border without doubling the hairline. */
+  --shadow-sm: 0 1px 2px rgba(42, 37, 33, 0.05), 0 4px 12px rgba(42, 37, 33, 0.05);
+  --shadow-md: 0 2px 6px rgba(42, 37, 33, 0.07), 0 10px 24px rgba(42, 37, 33, 0.08);
+  --shadow-lg: 0 4px 12px rgba(42, 37, 33, 0.09), 0 18px 44px rgba(42, 37, 33, 0.14);
+  --shadow-btn: 0 1px 1.5px rgba(42, 37, 33, 0.07);
 
   /* Status hues. Shared by CSS and by the graph code, which reads them off :root. */
-  --ok: oklch(0.52 0.12 155);
-  --warn: oklch(0.62 0.13 65);
-  --bad: oklch(0.55 0.16 25);
-  --dim: #b2b6ca;
+  --ok: oklch(0.52 0.11 150);
+  --warn: oklch(0.6 0.12 85);
+  --bad: oklch(0.54 0.15 25);
+  --dim: #c4bcb0;
 
   /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the same step of
      any role matches the others in visual value. */
-  --color-neutral-100: #f3f5fe;
-  --color-neutral-200: #e4e7f5;
-  --color-neutral-300: #cfd3e5;
-  --color-neutral-400: #b2b6ca;
-  --color-neutral-500: #9397ab;
-  --color-neutral-600: #75798c;
-  --color-neutral-700: #595d6c;
-  --color-neutral-800: #3f424d;
-  --color-neutral-900: #292b31;
+  --color-neutral-100: #fbf5eb;
+  --color-neutral-200: #ede7de;
+  --color-neutral-300: #d9d3ca;
+  --color-neutral-400: #bcb6ad;
+  --color-neutral-500: #9d978f;
+  --color-neutral-600: #7f7971;
+  --color-neutral-700: #625d55;
+  --color-neutral-800: #47423a;
+  --color-neutral-900: #2f2a24;
 
-  --color-accent-100: #f5f4ff;
-  --color-accent-200: #e7e5fe;
-  --color-accent-300: #d2cefd;
-  --color-accent-400: #b5abfc;
-  --color-accent-500: #968ae0;
-  --color-accent-600: #796cbf;
-  --color-accent-700: #5d5294;
-  --color-accent-800: #423a6a;
-  --color-accent-900: #2b2741;
+  --color-accent-100: #fdf3ef;
+  --color-accent-200: #f8e3da;
+  --color-accent-300: #f2cbb9;
+  --color-accent-400: #e8a588;
+  --color-accent-500: #ca8465;
+  --color-accent-600: #aa6748;
+  --color-accent-700: #834e35;
+  --color-accent-800: #5e3725;
+  --color-accent-900: #3b251c;
 
-  --font-heading: "Inter", system-ui, -apple-system, sans-serif;
-  --font-heading-weight: 500;
-  --font-body: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-heading: "Archivo", system-ui, -apple-system, sans-serif;
+  --font-heading-weight: 600;
+  --font-body: "Archivo", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --space-1: 2.8px;
   --space-2: 5.6px;
@@ -59,43 +79,46 @@
   --space-6: 16.8px;
   --space-8: 22.4px;
 
-  --radius-sm: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 14px;
+  --radius-lg: 12px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-bg: #161826;
-    --color-surface: #232532;
-    --color-text: #e9e9ed;
-    --color-accent: #9184d9;
-    --color-accent-2: #a7a1db;
-    --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+    --color-bg: #1b1815;
+    --color-surface: #242019;
+    --color-text: #ece7df;
+    --color-accent: oklch(0.7 0.13 50);
+    --color-accent-2: oklch(0.78 0.11 55);
+    --color-accent-contrast: #191512;
+    --color-divider: #322d26;
+    --color-divider-strong: #443d33;
 
-    --shadow-sm: 0 0 0 1px #3f424d;
-    --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0, 0, 0, 0.55);
-    --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0, 0, 0, 0.65);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.5), 0 12px 28px rgba(0, 0, 0, 0.42);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.55), 0 20px 48px rgba(0, 0, 0, 0.55);
+    --shadow-btn: 0 1px 1.5px rgba(0, 0, 0, 0.4);
 
-    --ok: oklch(0.72 0.13 155);
-    --warn: oklch(0.78 0.14 75);
-    --bad: oklch(0.68 0.17 25);
-    --dim: #75798c;
+    --ok: oklch(0.72 0.12 150);
+    --warn: oklch(0.78 0.13 85);
+    --bad: oklch(0.68 0.16 25);
+    --dim: #56503f;
 
     /* The neutral ramp inverts: step 100 is the ink on a dark ground. */
-    --color-neutral-100: #292b31;
-    --color-neutral-200: #3f424d;
-    --color-neutral-300: #595d6c;
-    --color-neutral-400: #75798c;
-    --color-neutral-500: #9397ab;
-    --color-neutral-600: #b2b6ca;
-    --color-neutral-700: #cfd3e5;
-    --color-neutral-800: #e4e7f5;
-    --color-neutral-900: #f3f5fe;
+    --color-neutral-100: #2f2b24;
+    --color-neutral-200: #46423b;
+    --color-neutral-300: #625d56;
+    --color-neutral-400: #7e7972;
+    --color-neutral-500: #9d978f;
+    --color-neutral-600: #bcb6ae;
+    --color-neutral-700: #d9d3cb;
+    --color-neutral-800: #ede7de;
+    --color-neutral-900: #faf5ec;
 
-    --color-accent-200: #2b2741;
-    --color-accent-300: #423a6a;
-    --color-accent-700: #d2cefd;
+    --color-accent-200: #39261e;
+    --color-accent-300: #5b3829;
+    --color-accent-700: #efccbc;
   }
 }
 
@@ -135,19 +158,33 @@ a:hover { color: var(--color-accent-700); }
   cursor: pointer; text-decoration: none;
   font-family: var(--font-heading); font-weight: var(--font-heading-weight);
   font-size: 14px; line-height: 1.2; color: var(--color-text);
-  background: transparent; border: 1px solid transparent;
+  background: var(--color-surface); border: 1px solid var(--color-divider-strong);
   padding: var(--space-2) calc(var(--space-3) * 1.2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-btn);
 }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
-.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-.btn-primary:active:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
-.btn-secondary { border-color: var(--color-divider); }
-.btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
-.btn-secondary:active:not(:disabled) { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
-.btn-ghost { color: var(--color-accent); padding-inline: var(--space-1); }
-.btn-ghost:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+/* Filled rather than outlined: on warm paper an outline-only primary reads as one more
+   secondary, and the screens want exactly one obvious next thing per view. */
+.btn-primary {
+  color: var(--color-accent-contrast); background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.btn-primary:hover:not(:disabled) { background: var(--color-accent-2); border-color: var(--color-accent-2); }
+.btn-primary:active:not(:disabled) { background: var(--color-accent-700); border-color: var(--color-accent-700); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--color-neutral-500); }
+.btn-secondary:active:not(:disabled) { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-ghost {
+  color: var(--color-accent-700); background: transparent;
+  border-color: transparent; box-shadow: none; padding-inline: var(--space-1);
+}
+.btn-ghost:hover { background: var(--color-accent-200); }
+/* Destructive, and only ever the *second* thing in a pair — never a lone filled button. It
+   borrows the danger hue for its edge and keeps a surface, so it cannot be hit by reflex the
+   way a red block invites. */
+.btn-danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 8%, transparent); border-color: var(--bad);
+}
 .btn-sm { font-size: 12px; padding: 3px 12px; }
 
 /* — forms — */
@@ -168,11 +205,12 @@ a:hover { color: var(--color-accent-700); }
 .card {
   display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-3); border-radius: var(--radius-md);
-  background: var(--color-surface); box-shadow: var(--shadow-sm);
+  background: var(--color-surface); border: 1px solid var(--color-divider);
+  box-shadow: var(--shadow-sm);
 }
 .card-kicker {
-  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--color-accent);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--color-accent-700);
 }
 
 /* — tags — */
@@ -181,13 +219,17 @@ a:hover { color: var(--color-accent-700); }
   letter-spacing: 0.02em; padding: 3px 10px;
   border-radius: calc(var(--radius-md) * 0.75);
 }
-.tag-accent { background: var(--color-accent-200); color: var(--color-accent-700); }
+.tag-accent {
+  font-family: var(--font-mono); font-size: 10px; border-radius: 999px;
+  background: var(--color-accent-200); color: var(--color-accent-700);
+}
 
 /* — navigation — */
 .nav {
   display: flex; align-items: center; gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
-  position: sticky; top: 0; z-index: 15; background: var(--color-bg);
+  position: sticky; top: 0; z-index: 15; background: var(--color-surface);
+  border-bottom: 1px solid var(--color-divider);
 }
 .nav-brand {
   font-family: var(--font-heading); font-weight: var(--font-heading-weight);
@@ -195,11 +237,16 @@ a:hover { color: var(--color-accent-700); }
   display: inline-flex; align-items: center; gap: 8px;
 }
 .nav-dot { width: 9px; height: 9px; border-radius: 3px; background: var(--color-accent); }
+/* The current tab is marked by a rule sitting on the nav's own seam, which is why the
+   negative margin has to match the nav's bottom padding. */
 .nav a {
   color: var(--color-neutral-500); text-decoration: none; font-size: 13px;
   display: inline-flex; align-items: center; gap: 6px;
+  padding-bottom: var(--space-3); margin-bottom: calc(var(--space-3) * -1 - 1px);
+  border-bottom: 2px solid transparent;
 }
-.nav a[aria-current="page"] { color: var(--color-accent); }
+.nav a:hover { color: var(--color-text); }
+.nav a[aria-current="page"] { color: var(--color-text); border-bottom-color: var(--color-accent); }
 
 /* — dialog — */
 .dialog-backdrop {
@@ -210,7 +257,8 @@ a:hover { color: var(--color-accent-700); }
 .dialog {
   width: min(440px, 100%); display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-4); border-radius: var(--radius-lg);
-  background: var(--color-surface); box-shadow: var(--shadow-lg);
+  background: var(--color-surface); border: 1px solid var(--color-divider);
+  box-shadow: var(--shadow-lg);
 }
 .dialog-title {
   font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 17px;
@@ -249,27 +297,45 @@ main.wide.graph { max-width: none; }
 }
 
 /* — run list — */
-/* The row rule fades to transparent at both ends over 48px: a Nocturne signature. */
-.run-row {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-2);
-  background: linear-gradient(to right, transparent, var(--color-divider) 48px,
-    var(--color-divider) calc(100% - 48px), transparent) no-repeat bottom / 100% 1px;
-  border: 0; font: inherit; color: inherit; text-align: left;
-  cursor: pointer; border-radius: var(--radius-sm);
+/* Rows are ruled inside one panel rather than floating on the page ground: a table, which is
+   what a list with five aligned columns actually is. The seam is a border-top on each row,
+   so the first row sits flush under the header and the panel closes itself. */
+.list-wrap {
+  background: var(--color-surface); border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden;
 }
-.run-row:hover { background-color: color-mix(in srgb, var(--color-text) 4%, transparent); }
-.run-row .title { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: 14px; }
-.run-row .id { font-family: var(--font-mono); font-size: 11px; }
-/* Fixed widths, because the header above the rows has to line up with them. */
-.run-row .status { flex: none; font-size: 12px; width: 108px; }
-.run-row .when { flex: none; font-size: 12px; color: var(--color-neutral-500); width: 64px; text-align: right; }
+.run-row {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%;
+  padding: 9px var(--space-4);
+  border: 0; border-top: 1px solid var(--color-divider);
+  background: transparent; font: inherit; color: inherit; text-align: left;
+  cursor: pointer;
+}
+.run-row:hover { background-color: color-mix(in srgb, var(--color-accent) 5%, transparent); }
+.run-row .title { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: 13.5px; }
+.run-row .id { font-family: var(--font-mono); font-size: 11px; color: var(--color-neutral-500); }
+/* Fixed widths, because the header above the rows has to line up with them. The status
+   column is wide enough for the longest badge — "awaiting approval" — set solid. */
+.run-row .status { flex: none; font-size: 12px; width: 128px; }
+.run-row .when { flex: none; font-family: var(--font-mono); font-size: 11.5px; color: var(--color-neutral-500); width: 64px; text-align: right; }
 .run-row .stamp, .run-row .dur {
-  flex: none; text-align: right; white-space: nowrap;
-  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-neutral-500);
+  flex: none; text-align: right; white-space: nowrap; font-family: var(--font-mono);
+  font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--color-neutral-500);
 }
 .run-row .stamp { width: 112px; }
 .run-row .dur { width: 64px; }
+
+/* Deleting from a row: revealed on hover, never occupying attention on a list you are only
+   reading. It is a real button inside the row button, so it stops the click that would
+   otherwise open the workflow underneath it. */
+.row-del, .row-del-spacer { flex: none; width: 24px; }
+.row-del {
+  border: 0; background: none; cursor: pointer;
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  color: var(--color-neutral-500); font-size: 12px; line-height: 1; opacity: 0;
+}
+.run-row:hover .row-del, .row-del:focus-visible { opacity: 1; }
+.row-del:hover { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); }
 
 /* — list controls: filter chips, search, sortable column heads — */
 .list-controls {
@@ -278,20 +344,20 @@ main.wide.graph { max-width: none; }
 }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chip {
-  font: inherit; font-size: 12px; padding: 3px 11px; cursor: pointer;
-  color: var(--color-neutral-500); background: transparent;
-  border: 1px solid var(--color-divider); border-radius: 999px;
+  font: inherit; font-family: var(--font-mono); font-size: 12px; padding: 3px 10px;
+  cursor: pointer; color: var(--color-neutral-500); background: transparent;
+  border: 1px solid var(--color-divider-strong); border-radius: var(--radius-md);
 }
 .chip:hover { color: var(--color-text); border-color: var(--color-neutral-400); }
 .chip.on {
   color: var(--color-accent-700); background: var(--color-accent-200);
-  border-color: transparent;
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 .field-search {
   flex: 1; min-width: 180px; font: inherit; font-size: 13px;
   padding: 5px 10px; color: var(--color-text); caret-color: var(--color-accent);
   background: var(--color-surface);
-  border: 1px solid var(--color-divider); border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider-strong); border-radius: var(--radius-md);
 }
 .field-search:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
 
@@ -307,23 +373,47 @@ main.wide.graph { max-width: none; }
 
 .list-head {
   display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-2) 5px;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
 }
 .col-head {
-  font: inherit; font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase;
+  font: inherit; font-family: var(--font-mono); font-size: 9.5px;
+  letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--color-neutral-500); background: none; border: 0; padding: 0;
   cursor: pointer; white-space: nowrap;
 }
 .col-head:hover { color: var(--color-text); }
-.col-head.on { color: var(--color-accent); }
+.col-head.on { color: var(--color-accent-700); }
 .col-head.title { flex: 1; min-width: 0; text-align: left; }
-.col-head.status { flex: none; width: 108px; text-align: left; }
+.col-head.status { flex: none; width: 128px; text-align: left; }
 .col-head.when { flex: none; width: 64px; text-align: right; }
 .col-head.stamp { flex: none; width: 112px; text-align: right; }
 .col-head.dur { flex: none; width: 64px; text-align: right; }
 
+/* A dot still marks the small repeated things — an instance in a cluster, a row in a
+   sidebar — where a word would not fit and the colour is the whole message. */
 .dot { flex: none; border-radius: 50%; width: 8px; height: 8px; }
 .dot.pulse { animation: chiefpulse 1.6s infinite; }
+
+/* Where the status *is* the column, it is set as a word instead. A colour alone asks the
+   reader to hold a legend in their head, and "awaiting approval" and "blocked" are not
+   distinctions worth encoding in two shades of the same hue. The hue survives as the tint,
+   so the scanning cue is kept and the meaning is added. */
+.badge {
+  display: inline-flex; align-items: center; flex: none;
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase; line-height: 1;
+  padding: 3px 6px; border-radius: var(--radius-sm); white-space: nowrap;
+  color: var(--badge-c, var(--color-neutral-600));
+  background: color-mix(in srgb, var(--badge-c, var(--color-neutral-600)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--badge-c, var(--color-neutral-600)) 28%, transparent);
+}
+.badge.pulse { animation: chiefpulse 1.6s infinite; }
+.badge.b-ok { --badge-c: var(--ok); }
+.badge.b-warn { --badge-c: var(--warn); }
+.badge.b-bad { --badge-c: var(--bad); }
+.badge.b-acc { --badge-c: var(--color-accent-700); }
+.badge.b-dim { --badge-c: var(--color-neutral-600); }
 
 /* — the file viewer —
    A drawer along the bottom of the window rather than a panel in the layout: it is opened
@@ -488,13 +578,18 @@ details[open] > .meta-summary::before { content: "▾ "; }
   position: absolute; padding: 9px 11px; display: flex; flex-direction: column; gap: 6px;
   background: var(--color-surface); border-radius: var(--radius-md);
   cursor: pointer; box-shadow: var(--shadow-sm);
-  border: 1px solid var(--color-divider);
+  border: 1px solid var(--color-divider-strong);
   /* Height is set inline and grows for a construct's body; clip rather than spill if a
      goal wraps further than the measurement allowed for. */
   box-sizing: border-box; overflow: hidden;
 }
-.node:hover { border-color: var(--color-neutral-400); }
-.node.sel { border: 1px solid var(--color-accent); box-shadow: var(--shadow-md); }
+.node:hover { border-color: var(--color-neutral-500); }
+/* Selection is the one place a ring is still drawn, deliberately doubling the border so the
+   selected node reads at a glance across a graph of forty. */
+.node.sel {
+  border: 1px solid var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent), var(--shadow-sm);
+}
 .node.pend { border: 1px dashed var(--color-accent); }
 .node.fail { border: 1px solid color-mix(in srgb, var(--bad) 50%, transparent); }
 .node.ghost {
@@ -571,7 +666,7 @@ details[open] > .meta-summary::before { content: "▾ "; }
 }
 .split-handle::before {
   content: ""; position: absolute; top: 0; bottom: 0; left: 5px;
-  width: 1px; background: var(--color-divider);
+  width: 1px; background: var(--color-divider-strong);
 }
 .split-handle:hover::before, .split-handle:focus-visible::before {
   background: var(--color-accent); width: 2px; left: 4px;
@@ -587,8 +682,8 @@ details[open] > .meta-summary::before { content: "▾ "; }
   max-height: calc(100vh - 96px); overflow-y: auto;
 }
 .section-label {
-  font-size: 11px; color: var(--color-neutral-500); letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--font-mono); font-size: 10px; color: var(--color-neutral-500);
+  letter-spacing: 0.08em; text-transform: uppercase;
 }
 .close-x {
   border: 0; background: transparent; cursor: pointer; color: var(--color-neutral-500);
@@ -842,3 +937,17 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   .inspector { width: 100% !important; position: static; max-height: none; }
   .split-handle { display: none; }
 }
+
+/* — deleting a workflow —
+   Its own popover rather than the ordinary `.dialog`: this asks about something that cannot
+   be undone, so it names what goes, names what does not, and puts the destructive button
+   second. The edge carries the danger hue to say so before the words are read. */
+.confirm-pop {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4); border-radius: var(--radius-md);
+  background: var(--color-surface); box-shadow: var(--shadow-lg);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--color-divider-strong));
+  max-width: 420px;
+}
+.confirm-pop p { margin: 0; font-size: 13px; line-height: 1.45; }
+.confirm-pop .section-label { color: var(--bad); }

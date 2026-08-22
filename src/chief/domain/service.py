@@ -355,6 +355,50 @@ class Chief:
             )
         return defn
 
+    def delete_workflow(self, workflow_id: str) -> dict[str, Any]:
+        """Remove a workflow and its whole history, permanently.
+
+        Distinct from archiving, and not a replacement for it. Archiving keeps the record and
+        stops it asking for anything; this is for the plan that should never have been
+        submitted — a mis-generated draft, a duplicate, a test — where keeping it is not
+        prudence but clutter in the one list a person reads to decide what needs them.
+
+        Everything the workflow owns goes with it: its versions, its runs and their step
+        states, its amendments, its review notes. Two things stay. **The audit trail stays**,
+        including a new entry for this deletion — a delete that erases the record of itself
+        is not auditable, and REQ-20 makes that log append-only in the first place. **A
+        template saved from this workflow stays**, because it stopped being part of this
+        workflow the moment it was saved.
+
+        Files on disk are never touched. Chief records references to artifacts, not their
+        contents (REQ-46), and a tracker that deletes a person's work because they tidied
+        their workflow list would be a tracker nobody could safely tidy.
+
+        A running execution does not block this. The refusal would be the wrong shape: the
+        run is not a lock on the record, and someone deleting a workflow mid-run has almost
+        always just decided the run is the thing they want gone. What the count in the
+        response is for is saying plainly what went.
+        """
+        defn = self.store.get_workflow(workflow_id)
+        runs = self.store.list_runs(workflow_id=workflow_id)
+        with self.store.transaction() as conn:
+            removed = self.store.delete_workflow(conn, workflow_id)
+            # Written after the rows are gone but inside the same transaction, so the trail
+            # and the deletion cannot disagree.
+            self.store.audit(
+                conn,
+                "workflow.deleted",
+                workflow_id=workflow_id,
+                detail={
+                    "title": defn.title,
+                    "status": defn.status,
+                    "version": defn.version,
+                    "runs": [r.run_id for r in runs],
+                    "removed": removed,
+                },
+            )
+        return {"workflow_id": workflow_id, "title": defn.title, "removed": removed}
+
     # --- templates ----------------------------------------------------------------------
 
     def create_template(

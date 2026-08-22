@@ -811,3 +811,40 @@ its own instance metadata, which is what it already reads to know which branch i
 One consequence to hold on to: **rendering must not reach a criterion's id or the completion
 gate.** `criteria_met` is keyed against the criterion *as written*, `{{ paper }}` and all, so
 every branch answers `c1` whatever its own value is.
+
+## 41. Deleting a workflow — what the cascade stops at
+
+Chief already had `archive`, and archiving is the right answer for a plan that ran and is
+finished. It is the wrong answer for the mis-generated draft, the duplicate, the plan
+submitted while testing something else. Those keep asking to be approved forever, in the one
+list a person reads to decide what needs them, and "archived" is a lie about what happened.
+So `DELETE /v1/workflows/{id}` removes the record and everything it owns: its versions, its
+runs and their step states, its amendments, its review notes.
+
+The interesting part is not the cascade but where it stops.
+
+**The audit log stays, and gains an entry.** REQ-20 makes it append-only and the storage
+module has no delete path for it at all. It would have been easy to write the cascade as
+"every table with a `workflow_id` column", which is exactly the phrasing that would have
+taken the trail with it — a deletion that erases the record of itself is not auditable. The
+entry records the title, the status, the run ids and the row counts, because after the fact
+that is the only remaining description of what was there.
+
+**A template saved from the workflow stays.** It became an independent document the moment
+it was saved; keeping the plan for next time is the whole point of saving one.
+
+**Nothing on disk is touched.** Chief records references to artifacts, not their contents
+(REQ-46). A tracker that deleted a person's actual work because they tidied their workflow
+list would be a tracker nobody could safely tidy, and the confirmation says so out loud.
+
+**A running execution does not block it.** The refusal would be the wrong shape: the run is
+not a lock on the record, and someone deleting a workflow mid-run has almost always just
+decided the run is the thing they want gone.
+
+### Not on the MCP surface
+
+`approve_workflow` is already a decision the harness may only make on an explicit human
+instruction in the turn (MCP-SURFACE.md §3). Permanently erasing a plan and the record of
+what it did is strictly further down that road, and there is no agent session that
+legitimately needs it. It is REST and the web UI only — the first entry in `REST_ONLY` that
+is excluded for being destructive rather than for being self-approval or housekeeping.

@@ -266,9 +266,10 @@ globalThis.fetch = async (url, options) => {
     };
   }
   // Every write, not only the POSTs: resolving a note is a PATCH, and a smoke test that
-  // only watched POSTs would call it green without ever seeing the request.
-  if (options && options.body) {
-    posts.push({ url, method: options.method, body: JSON.parse(options.body) });
+  // only watched POSTs would call it green without ever seeing the request. A DELETE
+  // carries no body at all, so the method alone has to be enough to record one.
+  if (options && options.method && options.method !== "GET") {
+    posts.push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
   }
   if (NO_TEMPLATES && url.endsWith("/templates")) {
     return { ok: false, status: 404, json: async () => ({ error: { code: "not_found" } }) };
@@ -316,11 +317,32 @@ function clickIn(root, text) {
 
 /** Click the newest element whose class list contains every one of `classes`. Text is
     ambiguous for a column header ("Workflow" is also the nav link). */
+/** The *button* carrying this text, not the first ancestor whose subtree contains it.
+
+    `clickByText` searches whole subtrees, and children are built before their parents — so
+    for a dialog it finds the backdrop's dismiss handler rather than the button inside it,
+    and a test asserting "confirming deletes" silently asserts "dismissing does nothing". */
+function clickButton(text) {
+  const hit = [...clicks]
+    .reverse()
+    .find((c) => c.node.tag === "button" && JSON.stringify(c.node).includes(text));
+  if (!hit) throw new Error(`no button containing ${text}`);
+  hit.fn({ preventDefault() {}, stopPropagation() {} });
+}
+
+/** Returns what the handler did with the event, which is the only way to check a control
+    nested inside another one: this DOM stub does not bubble, so asserting "the row did not
+    open" would pass whether the handler stopped propagation or not. */
 function clickByClass(...classes) {
   const has = (n) => classes.every((c) => (n.class || "").split(" ").includes(c));
   const hit = [...clicks].reverse().find((c) => has(c.node));
   if (!hit) throw new Error(`no clickable element with classes ${classes.join(" ")}`);
-  hit.fn({ preventDefault() {}, stopPropagation() {} });
+  const seen = { stopped: false, prevented: false };
+  hit.fn({
+    preventDefault() { seen.prevented = true; },
+    stopPropagation() { seen.stopped = true; },
+  });
+  return seen;
 }
 
 /** Walk a rendered subtree counting nodes whose class matches — the screen labels below say
@@ -413,6 +435,14 @@ function typeInto(placeholder, value) {
 function rowTitles(root = mainNode(), out = []) {
   if (root.class === "title") out.push(root.children[0]?.textContent);
   for (const child of root.children || []) rowTitles(child, out);
+  return out;
+}
+
+/** Every class string in a subtree whose element carries `cls` — enough to assert that a
+    variant was resolved, not merely that the base class was emitted. */
+function collectClasses(root, cls, out = []) {
+  if (root.class && root.class.split(" ").includes(cls)) out.push(root.class);
+  for (const child of root.children || []) collectClasses(child, cls, out);
   return out;
 }
 
@@ -512,12 +542,53 @@ const listRows = countClass(mainNode(), "run-row");
 if (listRows !== 2) throw new Error(`expected 2 active rows, got ${listRows}`);
 if (countClass(mainNode(), "list-head") !== 1) throw new Error("no sortable column header");
 
+// The list opens on last-updated, newest first. "Approved one" was touched last by its
+// running execution; the draft has not moved since it was written.
+if (rowTitles().join() !== "Approved one,A draft")
+  throw new Error(`default sort: got ${rowTitles()}`);
+
+// Header and rows are one panel, and each status is a word with a tone rather than a dot.
+if (countClass(mainNode(), "list-wrap") !== 1) throw new Error("rows are not in one panel");
+const badgeTones = collectClasses(mainNode(), "badge").map((c) =>
+  (c.match(/\bb-\w+/) || ["?"])[0],
+);
+// The draft is awaiting approval (accent), the approved one is mid-run (accent) — both
+// pulse; what is asserted is that a tone was resolved at all rather than defaulting.
+if (badgeTones.length !== 2 || badgeTones.some((t) => t === "?"))
+  throw new Error(`status badges: got ${JSON.stringify(badgeTones)}`);
+if (countClass(mainNode(), "dot") !== 0)
+  throw new Error("a status dot survived in the workflow list");
+
 // "Needs you" is one question, not three: an unapproved draft and a run stopped at a
 // checkpoint are both waiting on the same person.
 clickByText("Needs you");
 await new Promise((r) => setTimeout(r, 10));
-if (rowTitles().join() !== "A draft,Approved one") throw new Error(`filter chip: got ${rowTitles()}`);
+if (rowTitles().join() !== "Approved one,A draft") throw new Error(`filter chip: got ${rowTitles()}`);
 
+// Deleting from a row: the control is in the row, its click must not open the workflow
+// underneath it, and nothing is sent until the confirmation is accepted.
+const rowDelete = clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+if (!rowDelete.stopped)
+  throw new Error("the row-delete let its click through — the workflow opens underneath");
+if (roots["dialog-root"].children.length === 0) throw new Error("no delete confirmation");
+if (posts.some((x) => x.method === "DELETE")) throw new Error("deleted before confirming");
+clickButton("Cancel");
+await new Promise((r) => setTimeout(r, 20));
+if (roots["dialog-root"].children.length !== 0) throw new Error("cancel left the dialog up");
+if (posts.some((x) => x.method === "DELETE")) throw new Error("cancel still deleted");
+
+clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+clickButton("Delete workflow");
+await new Promise((r) => setTimeout(r, 30));
+const deleted = posts.find((x) => x.method === "DELETE");
+if (!deleted) throw new Error("confirming sent no DELETE");
+if (!/\/workflows\/wf_\w+$/.test(deleted.url))
+  throw new Error(`DELETE went to ${deleted.url}`);
+
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 30));
 clickByText("All");
 await new Promise((r) => setTimeout(r, 10));
 typeInto("Filter by name", "archived");

@@ -54,6 +54,10 @@ REST_ONLY = {
     # which cannot.
     "artifact_content",
     "artifact_modules",
+    # Permanent deletion of a plan and everything it ran. `approve_workflow` is a human
+    # decision the harness may only make on an instruction in the turn; this one has no
+    # legitimate agent-initiated form at all, so it does not get a tool.
+    "delete_workflow",
 }
 
 

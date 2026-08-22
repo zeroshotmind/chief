@@ -260,18 +260,50 @@ class Store:
         defn.updated_at = stamp
 
     def list_workflows(self, status: str | None = None) -> list[WorkflowDefinition]:
+        """Every workflow, most recently touched first.
+
+        Ordered by ``updated_at`` rather than ``created_at``: a list of work is something you
+        come back to, and what has moved since you last looked is what you came back for.
+        ``workflow_id`` breaks ties, which only happens for rows written in the same tick.
+        """
         if status:
             rows = self._all(
                 "SELECT document, created_at, updated_at FROM workflows WHERE status = ? "
-                "ORDER BY created_at, workflow_id",
+                "ORDER BY updated_at DESC, workflow_id",
                 (status,),
             )
         else:
             rows = self._all(
                 "SELECT document, created_at, updated_at FROM workflows "
-                "ORDER BY created_at, workflow_id"
+                "ORDER BY updated_at DESC, workflow_id"
             )
         return [self._stamped(r) for r in rows]
+
+    #: Everything a workflow owns, innermost first. Deliberately not a list of every table
+    #: with a ``workflow_id`` column: ``audit_log`` also has one and is append-only (REQ-20),
+    #: and deleting the record of a deletion is the one thing a deletion must not do.
+    #: ``templates`` is absent for a different reason — a template saved from a workflow is
+    #: an independent document from the moment it is saved, and keeping it is the point.
+    _OWNED = (
+        ("amendments", "workflow_id"),
+        ("runs", "workflow_id"),
+        ("review_notes", "workflow_id"),
+        ("workflow_versions", "workflow_id"),
+        ("workflows", "workflow_id"),
+    )
+
+    def delete_workflow(self, conn: sqlite3.Connection, workflow_id: str) -> dict[str, int]:
+        """Remove a workflow and everything that belongs to it, returning what went.
+
+        The counts are not decoration: they are what the audit entry records, and the only
+        remaining description of a run once the run itself is gone.
+        """
+        removed: dict[str, int] = {}
+        for table, column in self._OWNED:
+            cursor = conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (workflow_id,))
+            if cursor.rowcount:
+                removed[table] = cursor.rowcount
+        return removed
 
     # --- review notes -------------------------------------------------------------------
 
