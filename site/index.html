@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chief — your agents plan, you approve, Chief keeps the record</title>
+<meta name="description" content="A local, single-user tracker for agentic workflows. The plan is a contract: a draft cannot run until you approve it, mid-run changes pause for your decision, and every transition lands in an audit log.">
+<meta property="og:title" content="Chief">
+<meta property="og:description" content="Your agents plan. You approve. Chief keeps the record.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://zeroshotmind.github.io/chief/">
+<!-- Every reference stays relative: the site is served from /chief/, not a domain root. -->
+<link rel="icon" type="image/svg+xml" href="./chief-mark.svg">
+<link rel="stylesheet" href="./revamp-b.css">
+<link rel="stylesheet" href="./revamp-base.css">
+<link rel="stylesheet" href="./landing.css">
+<style>body { margin: 0; } a { color: inherit; }</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="nav" style="padding: 10px 28px;">
+    <span class="nav-brand"><img src="./chief-mark.svg" alt="" style="width: 22px; height: 22px; border-radius: 6px;">Chief</span>
+    <a href="#how">How it works</a>
+    <a href="#install">Install</a>
+    <a class="btn btn-sm" href="https://github.com/zeroshotmind/chief" style="border-bottom: 0; margin-bottom: 0; padding: 4px 10px; color: var(--ink);"><span style="font-size: 13px;">★</span> Star on GitHub</a>
+  </nav>
+
+  <main data-screen-label="Landing" style="max-width: 1080px; margin: 0 auto; padding: 0 28px 80px; gap: 0;">
+
+    <section style="display: flex; gap: 48px; align-items: center; padding: 64px 0 56px; flex-wrap: wrap;">
+      <div style="flex: 1 1 380px; min-width: 320px; display: flex; flex-direction: column; gap: 18px;">
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <!-- The design said "Chief 1.0 is here" and linked to /releases. There is no 1.0 and
+               no tag yet, so this says what is true. When 1.0 ships, restore the original
+               wording and point the href back at /releases. -->
+          <a href="https://github.com/zeroshotmind/chief" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: var(--font-mono); font-size: 11px; padding: 4px 12px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);">Early days · v0.1 <span aria-hidden="true">→</span></a>
+          <span class="card-kicker" style="font-size: 11px;">A tracker for agentic workflows</span>
+        </div>
+        <h1 style="margin: 0; font-size: 44px; line-height: 1.08; letter-spacing: -0.02em; font-weight: 650;">Your agents plan.<br>You approve.<br><span style="color: var(--accent-ink);">Chief keeps the record.</span></h1>
+        <p style="margin: 0; font-size: 16px; line-height: 1.6; color: var(--muted); max-width: 46ch;">Agents improvise around broken steps, bury your feedback in chat scrollback, and report “done” with nothing to show for it. Chief makes the plan a contract: it waits for your approval before it can run, mid-run changes pause for your decision, and every transition lands in an audit log.</p>
+        <p style="margin: 0; font-size: 14.5px; line-height: 1.6; max-width: 46ch;"><strong style="font-weight: 650;">Chief never executes anything.</strong> It records what a harness plans and what it reports, and it enforces who has to say yes.</p>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px;">
+          <a class="btn btn-primary" href="https://github.com/zeroshotmind/chief" style="padding: 9px 18px; font-size: 14px;">★ Star the repo</a>
+          <a class="btn btn-secondary" href="#install" style="padding: 9px 18px; font-size: 14px;">Get started</a>
+        </div>
+        <div class="mono" style="font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center;">
+          <span style="color: var(--accent-ink);">$</span>
+          <span>pip install -e . &amp;&amp; chief --port 8080</span>
+        </div>
+      </div>
+
+      <div style="flex: 1 1 440px; min-width: 360px; display: flex; flex-direction: column; gap: 12px;">
+        <div class="card" style="padding: 18px; gap: 0;">
+          <div style="display: flex; align-items: baseline; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--seam);">
+            <span style="font-weight: 600; font-size: 13px;">Ship the release notes</span>
+            <span class="mono" style="font-size: 11px; color: var(--muted);">wf_0142</span>
+            <span class="badge b-dim" id="run-badge" style="margin-left: auto;">draft</span>
+          </div>
+          <!-- 376/320 rather than the design's 356/300: the amend scene places its last node at
+               top: 266px, which at 300px crosses the footer rule beneath it. Raising the box keeps
+               every node exactly where the design put it. -->
+          <div id="hero-stage" style="position: relative; height: 376px;">
+
+            <div class="scene" data-scene="0" style="position: absolute; inset: 0;">
+              <div style="position: relative; height: 320px; margin-top: 14px;">
+                <svg style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;" aria-hidden="true">
+                  <line x1="120" y1="52" x2="120" y2="88" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="140" x2="90" y2="176" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="90" y1="224" x2="140" y2="262" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                </svg>
+                <div class="node" style="left: 10px; top: 4px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">draft</span><span class="node-goal">Collect merged PRs since v0.9</span></div>
+                </div>
+                <div class="node" style="left: 10px; top: 92px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">draft</span><span class="node-goal">Draft the changelog</span></div>
+                </div>
+                <div class="node sel" style="left: 10px; top: 180px; width: 220px;">
+                  <div class="node-head"><span class="badge b-dim">draft</span><span class="node-goal">Publish to the releases page</span></div>
+                </div>
+                <div class="card" style="right: 6px; top: 168px; position: absolute; width: 160px; padding: 10px 12px; gap: 5px; box-shadow: var(--shadow-card);">
+                  <span class="section-label">review note · you</span>
+                  <span style="font-size: 12px; line-height: 1.45;">Draft first, publish only after I read it.</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--seam);">
+                <span class="section-label">a draft cannot run until you approve it</span>
+                <span class="btn btn-sm btn-primary" style="margin-left: auto; cursor: default;">Approve</span>
+                <span class="btn btn-sm" style="cursor: default;">Feedback</span>
+              </div>
+            </div>
+
+            <div class="scene" data-scene="1" style="position: absolute; inset: 0; display: none;">
+              <div style="position: relative; height: 320px; margin-top: 14px;">
+                <svg style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;" aria-hidden="true">
+                  <line x1="120" y1="52" x2="120" y2="88" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="140" x2="90" y2="176" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="90" y1="224" x2="140" y2="262" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                </svg>
+                <div class="node" style="left: 10px; top: 4px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-ok">done</span><span class="node-goal">Collect merged PRs since v0.9</span></div>
+                  <div class="node-arts">2 artifacts</div>
+                </div>
+                <div class="node" style="left: 10px; top: 92px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-acc pulse">running</span><span class="node-goal">Draft the changelog</span></div>
+                </div>
+                <div class="node pend" style="left: 40px; top: 180px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">pending</span><span class="node-goal dimmed">Publish to the releases page</span></div>
+                </div>
+                <div class="card" style="right: 6px; top: 8px; position: absolute; width: 160px; padding: 10px 12px; gap: 5px;">
+                  <span class="section-label">artifact</span>
+                  <span class="mono" style="font-size: 11px; color: var(--accent-ink);">notes/prs-since-v0.9.md</span>
+                  <span style="font-size: 11.5px; color: var(--muted); line-height: 1.4;">click to read it, rendered, in a drawer</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--seam);">
+                <span class="section-label">each step reported as it starts and finishes</span>
+              </div>
+            </div>
+
+            <div class="scene" data-scene="2" style="position: absolute; inset: 0; display: none;">
+              <div style="position: relative; height: 320px; margin-top: 14px;">
+                <svg style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;" aria-hidden="true">
+                  <line x1="120" y1="52" x2="120" y2="88" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="140" x2="90" y2="176" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="140" x2="330" y2="176" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 4"></line>
+                  <line x1="90" y1="224" x2="140" y2="262" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="330" y1="224" x2="170" y2="262" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 4"></line>
+                </svg>
+                <div class="node" style="left: 10px; top: 4px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-ok">done</span><span class="node-goal">Collect merged PRs since v0.9</span></div>
+                </div>
+                <div class="node" style="left: 10px; top: 92px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-ok">done</span><span class="node-goal">Draft the changelog</span></div>
+                </div>
+                <div class="node" style="left: 10px; top: 180px; width: 190px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">draft</span><span class="node-goal">Verify the links resolve</span></div>
+                </div>
+                <div class="node ghost" style="right: 6px; top: 180px; width: 180px; cursor: default;">
+                  <span class="node-tag ghost">amendment</span>
+                  <div class="node-head"><span class="badge b-acc">insert</span><span class="node-goal ghosted">Also note the API break</span></div>
+                </div>
+                <div class="node pend" style="left: 60px; top: 266px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">pending</span><span class="node-goal dimmed">Publish to the releases page</span></div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--seam);">
+                <span class="section-label">the run is paused until you decide</span>
+                <span class="btn btn-sm btn-primary" style="margin-left: auto; cursor: default;">Approve</span>
+                <span class="btn btn-sm" style="cursor: default;">Reject</span>
+              </div>
+            </div>
+
+            <div class="scene" data-scene="3" style="position: absolute; inset: 0; display: none;">
+              <div style="position: relative; height: 320px; margin-top: 14px;">
+                <svg style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;" aria-hidden="true">
+                  <line x1="120" y1="52" x2="120" y2="88" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="140" x2="120" y2="176" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                  <line x1="120" y1="222" x2="120" y2="258" stroke="var(--seam-strong)" stroke-width="1.5"></line>
+                </svg>
+                <div class="node" style="left: 10px; top: 4px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-ok">done</span><span class="node-goal">Collect merged PRs since v0.9</span></div>
+                </div>
+                <div class="node" style="left: 10px; top: 92px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-ok">done</span><span class="node-goal">Draft the changelog</span></div>
+                </div>
+                <div class="node gate sel" style="left: 10px; top: 180px; width: 220px; height: 42px;">
+                  <span class="gate-label">✋ checkpoint · blocked</span>
+                </div>
+                <div class="node pend" style="left: 10px; top: 262px; width: 220px; cursor: default;">
+                  <div class="node-head"><span class="badge b-dim">pending</span><span class="node-goal dimmed">Publish to the releases page</span></div>
+                </div>
+                <div class="card" style="right: 6px; top: 158px; position: absolute; width: 160px; padding: 10px 12px; gap: 6px;">
+                  <span class="section-label">it asks in writing</span>
+                  <span style="font-size: 12px; line-height: 1.45;">Which tag should this publish under?</span>
+                  <span class="mono" style="font-size: 11.5px; padding: 4px 8px; border: 1px solid var(--seam-strong); border-radius: calc(var(--radius) - 2px); color: var(--accent-ink);">v0.10.0</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--seam);">
+                <span class="section-label">rejecting stops the branch — with a reason</span>
+                <span class="btn btn-sm btn-primary" style="margin-left: auto; cursor: default;">Approve</span>
+                <span class="btn btn-sm" style="cursor: default;">Reject</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <div id="scene-tabs" style="display: flex; align-items: center; gap: 10px; padding: 0 4px;">
+          <button type="button" data-go="0">1 draft</button>
+          <button type="button" data-go="1">2 run</button>
+          <button type="button" data-go="2">3 amend</button>
+          <button type="button" data-go="3">4 checkpoint</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="how" style="padding: 48px 0; border-top: 1px solid var(--seam); display: flex; flex-direction: column; gap: 24px;">
+      <span class="section-label">How it works</span>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;">
+        <div class="card" style="padding: 18px; gap: 10px;">
+          <span class="mono" style="font-size: 11px; color: var(--accent-ink);">01</span>
+          <span style="font-weight: 600; font-size: 14.5px;">The agent plans</span>
+          <p style="margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted);">Claude Code — or anything that can make an HTTP call — plans a workflow: one step per unit of work, ordered by explicit dependency edges. It arrives as a draft.</p>
+        </div>
+        <div class="card" style="padding: 18px; gap: 10px;">
+          <span class="mono" style="font-size: 11px; color: var(--accent-ink);">02</span>
+          <span style="font-weight: 600; font-size: 14.5px;">You approve — or say what's wrong</span>
+          <p style="margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted);">A draft cannot take a run until you approve it. Leave review notes on any node; the agent reads them off the plan it fetches before revising. Nothing to repeat.</p>
+        </div>
+        <div class="card" style="padding: 18px; gap: 10px;">
+          <span class="mono" style="font-size: 11px; color: var(--accent-ink);">03</span>
+          <span style="font-weight: 600; font-size: 14.5px;">The run stays honest</span>
+          <p style="margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted);">When the plan stops fitting, the agent proposes an amendment and the run pauses until you decide. Touching finished work is a history edit — never auto-approved.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" style="padding: 48px 0; border-top: 1px solid var(--seam); display: flex; gap: 40px; flex-wrap: wrap;">
+      <div style="flex: 1 1 300px; display: flex; flex-direction: column; gap: 12px; min-width: 280px;">
+        <span class="section-label">Install</span>
+        <h4 style="font-size: 24px;">Running in under a minute</h4>
+        <p style="margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--muted); max-width: 44ch;">Needs Python 3.11+ and git. One process serves the REST API, the web UI and the MCP endpoint. No build step, no CDN, no separate UI command — and the database is one SQLite file you back up by copying.</p>
+        <p style="margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--muted); max-width: 44ch;">Then point Claude Code at it:</p>
+        <code class="mono" style="font-size: 12px; color: var(--accent-ink); overflow-wrap: anywhere;">claude mcp add --transport http chief http://127.0.0.1:8080/mcp/ -s user</code>
+      </div>
+      <div style="flex: 1 1 380px; min-width: 320px;">
+        <div id="terminal" style="border-radius: var(--radius); border: 1px solid var(--seam-strong); background: var(--ink); color: var(--bg); overflow: hidden; box-shadow: var(--shadow-card);">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid color-mix(in srgb, var(--bg) 14%, transparent);">
+            <span class="mono" style="font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;">terminal</span>
+          </div>
+          <pre class="mono" style="margin: 0; padding: 18px 18px 20px; font-size: 12.5px; line-height: 1.9; overflow-x: auto;"><span style="opacity: 0.5;">$</span> git clone https://github.com/zeroshotmind/chief.git
+<span style="opacity: 0.5;">$</span> cd chief &amp;&amp; python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+<span style="opacity: 0.5;">$</span> pip install -e ".[dev]"
+<span style="opacity: 0.5;">$</span> chief --port 8080
+<span style="color: oklch(0.78 0.11 55);">→ serving UI, API and MCP at http://127.0.0.1:8080/</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section style="padding: 64px 0 24px; border-top: 1px solid var(--seam); display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center;">
+      <h4 style="font-size: 28px; letter-spacing: -0.02em;">Agents move fast. Keep the record straight.</h4>
+      <p style="margin: 0; font-size: 14px; color: var(--muted); max-width: 52ch; line-height: 1.6;">If human-approved agent workflows are something you want to exist, a star is how you say so.</p>
+      <a class="btn btn-primary" href="https://github.com/zeroshotmind/chief" style="padding: 10px 22px; font-size: 14.5px;">★ Star zeroshotmind/chief</a>
+      <span class="mono" style="font-size: 11px; color: var(--muted);">local-first · no auth, no cloud, no telemetry</span>
+    </section>
+
+  </main>
+</div>
+<script src="./landing.js"></script>
+</body>
+</html>

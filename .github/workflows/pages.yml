@@ -1,0 +1,43 @@
+# Publishes site/ to GitHub Pages at https://zeroshotmind.github.io/chief/
+#
+# The landing page is plain static files with no build step, matching the app's own UI —
+# so this only uploads the directory. Nothing here touches the Python package, and the
+# page deliberately does not import anything from src/chief/web: the app's stylesheet is
+# tuned for an app, and a marketing page that broke when the UI was retuned would be a
+# coupling nobody wants.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  # So the page can be republished without an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a queued run supersedes an older one rather than racing it. Not
+# cancel-in-progress: a half-finished deploy is worse than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

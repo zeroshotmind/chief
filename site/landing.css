@@ -1,0 +1,66 @@
+/* Page-specific corrections, kept out of the vendored design files so those stay diffable
+   against the design project. */
+
+/* `.shell a` sets the link colour at specificity (0,1,1); `.btn-primary` sets its own at
+   (0,1,0) and loses regardless of source order — which leaves the two ember call-to-action
+   buttons with near-invisible ember text on an ember ground. The buttons are anchors here
+   because they navigate, so the fix belongs on the anchor. */
+.shell a.btn { color: var(--ink); text-decoration: none; }
+.shell a.btn-primary { color: var(--accent-contrast); }
+.shell a.btn-ghost { color: var(--accent-ink); }
+
+/* The scene tabs under the hero. Styled here rather than inline because, unlike the
+   design's other inline styles, these change as you click. */
+#scene-tabs button {
+  font: inherit; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
+  cursor: pointer; border: 0; background: none; padding: 4px 0;
+  color: var(--muted); border-bottom: 2px solid transparent;
+}
+#scene-tabs button:hover { color: var(--ink); }
+
+/* — narrow screens —
+   The design is laid out for a desktop column and its sections already carry `flex-wrap`,
+   so the stacking is free. Two things are not.
+
+   The display type and the page gutters are set inline by the design, so overriding them
+   from here needs `!important`; that is the cost of keeping the markup faithful.
+
+   The hero graph is the harder one. Its nodes are absolutely positioned in pixels against a
+   ~404px stage — that is what `flex: 1 1 440px` gives it, minus the card's padding — so a
+   narrower stage does not reflow, it collides: the right-hand nodes walk left into the
+   left-hand ones. Reflowing it would mean redrawing the design. Instead the stage keeps the
+   width it was drawn at and is scaled down to fit, which is what it is: a picture of the
+   app, not a layout of its own. */
+@media (max-width: 720px) {
+  .shell h1 { font-size: 36px !important; }
+  #hero-stage { width: 404px; zoom: 0.86; }
+}
+
+@media (max-width: 560px) {
+  .shell h1 { font-size: 30px !important; }
+  .shell .nav { padding: 10px 16px !important; gap: 14px; }
+  .shell main { padding-left: 16px !important; padding-right: 16px !important; }
+  .shell main > section:first-of-type > div { min-width: 0 !important; }
+  #hero-stage { zoom: 0.74; }
+  /* The nav's four items do not fit one line on a phone; let them wrap rather than
+     pushing the star button off the edge. */
+  .shell .nav { flex-wrap: wrap; }
+}
+
+@media (max-width: 420px) {
+  #hero-stage { zoom: 0.64; }
+}
+
+/* The install block paints itself `background: var(--ink); color: var(--bg)` — a dark
+   terminal on light paper. Those two tokens swap with the palette, so under a dark
+   preference it inverts into a bright white panel, which is the one thing a terminal
+   should never be. Pinned here instead of edited inline, because in light mode the
+   design's version is exactly right. */
+@media (prefers-color-scheme: dark) {
+  /* `!important` because the design sets these inline, and inline beats a stylesheet
+     regardless of specificity. */
+  #terminal {
+    background: #14110f !important;
+    color: var(--ink) !important;
+  }
+}

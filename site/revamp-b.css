@@ -1,0 +1,30 @@
+/* Vendored from the Chief design project; see the note on the dark block below.
+   Do not hand-tune: re-sync from the design project instead, and keep page-specific
+   corrections in landing.css so this stays diffable against the source. */
+/* Direction B — "Workbench": warm paper, ember accent, Archivo + JetBrains Mono, soft depth. */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;650&family=JetBrains+Mono:wght@400;500&display=swap');
+.shell {
+  --font-ui: "Archivo", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius: 8px;
+  --bg: #f6f4f0; --surface: #fdfcfa; --ink: #2a2521; --muted: #766e64;
+  --seam: #eae5dd; --seam-strong: #dcd5ca;
+  --accent: oklch(0.58 0.13 45); --accent-ink: oklch(0.48 0.12 45);
+  --accent-soft: oklch(0.95 0.02 55); --accent-contrast: #fff;
+  --ok: oklch(0.52 0.11 150); --warn: oklch(0.6 0.12 85); --bad: oklch(0.54 0.15 25); --dim: #c4bcb0;
+  --shadow-card: 0 1px 2px rgba(42, 37, 33, 0.05), 0 4px 12px rgba(42, 37, 33, 0.05);
+  --shadow-btn: 0 1px 1.5px rgba(42, 37, 33, 0.07);
+}
+/* Was `.shell.dark`, set by the design tool's preview control. This page has no theme
+   toggle, so the palette follows the reader's preference instead. Sole edit to this file. */
+@media (prefers-color-scheme: dark) {
+.shell {
+  --bg: #1b1815; --surface: #242019; --ink: #ece7df; --muted: #9c948a;
+  --seam: #322d26; --seam-strong: #443d33;
+  --accent: oklch(0.7 0.13 50); --accent-ink: oklch(0.78 0.11 55);
+  --accent-soft: oklch(0.31 0.05 50); --accent-contrast: #191512;
+  --ok: oklch(0.72 0.12 150); --warn: oklch(0.78 0.13 85); --bad: oklch(0.68 0.16 25); --dim: #56503f;
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.4), 0 6px 16px rgba(0,0,0,0.3);
+  --shadow-btn: 0 1px 1.5px rgba(0,0,0,0.4);
+}
+}
