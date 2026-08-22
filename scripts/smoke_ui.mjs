@@ -102,10 +102,18 @@ globalThis.localStorage = {
 };
 
 const STEPS = [
-  { id: "a", type: "task", goal: "first", harness: "claude-code", depends_on: [] },
-  { id: "b", type: "loop", goal: "each thing", harness: "claude-code", depends_on: ["a"], body: ["c", "d"], exit_when: "the check passes" },
-  { id: "c", type: "task", goal: "one thing", harness: "claude-code", depends_on: [] },
-  { id: "d", type: "task", goal: "then check it", harness: "claude-code", depends_on: ["c"] },
+  // Criteria on a step that ran, so the checklist can be read against what the harness
+  // answered; and on one that has not, so the outstanding state is drawn too.
+  { id: "a", type: "task", goal: "first", harness: "claude-code", depends_on: [],
+    criteria: [{ id: "c1", text: "every persona has a voice note" },
+               { id: "c2", text: "the two cut parts are still listed" }] },
+  // Declared instance parameters, and a body step that names one: the count is decided at
+  // runtime, so what tells one iteration from another can only arrive at runtime too.
+  { id: "b", type: "loop", goal: "each thing", harness: "claude-code", depends_on: ["a"], body: ["c", "d"], exit_when: "the check passes",
+    instance_params: [{ name: "paper", description: "which paper this iteration reads", required: true }] },
+  { id: "c", type: "task", goal: "read {{ paper }} end to end", harness: "claude-code", depends_on: [] },
+  { id: "d", type: "task", goal: "then check it", harness: "claude-code", depends_on: ["c"],
+    criteria: [{ id: "c1", text: "the check is green" }] },
   // The step the run stops on. A person decides it, and is asked one thing in writing.
   { id: "e", type: "checkpoint", goal: "ship it?", harness: "human", depends_on: ["a"],
     fields: [{ name: "budget", label: "How much may it spend?", hint: "$", required: true }] },
@@ -136,6 +144,7 @@ const RUN = {
     // Two refs of the kind a harness actually reports: a file relative to wherever it was
     // working, and something already on the web. They resolve down different arms.
     a: { step_id: "a", status: "completed", summary: "did it",
+      criteria_met: { c1: "all nine recorded", c2: "listed under Cut" },
       metadata: { tokens: 41200, cost_usd: 0.62, model: "claude", nested: { retries: 2 } },
       artifacts: [
       { artifact_id: "art_1", type: "markdown",
@@ -152,7 +161,7 @@ const RUN = {
       // it falls back to prose with its components named. Both paths matter.
       { artifact_id: "art_5", type: "file", description: "Lone", ref: "notes/named.mdx", data: null, comments: [] },
     ] },
-    b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { seed: 7, deep: { a: 1 } } }] },
+    b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { paper: "arxiv:2401.11111", seed: 7, deep: { a: 1 } } }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
   },
 };
@@ -681,6 +690,25 @@ const comment = posts.find((x) => x.url.includes("/comments"));
 // was invisible. Selecting a node changes the inspector, so the selection is put back.
 clickByText("did it");
 await new Promise((r) => setTimeout(r, 30));
+// The criteria checklist, on the step that ran. Both conditions were answered, so both
+// read as met and both carry the evidence — a tick with nothing behind it would be the
+// metadata problem again: present in the DOM, useless to a reader.
+const critRows = findByClass(mainNode(), "criterion");
+const critShown = critRows.length === 2 &&
+                  critRows.every((n) => JSON.stringify(n).includes("met")) &&
+                  JSON.stringify(mainNode()).includes("all nine recorded") &&
+                  JSON.stringify(mainNode()).includes("every persona has a voice note") &&
+                  JSON.stringify(mainNode()).includes("Done when (2/2)");
+// And a criterion nothing has answered reads as outstanding rather than silently absent —
+// the state a reader needs before approving a plan.
+clickByText("then check it");
+await new Promise((r) => setTimeout(r, 30));
+const outRows = findByClass(mainNode(), "criterion");
+const critOutstanding = outRows.length === 1 &&
+                        !JSON.stringify(outRows[0]).includes("criterion met") &&
+                        JSON.stringify(mainNode()).includes("Done when (0/1)");
+clickByText("did it");
+await new Promise((r) => setTimeout(r, 30));
 const stepMetaShown = JSON.stringify(mainNode()).includes("41200") &&
                       countClass(mainNode(), "meta-json") === 1;
 const stepMetaFolds = countClass(mainNode(), "j-node") > 0;
@@ -693,6 +721,15 @@ const artFactsInline = findByClass(mainNode(), "meta-pair")
 // "Branch 1..8" with the useful field one click away each.
 clickByText("each thing");
 await new Promise((r) => setTimeout(r, 30));
+// The construct declares what each iteration must supply, and each instance reads its own
+// body with its own value in place. Without this a run shows "Iteration 1..8" with nothing
+// telling them apart — which is exactly what the wf_ablate demo looks like today.
+const instLabelled = JSON.stringify(mainNode()).includes("Iteration 1 · arxiv:2401.11111");
+const paramDeclared = JSON.stringify(mainNode()).includes("which paper this iteration reads");
+const filled = findByClass(mainNode(), "inst-filled");
+const paramsFilled = filled.length === 1 &&
+                     JSON.stringify(filled[0]).includes("read arxiv:2401.11111 end to end") &&
+                     !JSON.stringify(filled[0]).includes("{{");
 const instPairs = findByClass(mainNode(), "meta-pair").map((n) => JSON.stringify(n));
 const instInline = instPairs.some((p) => p.includes("seed") && p.includes("7"));
 // Scalars go inline; the whole of it — nested values included — is one click away in the
@@ -969,6 +1006,8 @@ console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
+console.log(`instances:   labelled=${instLabelled}, declared=${paramDeclared}, body-filled=${paramsFilled}`);
+console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOutstanding}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
@@ -999,6 +1038,11 @@ const ok =
   // Metadata, in the four places it can be attached. These were computed and printed and
   // — for a while — asserted nowhere, which is a report rather than a test: the harness
   // said "artifact folded=false" and still called the run green.
+  instLabelled &&
+  paramDeclared &&
+  paramsFilled &&
+  critShown &&
+  critOutstanding &&
   stepMetaShown &&
   stepMetaFolds &&
   artFactsInline &&

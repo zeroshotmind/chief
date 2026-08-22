@@ -376,6 +376,11 @@ def _reset(state: StepState) -> None:
     state.skip_cause = None
     state.artifacts = []
     state.metadata = {}
+    # Evidence belongs to the attempt that produced it. Carried across a replay it would
+    # answer the new attempt's criteria with the old attempt's work — and since the gate
+    # only checks that each criterion has *an* answer, the replayed step would sail through
+    # the one path where re-checking matters most. The snapshot in `history` keeps it.
+    state.criteria_met = {}
     state.instances = [] if state.instances is not None else None
     state.instances_closed = False
     # A replayed checkpoint is being asked again, so the previous answer stops being the
@@ -395,6 +400,27 @@ def _reset_instance(instance: StepInstance) -> None:
     for entry in instance.step_states.values():
         _reset(entry)
     set_status(instance, "pending")
+
+
+def _drop_stale_evidence(
+    state: StepState, before: WorkflowStep | None, after: WorkflowStep | None
+) -> None:
+    """Forget what was said about a criterion whose wording has changed.
+
+    Criterion ids are positional, so rewording c1 leaves it addressed as c1 — and the
+    evidence recorded against the old wording would then stand as an answer to the new one.
+    That is the replay problem in a smaller shape: an answer belongs to the question it was
+    given for. Only the changed ones are dropped, so an amendment that adds a fourth
+    criterion does not discard the three already answered.
+    """
+    if before is None or after is None or not state.criteria_met:
+        return
+    was = {c.id: c.text for c in before.criteria}
+    for criterion in after.criteria:
+        if was.get(criterion.id) != criterion.text:
+            state.criteria_met.pop(criterion.id, None)
+    for gone in set(state.criteria_met) - {c.id for c in after.criteria}:
+        state.criteria_met.pop(gone, None)
 
 
 def apply_state_effects(
@@ -460,6 +486,7 @@ def apply_state_effects(
                 # replay_step is what re-runs it.
                 if state.status in HISTORY_LOCKED:
                     state.history.append(_snapshot(state))
+                _drop_stale_evidence(state, defn_before.step(op.target_step_id), op.step)
             elif op.op == "remove_step":
                 # Preserve rather than delete the record (contract 1.4).
                 if state.skip_cause != "removed":

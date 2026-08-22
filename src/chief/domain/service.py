@@ -753,7 +753,11 @@ class Chief:
                 details={"step_id": path[-1], "status": state.status},
             )
 
+        self._check_criteria(step, update, state.criteria_met)
+
         state.summary = update.summary
+        if update.criteria_met:
+            state.criteria_met.update(update.criteria_met)
         if update.artifacts:
             state.artifacts.extend(self._stamp_artifacts(update.artifacts))
         if update.metadata:
@@ -793,6 +797,79 @@ class Chief:
                 },
             )
         return run
+
+    @staticmethod
+    def _check_instance_params(step: WorkflowStep, metadata: dict[str, Any]) -> None:
+        """Every declared parameter must arrive with the instance that is being registered.
+
+        Unknown keys are *allowed*, unlike a checkpoint's response. Instance metadata is
+        load-bearing free-form — timings, seeds, token counts — and refusing anything
+        undeclared would make declaring a parameter cost more than it gives. The declaration
+        names a required subset, not a schema.
+
+        Presence, not truthiness: the value is ``Any``, so a parameter legitimately supplied
+        as ``0``, ``False`` or an empty list must count as given. Only an absent key, or a
+        string that is blank once trimmed, is missing. See CONTRACT-NOTES.md #40.
+        """
+        missing = sorted(
+            spec.name
+            for spec in step.instance_param_specs
+            if spec.required
+            and (
+                spec.name not in metadata
+                or metadata[spec.name] is None
+                or (isinstance(metadata[spec.name], str) and not metadata[spec.name].strip())
+            )
+        )
+        if missing:
+            raise ValidationFailed(
+                f"step '{step.id}' requires {missing} on every {step.instance_kind} — it is "
+                "what tells this one from the others; pass them in the instance's metadata",
+                details={"step_id": step.id, "missing": missing},
+            )
+
+    @staticmethod
+    def _check_criteria(
+        step: WorkflowStep,
+        update: StepUpdate | BodyStepUpdate,
+        recorded: dict[str, str],
+    ) -> None:
+        """A step with criteria cannot be reported done until each one has been answered for.
+
+        Chief cannot judge whether a criterion is satisfied — it has no access to the work
+        and never will. What it can do is refuse a completion that has not addressed each
+        criterion *by name*, which is forced enumeration rather than verification. That is
+        worth having for the reason REQ-48 requires a real summary: the cost of the gate is
+        one sentence per criterion, and the thing it catches is a step called done while a
+        condition someone wrote down was quietly skipped. See CONTRACT-NOTES.md #39.
+        """
+        by_id = {c.id: c for c in step.criteria}
+        unknown = sorted(set(update.criteria_met) - set(by_id))
+        if unknown:
+            raise ValidationFailed(
+                f"step '{step.id}' has no criteria {', '.join(unknown)}",
+                details={"step_id": step.id, "unknown": unknown, "criteria": sorted(by_id)},
+            )
+        if not by_id or update.status != "completed":
+            return
+
+        # Against everything answered so far, not just this update: evidence accumulates the
+        # way artifacts and metadata do, so a criterion answered on the way through does not
+        # have to be restated at the end.
+        answered = {**recorded, **update.criteria_met}
+        missing = [c for c in step.criteria if not answered.get(c.id, "").strip()]
+        if missing:
+            raise InvariantViolation(
+                f"step '{step.id}' cannot be completed yet: "
+                + "; ".join(f"{c.id} ({c.text}) is unanswered" for c in missing)
+                + ". Say in criteria_met how each was met, or — if one cannot be — keep "
+                "working and report again, report 'failed', or propose an amendment "
+                "changing the criteria. Do not report completion around an unmet criterion",
+                details={
+                    "step_id": step.id,
+                    "unmet": [{"id": c.id, "text": c.text} for c in missing],
+                },
+            )
 
     @staticmethod
     def _check_response(step: WorkflowStep, response: dict[str, str], *, approved: bool) -> None:
@@ -915,6 +992,8 @@ class Chief:
                 f"'{step.instance_kind}', not '{body.kind}'",
                 details={"step_id": step.id},
             )
+
+        self._check_instance_params(step, body.metadata)
 
         _, state, _ = paths.resolve(run, path, create=True)
         if state.instances is None:

@@ -48,7 +48,7 @@ For one repo rather than globally, put it at `.claude/skills/chief/SKILL.md` in 
 
 ## What Claude cannot do
 
-Five things are REST-only, by design:
+Seven things are REST-only, by design:
 
 - **`GET/PUT /config/approval-policy`** — a session that can edit the policy governing its
   own amendments can approve its own work, which is the loop REQ-13 exists to prevent.
@@ -62,6 +62,12 @@ Five things are REST-only, by design:
   writing its own note is the same problem as a harness writing its own comment; a harness
   *closing* a note is worse, because it is a session deciding the feedback it was given has
   been dealt with. Claude reads notes freely: they ride on the plan `get_workflow` returns.
+- **`PATCH /workflows/{id}` and `GET /projects`** — filing a workflow under a project after
+  the fact is a person's housekeeping. A harness states the project and the directory when it
+  *creates* the plan, which it does through `create_workflow` like anything else.
+- **`GET /runs/{id}/artifacts/{id}/content` and `/modules`** — not withheld so much as
+  pointless: a harness wrote the file and has a filesystem. These exist so a *browser* can
+  read an artifact, and a browser is the one client that cannot.
 
 `approve_workflow`, `approve_amendment`, `reject_amendment` and `resolve_checkpoint` are
 tools, but they are human decisions — the skill says to call them only when you have been

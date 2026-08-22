@@ -35,6 +35,12 @@ designed — before composing, ask three questions of the work: what is *indepen
   sentence) and the **harness** that will run it — `claude-code` when that is you. The
   namespace is open strings, so spelling drift fragments it: match what existing workflows
   already use (`list_workflows` shows you) rather than inventing a variant.
+- **Keep the goal to two or three lines, and put what decides "done" in `criteria`.** A
+  goal that runs long is nearly always one with acceptance conditions buried in its prose —
+  "…unit-tested against hand-written correct, incorrect and malformed completions", three
+  sentences in, where nobody can enumerate it. Split those out: `criteria` is a list of
+  short checkable statements, written as plain strings, and the goal is left saying what the
+  step is for. Task steps only; a construct's criteria go on the steps in its body.
 - Order comes from `depends_on`, never from position in the list.
 - **Independent work you can name at plan time is a fan-out**: ordinary steps side by side
   (no dependency between them), fanning back in when a later step depends on all of them.
@@ -43,6 +49,12 @@ designed — before composing, ask three questions of the work: what is *indepen
 - **A `parallel` construct is for branches you cannot count until you are running** — one
   branch per failing test you find, per repo the scan turns up. Give it a `body`; never
   declare how many branches, you register each as it happens.
+- **Declare `instance_params` on a construct: what tells one branch or iteration from
+  another.** `[{"name": "paper"}, {"name": "pdf_path"}]` for a step that fans out over
+  papers. Every instance must then supply a value for each when you register it, so a run
+  cannot end up with eight branches nobody can tell apart. Body steps may write
+  `{{ paper }}` in a goal or a criterion and it is filled in per branch when the plan is
+  read — so write the body once, generically, and let the value arrive with the instance.
 - **"Do this, check it, and try again if it isn't good enough" is a `loop`** — so is any
   retry, bounded attempt, or iterate-until-it-passes. The check goes inside the `body` as
   its own step, and the exit condition goes in the loop's **`exit_when`** ("held-out
@@ -100,15 +112,56 @@ Report each step with `report_step_update`: `running` when you start it, then `c
 or `failed`. `path` is `["step_03"]` for a top-level step; inside a loop or parallel body
 it is `["step_06", "inst_01", "step_09"]`.
 
+**Before reporting a step `completed`, go through its criteria yourself and check each one
+actually holds.** Do the checking — run the suite, open the file, look at the output — and
+pass `criteria_met` keyed by criterion id (`c1`, `c2`, …), each with a sentence of what
+satisfied it: "all 314 tests pass, see the log artifact", not "yes". Answers accumulate, so
+record each as you go rather than all at the end.
+
+If one does not hold, **that step is not finished**. Keep working and report again. If it
+cannot be made to hold, report `failed` or propose an amendment changing the criterion —
+never report completion around one, and never write an answer for a criterion you have not
+actually checked.
+
+Chief will refuse `completed` while any criterion is unanswered and name the ones it is
+waiting on. Treat that refusal as a backstop you should rarely see, not the thing that tells
+you what is left: it can only detect a criterion you said nothing about, never one you
+answered carelessly. Chief cannot check whether a criterion truly holds — you can.
+
 **Every update needs a summary, and it must be worth reading.** It is what a person sees to
 understand the run without opening the artifacts. "Done" is not a summary; "migrated 14
 call sites, 2 needed a manual null check" is.
 
-For a loop or parallel step: `register_step_instance` opens each iteration or branch,
+For a loop or parallel step: pass each instance's `instance_params` in its `metadata` when
+you register it — it is refused without them. Read your own instance's metadata to know
+which branch you are on; the body step's `{{ paper }}` is display, and the value in metadata
+is the source. `register_step_instance` opens each iteration or branch,
 report the body steps inside it by path, and `report_instance_update` when the instance
 finishes. Set `instances_closed` on the construct once no more are coming.
 
-Artifacts are JSON metadata — a path, a URL, an id — never file contents.
+**Artifacts are references, never file contents** — a path, a URL, an id. Two things follow
+from the web UI being able to open them.
+
+Give the **path you actually wrote to**, relative to the `origin_dir` you set when you
+planned. The UI resolves it and shows the file: markdown rendered, images and PDFs inline,
+code and logs as text. A path that is close but not right reads as a missing file.
+
+Put what you know about the output in **`data`** — a row count, dimensions, a digest, how it
+was produced. It shows beside the artifact. `data.text` is the exception: it holds the
+content itself for an artifact with no file, and is rendered as the document rather than as
+metadata. An artifact needs one of `ref` or `data`, so "no file, just facts" is a legitimate
+artifact.
+
+**`metadata` on an update is worth filling in.** Token counts, cost, timings, a commit, a
+seed — it is shown in the UI and merged across updates, so a later one adds to it rather than
+replacing it. On a loop or parallel instance it is the only thing that distinguishes one
+branch from another: without it a person sees "Branch 1 … Branch 8" and cannot tell which was
+which. `register_run` takes the same field for what set the whole run going.
+
+If you write an `.mdx` document, components **beside it** in the same directory are compiled
+and run when someone opens it — plain `.jsx`, no TypeScript, and imports resolved only from
+that directory. Components imported from elsewhere in a repo cannot be resolved and are shown
+named but not run.
 
 ## When you reach a checkpoint
 

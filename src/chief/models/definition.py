@@ -37,6 +37,80 @@ class CheckpointField(BaseModel):
     required: bool = True
 
 
+class Criterion(BaseModel):
+    """One condition that has to hold before a step may be called done.
+
+    Criteria exist because goals were absorbing them. A real one from this store reads
+    "... unit-tested against hand-written correct, incorrect and malformed completions",
+    buried three sentences into a 467-character goal — an acceptance condition written as
+    prose, where nothing can enumerate it and a reader has to hunt for it. Split out, the
+    goal says what done looks like and this says how you would know.
+
+    ``id`` is derived from position rather than supplied: criteria are authored as a plain
+    list of strings (the validator on ``WorkflowStep`` accepts that and fills these in), and
+    an id nobody types is an id nobody gets wrong. Positional is sound because a step's
+    criteria are only ever replaced wholesale, by an ``update_step`` amendment — there is no
+    operation that inserts one in the middle of a list and leaves the rest addressed as they
+    were.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Defaulted rather than required, so the JSON schema a harness reads agrees with what
+    # the validator accepts. Required here, it would advertise an id the caller is told
+    # elsewhere not to supply — and a schema that contradicts its own guidance is the way
+    # this field gets filled in wrongly.
+    id: str = Field(
+        default="",
+        description="Filled in automatically as c1, c2, … — do not supply one.",
+    )
+    text: str = Field(
+        min_length=1,
+        description="The condition, as one short checkable statement.",
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("a criterion must not be blank")
+        return v
+
+
+class InstanceParam(BaseModel):
+    """One value each iteration or branch of a construct must supply about itself.
+
+    A `parallel` step's branch count is decided at runtime, so what tells one branch from
+    another can only arrive at runtime too — in the instance's ``metadata``. That worked, but
+    nothing required it: ``wf_ablate`` in the shipped demo has three branches training three
+    different variants, all registered with ``metadata={}``, and no way to tell which was
+    which. Declaring the names here makes that plan impossible to write.
+
+    Metadata stays open around them. These are a required subset, not a schema: a harness
+    still attaches token counts and timings beside them, and refusing those would make the
+    declaration cost more than it gives. See CONTRACT-NOTES.md #40.
+
+    ``name`` is as permanent as a step id — it is the key the value arrives under, the key
+    the harness reads back, and the placeholder body steps substitute.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    #: What it is, for whoever reads the plan. Shown in the UI beside the construct.
+    description: str | None = None
+    #: A required param must be present on every instance; an optional one may be omitted,
+    #: and substitutes as empty where a body step names it.
+    required: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("an instance parameter needs a name")
+        return v
+
+
 class WorkflowStep(BaseModel):
     """A single node of the plan.
 
@@ -50,8 +124,33 @@ class WorkflowStep(BaseModel):
 
     id: str = Field(min_length=1)
     type: StepType
-    goal: str = Field(min_length=1)
+    # Described rather than commented: this reaches a harness through the MCP tool's JSON
+    # schema, and length guidance that only lives in a skill file reaches one harness.
+    # Deliberately not a `max_length`: a rejected `create_workflow` is a worse failure than
+    # a long goal, and this store already holds a 902-character one that must stay
+    # revisable. See CONTRACT-NOTES.md #39.
+    goal: str = Field(
+        min_length=1,
+        description=(
+            "What done looks like, in two or three lines at most. State the work, not how to "
+            "do it, and leave out anything a reader of the plan does not need. Conditions "
+            "that decide whether it is finished belong in `criteria`, not here — a goal that "
+            "runs long is almost always one with acceptance conditions buried in its prose."
+        ),
+    )
     harness: str = Field(min_length=1)
+    # Task-only, and the reason `goal` can be short. See CONTRACT-NOTES.md #39.
+    criteria: list[Criterion] = Field(
+        default_factory=list,
+        description=(
+            "The conditions that decide whether this step is done, one crisp checkable "
+            "statement each — 'exit code 0 on the full suite', 'every rejected candidate has "
+            "a stated reason'. Write them as plain strings; ids are filled in. Reporting this "
+            "step `completed` requires saying how each one was met, so state conditions you "
+            "will be able to answer for, and keep vague ones out. Task steps only. Optional: "
+            "a step with none behaves as it always has."
+        ),
+    )
     depends_on: list[str] = Field(default_factory=list)
     inputs: dict[str, Any] = Field(default_factory=dict)
     body: list[str] | None = None
@@ -66,10 +165,40 @@ class WorkflowStep(BaseModel):
     # arrows (met -> continue past the loop, not met -> another iteration). Loop-only.
     # Chief records it; the harness judges it — like everything else, it is not enforced.
     exit_when: str | None = None
+    # What each instance of this construct must say about itself. Loop/parallel only. The
+    # names are also placeholders: `{{ paper }}` in a body step's goal or criteria is
+    # substituted with that branch's value when the step is read. See CONTRACT-NOTES.md #40.
+    instance_params: list[InstanceParam] | None = Field(
+        default=None,
+        description=(
+            "What tells one iteration or branch of this construct from another — the names "
+            "each one must supply when it is registered, e.g. `paper` and `pdf_path` for a "
+            "step that fans out over papers. Every instance is then required to give a value "
+            "for each, so a run cannot end up with eight branches nobody can tell apart. "
+            "Body steps may write `{{ paper }}` in a goal or a criterion and it is filled in "
+            "per branch. Loop and parallel steps only."
+        ),
+    )
     # What a checkpoint asks a person for, beyond the approve/reject decision itself. Empty
     # (or absent) is a pure gate: someone has to say go. Checkpoint-only — a task's inputs
     # come from the plan, not from a person at runtime. See CONTRACT-NOTES.md #28.
     fields: list[CheckpointField] | None = None
+
+    @field_validator("criteria", mode="before")
+    @classmethod
+    def _number_criteria(cls, v: Any) -> Any:
+        """Accept ``["a", "b"]`` as well as the stamped form, and number both."""
+        if not isinstance(v, list):
+            return v
+        out = []
+        for i, item in enumerate(v, start=1):
+            if isinstance(item, str):
+                out.append({"id": f"c{i}", "text": item})
+            elif isinstance(item, dict):
+                out.append({**item, "id": item.get("id") or f"c{i}"})
+            else:
+                out.append(item)
+        return out
 
     @field_validator("goal", "harness")
     @classmethod
@@ -85,6 +214,10 @@ class WorkflowStep(BaseModel):
     @property
     def is_checkpoint(self) -> bool:
         return self.type == "checkpoint"
+
+    @property
+    def instance_param_specs(self) -> list[InstanceParam]:
+        return list(self.instance_params or [])
 
     @property
     def field_specs(self) -> list[CheckpointField]:

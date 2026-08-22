@@ -303,3 +303,194 @@ def test_a_hand_written_workflow_is_untouched_by_the_policy(
         json={"title": "by hand", "source": "generated", "steps": [task("step_01")]},
     )
     assert response.json()["status"] == "draft"
+
+
+# --- criteria ---------------------------------------------------------------------------
+#
+# Substitution has to reach a criterion's text as well as the goal's. It is the same class
+# of gap as the known one on checkpoint field labels: miss it, and a parameterised plan
+# renders a goal that names the new repo beside criteria still naming the old one — a step
+# that disagrees with itself about what it is for.
+
+
+def test_a_placeholder_inside_a_criterion_must_be_declared(client: TestClient) -> None:
+    body = template_body(
+        steps=[
+            {
+                "id": "s1",
+                "type": "task",
+                "goal": "Fetch issues",
+                "harness": "claude-code",
+                "criteria": ["every issue in {{ undeclared }} is triaged"],
+            }
+        ],
+        title="Triage",
+    )
+    response = client.post("/v1/templates", json=body)
+    assert response.status_code == 422, response.text
+    assert "undeclared" in response.json()["error"]["message"]
+
+
+def test_instantiating_substitutes_criteria_text(client: TestClient) -> None:
+    body = template_body(
+        steps=[
+            {
+                "id": "s1",
+                "type": "task",
+                "goal": "Triage {{ repo }}",
+                "harness": "claude-code",
+                "criteria": [
+                    "every open issue in {{ repo }} has a label",
+                    "nothing older than {{ since }} is left untouched",
+                ],
+            }
+        ],
+    )
+    template_id = client.post("/v1/templates", json=body).json()["template_id"]
+    workflow = client.post(
+        f"/v1/templates/{template_id}/workflows", json={"parameters": {"repo": "acme/api"}}
+    ).json()
+    assert [c["text"] for c in workflow["steps"][0]["criteria"]] == [
+        "every open issue in acme/api has a label",
+        "nothing older than 24h is left untouched",
+    ]
+
+
+def test_extraction_parameterises_criteria_too(api: Api) -> None:
+    steps = [
+        {
+            "id": "s1",
+            "type": "task",
+            "goal": "deploy acme/api to prod",
+            "harness": "claude-code",
+            "depends_on": [],
+            "criteria": ["acme/api answers on /health"],
+        }
+    ]
+    workflow_id = api.approved_workflow(steps)
+    template_id = api.client.post(
+        f"/v1/workflows/{workflow_id}/template", json={"substitutions": {"acme/api": "repo"}}
+    ).json()["template_id"]
+
+    template = api.client.get(f"/v1/templates/{template_id}").json()
+    assert template["steps"][0]["criteria"][0]["text"] == "{{ repo }} answers on /health"
+
+    # And round-trips: instantiated with a different repo, the criterion follows the goal.
+    elsewhere = api.client.post(
+        f"/v1/templates/{template_id}/workflows", json={"parameters": {"repo": "other/svc"}}
+    ).json()
+    assert elsewhere["steps"][0]["goal"] == "deploy other/svc to prod"
+    assert elsewhere["steps"][0]["criteria"][0]["text"] == "other/svc answers on /health"
+
+
+# --- instance parameters ------------------------------------------------------------------
+#
+# Two substitution systems now write `{{ name }}`: a template parameter, filled in once when
+# the workflow is made, and an instance parameter, filled in per branch when the run is read.
+# The rules that keep them apart are scoping and a refusal to let one name mean both.
+
+
+def test_an_instance_param_is_not_the_templates_to_declare(client: TestClient) -> None:
+    body = template_body(
+        title="Read for {{ repo }}",
+        steps=[
+            {
+                "id": "s1",
+                "type": "parallel",
+                "goal": "one branch per paper",
+                "harness": "claude-code",
+                "body": ["s2"],
+                "instance_params": [{"name": "paper"}],
+            },
+            {
+                "id": "s2",
+                "type": "task",
+                "goal": "read {{ paper }} for {{ repo }}",
+                "harness": "claude-code",
+                "criteria": ["{{ paper }} is summarised"],
+            },
+        ],
+    )
+    # `paper` is the construct's; `repo` is still the template's and is declared.
+    assert client.post("/v1/templates", json=body).status_code == 201
+
+
+def test_the_scope_is_the_construct_not_the_whole_plan(client: TestClient) -> None:
+    """Declaring `paper` on one construct must not silence `{{ paper }}` elsewhere.
+
+    A global exclusion set would accept this plan and then render a workflow with a
+    placeholder nobody ever fills in.
+    """
+    body = template_body(
+        title="t",
+        steps=[
+            {
+                "id": "s1",
+                "type": "parallel",
+                "goal": "one branch per paper",
+                "harness": "claude-code",
+                "body": ["s2"],
+                "instance_params": [{"name": "paper"}],
+            },
+            {"id": "s2", "type": "task", "goal": "read {{ paper }}", "harness": "claude-code"},
+            # Outside the construct's body, so this one is undeclared.
+            {"id": "s3", "type": "task", "goal": "file {{ paper }}", "harness": "claude-code"},
+        ],
+    )
+    response = client.post("/v1/templates", json=body)
+    assert response.status_code == 422, response.text
+    assert "paper" in response.json()["error"]["message"]
+
+
+def test_one_name_cannot_mean_both(client: TestClient) -> None:
+    body = template_body(
+        title="t",
+        parameters=[{"name": "paper", "description": "which paper"}],
+        steps=[
+            {
+                "id": "s1",
+                "type": "parallel",
+                "goal": "one branch per paper",
+                "harness": "claude-code",
+                "body": ["s2"],
+                "instance_params": [{"name": "paper"}],
+            },
+            {"id": "s2", "type": "task", "goal": "read {{ paper }}", "harness": "claude-code"},
+        ],
+    )
+    response = client.post("/v1/templates", json=body)
+    assert response.status_code == 422, response.text
+    assert "cannot mean both" in response.json()["error"]["message"]
+
+
+def test_instantiating_leaves_instance_placeholders_standing(client: TestClient) -> None:
+    """The instance placeholder has to survive into the workflow intact — it is filled in
+    per branch at read time, long after the template became a plan."""
+    body = template_body(
+        title="Read for {{ repo }}",
+        steps=[
+            {
+                "id": "s1",
+                "type": "parallel",
+                "goal": "one branch per paper in {{ repo }}",
+                "harness": "claude-code",
+                "body": ["s2"],
+                "instance_params": [{"name": "paper"}],
+            },
+            {
+                "id": "s2",
+                "type": "task",
+                "goal": "read {{ paper }} for {{ repo }}",
+                "harness": "claude-code",
+                "criteria": ["{{ paper }} is summarised"],
+            },
+        ],
+    )
+    template_id = client.post("/v1/templates", json=body).json()["template_id"]
+    workflow = client.post(
+        f"/v1/templates/{template_id}/workflows", json={"parameters": {"repo": "acme/api"}}
+    ).json()
+    steps = {s["id"]: s for s in workflow["steps"]}
+    assert steps["s1"]["goal"] == "one branch per paper in acme/api"
+    assert steps["s2"]["goal"] == "read {{ paper }} for acme/api"
+    assert steps["s2"]["criteria"][0]["text"] == "{{ paper }} is summarised"

@@ -73,6 +73,11 @@ Artifacts in a run's state may carry `comments`: things a person said about that
 after the fact. Read them before building on the artifact they hang off — they are how you
 find out a draft was rejected or a file is stale without being told again.
 
+Report artifacts with the path you actually wrote to, and put what you know about each one in
+its `data` — both are shown to a person, and the path is resolved so the file can be opened.
+`metadata` on an update is shown too, and merges across updates; on a loop or parallel
+instance it is what tells one branch from another.
+
 A workflow carries `review_notes` the same way: feedback a reviewer left on the draft while
 deciding whether to approve it, each on a step or on the plan as a whole. get_workflow before
 revise_draft, address every note with `resolved: false`, and say in the revision's reason
@@ -163,6 +168,16 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         fan back in); retry / iterate-until work is a `loop` with the check as a body step
         and the exit condition in `exit_when`; a `parallel` construct is only for branches
         you cannot count until running. A draft cannot take a run until it is approved.
+
+        On a loop or parallel step, declare `instance_params` — the names each iteration or
+        branch must supply about itself, e.g. `paper`. Every instance is then required to
+        give a value, and a body step may write `{{ paper }}` in its goal or criteria to be
+        filled in per branch when the plan is read.
+
+        Keep each goal to two or three lines. What decides whether a step is finished goes
+        in its `criteria` — a list of short checkable statements — not into the goal's prose.
+        Reporting that step `completed` then requires saying how each criterion was met, so
+        write conditions you will be able to answer for.
 
         Set `origin_dir` to the absolute path of the directory you are working in, and
         `project` to the label for the body of work. Neither can be worked out here — this
@@ -322,6 +337,16 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         The summary is required and must be human-readable (REQ-48) — it is what a person
         reads to understand the run without reading the artifacts.
 
+        Before reporting `completed` on a step with criteria, check each one yourself — run
+        it, open it, look — and pass `criteria_met` keyed by criterion id with a sentence of
+        what satisfied each. If one does not hold the step is not finished: keep working, or
+        report `failed`, or propose an amendment changing the criterion. Never write an
+        answer for a criterion you have not actually checked.
+
+        `completed` is refused while any criterion is unanswered, and the refusal names
+        them. That is a backstop, not the checklist: it catches a criterion you said nothing
+        about, never one you answered carelessly.
+
         A completed step is immutable. Changing one is a history_edit amendment, not an
         update, and it always needs an explicit human decision.
         """
@@ -350,6 +375,11 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
 
         Counts are never declared up front — register instances as the run produces them,
         as many as it turns out to need.
+
+        If the step declares `instance_params`, pass a value for each in `metadata`; the
+        instance is refused without them. That metadata is how you know which branch you are
+        working on, and what a person reads to tell the branches apart, so put whatever else
+        distinguishes it there too.
         """
         return service.register_instance(run_id, path, body or InstanceCreate())[1]
 

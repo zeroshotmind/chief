@@ -696,3 +696,118 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     smoke harness learned the same lesson at the same time — five metadata checks were being
     computed, printed and asserted nowhere, so it reported `artifact folded=false` and called
     the run green.
+
+## 39. Criteria, and a gate Chief cannot actually judge
+
+Goals in this store had grown to a median of 118 characters and a maximum of 902, and
+reading the long ones showed why: they were absorbing acceptance conditions. One ends
+"Output: one ranked slate, the rejected ideas and why"; another buries "unit-tested against
+hand-written correct, incorrect and malformed inputs" three sentences in. Those are criteria
+written as prose — conditions that decide whether the step is done, sitting in a field
+nothing can enumerate and a reader has to hunt through.
+
+So `WorkflowStep.criteria`, authored as a plain list of strings and numbered `c1`, `c2` on
+the way in. Positional ids rather than supplied ones: an id nobody types is an id nobody
+gets wrong, and criteria are only ever replaced wholesale by an `update_step` amendment —
+there is no operation that inserts one mid-list and leaves the rest addressed as they were.
+Attestation is keyed by that id and not by the text, because prose-matching would silently
+stop matching the moment an amendment reworded something.
+
+Positional ids do leave one edge, and it is closed rather than tolerated: an amendment may
+reword c1 while evidence for the *old* c1 is already recorded, and that evidence would then
+stand as an answer to a question nobody asked. So `update_step` drops the recorded evidence
+for any criterion whose text changed, and for any that no longer exists — the ones left
+alone keep their answers, so adding a fourth criterion does not discard the three already
+met. `replay_step` clears the lot for the same reason at a larger scale: an answer belongs
+to the attempt that produced it, and carrying it across a replay would let the gate pass
+vacuously on exactly the path someone reached for because the first result was wrong. The
+snapshot in `history` keeps both.
+
+**Task steps only.** The discriminating question is whether there is an attestation point: a
+construct's status is derived from its instances and a checkpoint's outcome is a person's to
+give, so neither has anywhere to answer for a criterion. The steps inside a construct's body
+do, and that is where a construct's criteria belong.
+
+**No `max_length` on the goal.** The length guidance lives in `Field(description=...)`, which
+reaches every harness through the MCP schema, and in the skill. A hard cap would reject
+`create_workflow` outright and make the existing 902-character goal unrevisable, and a
+rejected plan is a worse failure than a long goal.
+
+**Be honest about what the gate is.** Chief refuses `completed` on a step whose criteria are
+not all answered — but it cannot judge whether any of them is *satisfied*. It has no access
+to the work and never will. What it enforces is that each criterion was addressed by name,
+which is forced enumeration, not verification. That is worth having for exactly the reason
+REQ-48 requires a real summary: the cost is one sentence per criterion, and what it catches
+is a step called done while a condition someone wrote down was quietly skipped. The refusal
+names all three ways out — keep working, report `failed`, propose an amendment — because a
+gate with no stated escape hatch is a trap for a harness facing an impossible criterion.
+
+Answers accumulate across updates, like artifacts and metadata: a criterion answered on the
+way through does not have to be restated at the end.
+
+Existing workflows are untouched and keep their long goals. Rewriting an approved plan's
+steps is `update_step` amendment territory, and `history_edit` where a step has already
+completed — a person's call, not a silent migration. A step with no criteria behaves exactly
+as it always has, which is both the backwards-compatibility story and the "criteria are
+optional" story; they are the same story.
+
+## 40. Instance parameters, and two substitution systems that must not collide
+
+A `parallel` step's branch count is decided at runtime, so what distinguishes a branch can
+only arrive at runtime — in the instance's `metadata`. That worked from the start, and a
+well-written run uses it exactly as intended: five branches, each carrying its own project
+name. What was missing shows up in the runs that did not. A construct fanning out over three
+ablation variants, every branch registered with `metadata={}` — and afterwards nothing can
+say which was which. Nothing had required it.
+
+So `instance_params` on a construct: the names each instance must supply. Loop and parallel
+only — a task runs once and has nothing to tell apart.
+
+**Unknown keys stay welcome.** A checkpoint refuses a response key it did not ask for, and
+copying that here would be wrong: instance metadata is load-bearing free-form — seeds,
+timings, token counts — and refusing the undeclared would make declaring a parameter cost
+more than it gives. The declaration names a *required subset*, not a schema.
+
+**Presence, not truthiness.** `CheckpointResolution.response` is `dict[str, str]`, so a
+blank check suffices there. `InstanceCreate.metadata` is `dict[str, Any]`, where `0`,
+`False` and `[]` are real answers. Only an absent key — or a string blank once trimmed — is
+missing.
+
+**Validation is at registration, once.** An amendment that adds a parameter to a construct
+does not retroactively invalidate branches already registered under the looser plan. That is
+REQ-14's concern in a different shape: a result was valid when it was recorded.
+
+### The placeholder collision
+
+`{{ paper }}` now has two possible meanings: a template parameter, substituted once when the
+template becomes a workflow, and an instance parameter, substituted per branch when the plan
+is read. Three rules keep them apart.
+
+**Scoped by the construct, never globally.** A placeholder in a body step resolves against
+*its own construct's* declarations. A global exclusion set would mean declaring `paper` on
+one construct silently stopped `{{ paper }}` being checked anywhere else in the plan — and
+the template would then render a workflow with a placeholder nobody ever fills in.
+
+**A name that is both is an error, not a shadow.** Silent shadowing in a substitution system
+is the quieter failure and the worse one; a plan where `{{ paper }}` means two things is a
+plan that disagrees with itself.
+
+**`_render_text` leaves unknown placeholders standing** rather than raising. An instance
+parameter must survive instantiation intact, because it is filled in long after the template
+became a plan. Everything that *should* have been a template parameter was already checked
+by `validate_template`, so this loosening costs nothing.
+
+### Rendered at read time, never stored
+
+The plan document keeps `{{ paper }}` literal. The UI substitutes when it draws a branch;
+nothing rendered is written back. Storing rendered copies of body-step text inside run state
+would put a second copy of the plan in the run, free to drift from the definition it came
+from — and `instance.body` already exists precisely so a finished iteration remembers what
+it had to do.
+
+A harness needs no rendering at all: `get_run(include_plan=true)` gives it both the plan and
+its own instance metadata, which is what it already reads to know which branch it is on.
+
+One consequence to hold on to: **rendering must not reach a criterion's id or the completion
+gate.** `criteria_met` is keyed against the criterion *as written*, `{{ paper }}` and all, so
+every branch answers `c1` whatever its own value is.

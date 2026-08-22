@@ -810,6 +810,27 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
 .inst-row .label { flex: none; color: var(--color-neutral-700); }
 .inst-row .summary { min-width: 0; color: var(--color-neutral-500); }
 
+/* The criteria checklist. A criterion is two lines at most — the condition, then what the
+   harness said satisfied it — so the mark stays at the top rather than centred, and the
+   evidence sits under its own condition rather than beside it. */
+.criteria { display: flex; flex-direction: column; gap: var(--space-1); }
+.criterion { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 12px; }
+.criterion-mark { flex: none; line-height: 1.45; font-size: 11px; }
+.criterion-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.criterion-what { color: var(--color-neutral-700); line-height: 1.45; }
+.criterion.met .criterion-what { color: var(--color-neutral-600); }
+.criterion-evidence { color: var(--color-neutral-500); font-size: 11px; line-height: 1.4; }
+
+/* One instance and, under it, the body as that instance reads it. Indented to the depth of
+   the instance's own label so the filled-in text reads as belonging to that branch rather
+   than to the construct. */
+.inst-block { display: flex; flex-direction: column; gap: 2px; }
+.inst-filled {
+  display: flex; flex-direction: column; gap: 1px;
+  margin-left: calc(6px + var(--space-2)); padding-left: var(--space-2);
+  border-left: 1px solid var(--color-neutral-200);
+}
+
 @media (max-width: 900px) {
   /* No room for a side panel over a phone-width page: it takes the screen, and the page
      stops being inset because there is nothing left to inset. */

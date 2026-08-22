@@ -109,6 +109,77 @@ const GAP = 32;
 const DROP = 60;
 const POLL_MS = 15000;
 
+/** `{{ paper }}` in a body step's text, filled in from one instance's own metadata.
+
+    Read-time only: the plan document keeps the placeholder, and nothing rendered here is
+    ever stored. That is what stops a run holding a second, drifting copy of the plan — see
+    CONTRACT-NOTES.md #40. A name the instance did not supply is left standing rather than
+    blanked, so a gap reads as a gap instead of as a sentence with a hole in it. */
+function fillParams(text, metadata) {
+  if (!text || text.indexOf("{{") === -1) return text;
+  const values = metadata || {};
+  return text.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : whole,
+  );
+}
+
+const hasParams = (text) => !!text && text.indexOf("{{") !== -1;
+
+/** What distinguishes one instance, from the parameters its construct declared. Falls back
+    to nothing rather than to a guess: an instance on a construct that declares no
+    parameters has no distinguishing value, and inventing one from arbitrary metadata is how
+    "Branch 3 · 41200" happens. */
+function instanceParamLabel(step, instance) {
+  const specs = step.instance_params || [];
+  if (!specs.length) return "";
+  const values = instance.metadata || {};
+  return specs
+    .filter((p) => Object.prototype.hasOwnProperty.call(values, p.name))
+    .map((p) => String(values[p.name]))
+    .join(" · ");
+}
+
+/** A step's criteria, and what the harness said about each.
+
+    Rendered as a checklist rather than as prose, because that is the whole point of the
+    field: a criterion nobody can enumerate is the criterion that gets skipped, which is how
+    goals in this store grew to 900 characters with acceptance conditions buried in them.
+    A criterion with evidence reads as met and shows what was claimed; one without reads as
+    outstanding — and on a step already reported completed, that combination cannot occur,
+    because the server refuses it. */
+function criteriaBlock(criteria, met) {
+  if (!criteria || !criteria.length) return null;
+  const answers = met || {};
+  return el(
+    "div",
+    { class: "criteria" },
+    el("span", {
+      class: "section-label",
+      style: { marginTop: "var(--space-1)" },
+      text: `Done when (${criteria.filter((c) => (answers[c.id] || "").trim()).length}/${criteria.length})`,
+    }),
+    criteria.map((c) => {
+      const evidence = (answers[c.id] || "").trim();
+      return el(
+        "span",
+        { class: "criterion" + (evidence ? " met" : "") },
+        el("span", {
+          class: "criterion-mark",
+          text: evidence ? "✓" : "○",
+          style: { color: evidence ? OK : "var(--color-neutral-400)" },
+        }),
+        el(
+          "span",
+          { class: "criterion-text" },
+          el("span", { class: "criterion-what", text: c.text }),
+          evidence &&
+            el("span", { class: "criterion-evidence md-inline" }, inline(evidence)),
+        ),
+      );
+    }),
+  );
+}
+
 /** How far a completed step met its goal, when that is knowable. `goal_met` is an optional
     refinement a harness may report; otherwise a failed instance downgrades to partial. */
 function outcomeOf(state) {
@@ -2519,6 +2590,8 @@ function stepPanel(step, stepState, def) {
         ? `Checkpoint · ${outcome ? outcome.decision : stepState.status}`
         : `Step · ${stepState.status}`,
     title: step.goal,
+    criteria: step.criteria || [],
+    criteriaMet: stepState.criteria_met || {},
     metaLine:
       outcome
         ? `${step.id} · ${outcome.decision} by ${outcome.decided_by} · ${relAgo(outcome.decided_at)}` +
@@ -2533,12 +2606,26 @@ function stepPanel(step, stepState, def) {
     instances: instances.map((instance) => {
       const im = stepMeta(instance.status);
       const failedBody = Object.values(instance.step_states || {}).find((b) => b.status === "failed");
+      const which = instanceParamLabel(step, instance);
       return {
-        label: `${instance.kind === "iteration" ? "Iteration" : "Branch"} ${instance.index + 1}`,
+        // The declared parameters come first when there are any: "Branch 3 · sparsify" is
+        // what a person is looking for, and "Branch 3" alone is what made wf_ablate's three
+        // variants indistinguishable.
+        label: `${instance.kind === "iteration" ? "Iteration" : "Branch"} ${instance.index + 1}`
+          + (which ? ` · ${which}` : ""),
         summary: (instance.status === "failed" && failedBody ? failedBody.summary : instance.summary) || "",
         summaryColor: instance.status === "failed" ? BAD : "var(--color-neutral-500)",
         color: im.color, pulse: pulseOf(im),
         metadata: instance.metadata,
+        // Only the body steps that actually name a parameter: rendering the rest would
+        // repeat the shared body under every branch for no gain.
+        filled: body
+          .filter((b) => hasParams(b.goal) || (b.criteria || []).some((c) => hasParams(c.text)))
+          .map((b) => ({
+            id: b.id,
+            goal: fillParams(b.goal, instance.metadata),
+            criteria: (b.criteria || []).map((c) => fillParams(c.text, instance.metadata)),
+          })),
       };
     }),
     // Whatever the harness attached to this step. Merged across updates rather than
@@ -2547,6 +2634,14 @@ function stepPanel(step, stepState, def) {
     // The construct's body: the steps every instance runs. Static, so it is readable before
     // the first instance exists — which is when a person is deciding whether to approve it.
     exitLabel: step.exit_when ? `Exits when: ${step.exit_when}` : null,
+    // What every instance must say about itself, readable before the first one exists.
+    paramsLabel: (step.instance_params || []).length
+      ? `Each ${instanceKind(step)} supplies`
+      : null,
+    params: (step.instance_params || []).map((p) => ({
+      id: p.name,
+      goal: (p.description || "") + (p.required ? "" : " (optional)"),
+    })),
     bodyLabel: asks.length
       ? "Asks you for"
       : said.length
@@ -2633,6 +2728,7 @@ function inspector(panel) {
           { class: "md-inline", style: { fontSize: "12px", color: panel.summaryColor } },
           inline(panel.summary),
         ),
+      criteriaBlock(panel.criteria, panel.criteriaMet),
       panel.opsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.opsLabel }),
       (panel.ops || []).map(opRow),
@@ -2647,14 +2743,41 @@ function inspector(panel) {
           el("span", { class: "summary", text: step.goal }),
         ),
       ),
-      panel.instances.map((instance) =>
+      panel.paramsLabel &&
+        el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.paramsLabel }),
+      (panel.params || []).map((p) =>
         el(
           "span",
           { class: "inst-row" },
-          dot(instance.color, instance.pulse, "6px"),
-          el("span", { class: "label", text: instance.label }),
-          el("span", { class: "summary", style: { color: instance.summaryColor }, text: instance.summary }),
-          metadataBlock(instance.metadata, "compact", `${instance.label} · metadata`),
+          el("span", { class: "label mono", style: { fontSize: "11px" }, text: p.id }),
+          el("span", { class: "summary", text: p.goal }),
+        ),
+      ),
+      panel.instances.map((instance) =>
+        el(
+          "div",
+          { class: "inst-block" },
+          el(
+            "span",
+            { class: "inst-row" },
+            dot(instance.color, instance.pulse, "6px"),
+            el("span", { class: "label", text: instance.label }),
+            el("span", { class: "summary", style: { color: instance.summaryColor }, text: instance.summary }),
+            metadataBlock(instance.metadata, "compact", `${instance.label} · metadata`),
+          ),
+          // The body as this instance actually reads it, with its own values in place —
+          // the whole point of declaring the parameters. Only shown for the steps that name
+          // one, so a construct whose body is generic looks exactly as it did.
+          (instance.filled || []).map((b) =>
+            el(
+              "div",
+              { class: "inst-filled" },
+              el("span", { class: "criterion-what", text: b.goal }),
+              b.criteria.map((text) =>
+                el("span", { class: "criterion-evidence", text: `— ${text}` }),
+              ),
+            ),
+          ),
         ),
       ),
       metadataBlock(panel.metadata),

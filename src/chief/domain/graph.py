@@ -105,6 +105,12 @@ def validate_steps(steps: list[WorkflowStep]) -> None:
                 )
             # Normalise so the stored document always states the policy explicitly.
             step.on_instance_failure = step.failure_policy
+            names = [p.name for p in step.instance_param_specs]
+            if len(set(names)) != len(names):
+                raise ValidationFailed(
+                    f"step '{step.id}' declares the same instance parameter twice",
+                    details={"step_id": step.id, "instance_params": names},
+                )
             if step.exit_when is not None and step.type != "loop":
                 raise ValidationFailed(
                     f"step '{step.id}' is type '{step.type}'; exit_when applies only to "
@@ -128,6 +134,23 @@ def validate_steps(steps: list[WorkflowStep]) -> None:
                     f"step '{step.id}' is type '{step.type}'; exit_when applies only to loop steps",
                     details={"step_id": step.id},
                 )
+            if step.instance_params is not None:
+                raise ValidationFailed(
+                    f"step '{step.id}' is type '{step.type}'; instance_params applies only to "
+                    "loop/parallel steps — a task runs once and has nothing to tell apart",
+                    details={"step_id": step.id},
+                )
+
+        # Criteria are an attestation point, and a step has one only if a harness gets to
+        # say how it turned out. A construct's status is derived from its instances and a
+        # checkpoint's outcome is a person's to give, so neither has anywhere to answer for
+        # a criterion — the body steps inside a construct do. See CONTRACT-NOTES.md #39.
+        if step.criteria and step.type != "task":
+            raise ValidationFailed(
+                f"step '{step.id}' is type '{step.type}'; criteria apply only to task steps "
+                "— put them on the steps in its body, which are the ones reported completed",
+                details={"step_id": step.id},
+            )
 
         # checkpoint shape (extension). A checkpoint is the one step Chief knows the
         # executor of, so naming any other harness is a plan that disagrees with itself.

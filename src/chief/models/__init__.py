@@ -11,7 +11,9 @@ from .amendment import (
 )
 from .definition import (
     CheckpointField,
+    Criterion,
     InstanceFailurePolicy,
+    InstanceParam,
     StepType,
     TemplateOrigin,
     WorkflowCreate,
@@ -71,6 +73,8 @@ __all__ = [
     "ArtifactRef",
     "BodyStepUpdate",
     "CheckpointField",
+    "InstanceParam",
+    "Criterion",
     "CheckpointOutcome",
     "CheckpointResolution",
     "CommentCreate",

@@ -28,6 +28,11 @@ PLACEHOLDER = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
 # untouched everywhere these are used). Everything else in a step is structure.
 TEXT_FIELDS = ("goal", "harness", "exit_when")
 
+# Criteria are text too, but a list of models rather than a field, so they are handled
+# alongside rather than in TEXT_FIELDS. Left out, a parameterised plan would substitute
+# through the goal and leave the acceptance conditions naming the old literal — the exact
+# split-brain the checkpoint-label gap already shows.
+
 
 def placeholders_in_text(text: str) -> set[str]:
     return set(PLACEHOLDER.findall(text))
@@ -44,17 +49,46 @@ def _walk_inputs(value: Any, found: set[str]) -> None:
             _walk_inputs(item, found)
 
 
+def instance_param_owners(steps: list[WorkflowStep]) -> dict[str, set[str]]:
+    """Which instance-parameter names are in scope for each body step.
+
+    Scoped by the construct that owns the step, never globally: declaring ``paper`` on one
+    construct must not quietly stop ``{{ paper }}`` being checked as a template parameter
+    everywhere else in the plan. A step in no construct's body has no instance params in
+    scope at all.
+    """
+    scope: dict[str, set[str]] = {}
+    for step in steps:
+        names = {p.name for p in step.instance_param_specs}
+        if not names:
+            continue
+        for body_id in step.body_ids:
+            scope.setdefault(body_id, set()).update(names)
+    return scope
+
+
 def placeholders_in(steps: list[WorkflowStep], *extra_text: str | None) -> set[str]:
+    """Every placeholder that has to be a *template* parameter.
+
+    A body step's ``{{ paper }}`` is filled in per instance at read time (CONTRACT-NOTES.md
+    #40), so it is not the template's to declare and is subtracted here — but only inside
+    the construct that declared it.
+    """
     found: set[str] = set()
     for text in extra_text:
         if text:
             found |= placeholders_in_text(text)
+    scope = instance_param_owners(steps)
     for step in steps:
+        here: set[str] = set()
         for field in TEXT_FIELDS:
             text = getattr(step, field)
             if text:
-                found |= placeholders_in_text(text)
-        _walk_inputs(step.inputs, found)
+                here |= placeholders_in_text(text)
+        for criterion in step.criteria:
+            here |= placeholders_in_text(criterion.text)
+        _walk_inputs(step.inputs, here)
+        found |= here - scope.get(step.id, set())
     return found
 
 
@@ -63,6 +97,17 @@ def validate_template(
 ) -> None:
     """Reject a template whose plan names something it does not declare."""
     declared = {p.name for p in parameters}
+    # A name that is both is a plan disagreeing with itself about what `{{ paper }}` means.
+    # Letting the instance one shadow would be the quieter failure and the worse one.
+    clash = sorted(
+        declared & {p.name for step in steps for p in step.instance_param_specs}
+    )
+    if clash:
+        raise ValidationFailed(
+            f"{', '.join(clash)} is declared both as a template parameter and as an "
+            "instance parameter; one name cannot mean both",
+            details={"clash": clash},
+        )
     used = placeholders_in(steps, *extra_text)
     undeclared = used - declared
     if undeclared:
@@ -108,7 +153,14 @@ def resolve_values(template: WorkflowTemplate, supplied: dict[str, str]) -> dict
 
 
 def _render_text(text: str, values: dict[str, str]) -> str:
-    return PLACEHOLDER.sub(lambda m: values[m.group(1)], text)
+    """Substitute what the caller supplied, and leave anything else standing.
+
+    Untouched rather than an error: an instance parameter's placeholder has to survive
+    instantiation intact, because it is filled in per branch when the run reads it, long
+    after the template has been turned into a workflow. Every placeholder that *should* be a
+    template parameter was already checked by ``validate_template``.
+    """
+    return PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
 
 
 def _render_inputs(value: Any, values: dict[str, str]) -> Any:
@@ -128,6 +180,9 @@ def render_steps(steps: list[WorkflowStep], values: dict[str, str]) -> list[Work
             f: _render_text(v, values) if (v := getattr(step, f)) else v for f in TEXT_FIELDS
         }
         patch["inputs"] = _render_inputs(step.inputs, values)
+        patch["criteria"] = [
+            c.model_copy(update={"text": _render_text(c.text, values)}) for c in step.criteria
+        ]
         rendered.append(step.model_copy(update=patch))
     return rendered
 
@@ -174,6 +229,9 @@ def parameterise(
             f: swap(v) if (v := getattr(step, f)) else v for f in TEXT_FIELDS
         }
         patch["inputs"] = swap_inputs(step.inputs)
+        patch["criteria"] = [
+            c.model_copy(update={"text": swap(c.text)}) for c in step.criteria
+        ]
         out.append(step.model_copy(update=patch))
     return out
 

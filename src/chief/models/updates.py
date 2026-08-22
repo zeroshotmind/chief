@@ -18,7 +18,18 @@ class _UpdateBase(BaseModel):
     # Required on every update, non-empty (REQ-48).
     summary: str = Field(min_length=1)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Described rather than commented: this reaches a harness through the MCP tool's JSON
+    # schema, and an undescribed dict is a dict nobody fills in.
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Anything worth recording about this step that is not prose: token counts, "
+            "cost, timings, model or commit ids, a seed. Shown in the web UI. Merged across "
+            "updates rather than replaced, so a later one can add a key or correct a key "
+            "without losing the others. On a loop or parallel instance, this is what tells "
+            "one branch from another — put what distinguishes it here."
+        ),
+    )
 
     @field_validator("summary")
     @classmethod
@@ -37,6 +48,19 @@ class StepUpdate(_UpdateBase):
 
     status: ReportableStatus | None = None
     instances_closed: bool | None = None
+    # Keyed by criterion id (`c1`, `c2`, …) rather than by its text: an amendment may reword
+    # a criterion, and matching on prose would silently stop matching. Required in full when
+    # reporting `completed` on a step that declares criteria — see the gate in the service.
+    criteria_met: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "How each of this step's criteria was met, keyed by criterion id (`c1`, `c2`, …). "
+            "Required to report `completed` on a step that declares any: every id, each with "
+            "a sentence of evidence — 'all 314 tests pass, see the log artifact' — not 'yes' "
+            "or 'done'. If one cannot be met, keep working, report `failed`, or propose an "
+            "amendment changing the criteria; do not report completion around it."
+        ),
+    )
 
 
 class InstanceUpdate(_UpdateBase):

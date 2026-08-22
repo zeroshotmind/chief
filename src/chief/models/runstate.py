@@ -53,9 +53,28 @@ class ArtifactRef(BaseModel):
 
     artifact_id: str | None = None
     type: str = Field(min_length=1)
-    description: str | None = None
-    ref: str | None = None
-    data: Any = None
+    description: str | None = Field(
+        default=None,
+        description="One line saying what this is, for a person scanning a list of outputs.",
+    )
+    ref: str | None = Field(
+        default=None,
+        description=(
+            "Where it is: a path, or a URL. A path relative to the workflow's origin_dir is "
+            "resolved and the file can be opened in the web UI, so give the path you "
+            "actually wrote to rather than an approximation of it. A URL is framed rather "
+            "than read."
+        ),
+    )
+    data: Any = Field(
+        default=None,
+        description=(
+            "Metadata about the artifact — dimensions, a row count, a digest, how it was "
+            "produced — shown beside it in the web UI. `data.text` is special: it holds the "
+            "artifact's own content for something with no file, and is rendered as the "
+            "preview rather than as metadata. One of `ref` or `data` is required."
+        ),
+    )
     # Server-owned, in the same sense as a derived status: this shape is also what a harness
     # submits in a StepUpdate, and a harness reporting its own comments would be reporting
     # what it was told rather than what it did. `_stamp_artifacts` refuses them on the way
@@ -134,6 +153,9 @@ class StepState(BaseModel):
     # Set by the harness once no further instances will be registered, so the server can
     # tell "no instances yet" from "all instances done". See CONTRACT-NOTES.md #1.
     instances_closed: bool = False
+    # What the harness said about each of the step's criteria when it reported completion,
+    # keyed by criterion id. Empty on a step that declares none, which is most of them.
+    criteria_met: dict[str, str] = Field(default_factory=dict)
     # Prior snapshots, appended when superseded by an approved history-edit (REQ-42).
     history: list[dict[str, Any]] = Field(default_factory=list)
     # Why the server set ``skipped``. A dependency skip is retracted if the blocking
@@ -180,7 +202,13 @@ class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "What set this run going: a trigger, a commit, a host, a ticket. Recorded once "
+            "and shown on the run overview; per-step facts belong on the step update."
+        ),
+    )
 
 
 class RunPlan(BaseModel):
