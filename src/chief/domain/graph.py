@@ -177,6 +177,22 @@ def validate_steps(steps: list[WorkflowStep]) -> None:
                 details={"step_id": step.id},
             )
 
+        # workflow_ref shape (extension). Nothing to instantiate is a step that can never
+        # move past 'running'.
+        if step.is_workflow_ref:
+            if not (step.ref_template_id or "").strip():
+                raise ValidationFailed(
+                    f"step '{step.id}' is type 'workflow_ref' and needs a ref_template_id "
+                    "naming the template to instantiate as its child run",
+                    details={"step_id": step.id},
+                )
+        elif step.ref_template_id is not None or step.ref_parameters:
+            raise ValidationFailed(
+                f"step '{step.id}' is type '{step.type}'; ref_template_id/ref_parameters "
+                "apply only to workflow_ref steps",
+                details={"step_id": step.id},
+            )
+
     # body membership: referenced, existing, and owned by exactly one construct
     owners: dict[str, list[str]] = defaultdict(list)
     for step in steps:

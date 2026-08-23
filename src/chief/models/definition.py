@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .review import ReviewNote
 
-StepType = Literal["task", "loop", "parallel", "checkpoint"]
+StepType = Literal["task", "loop", "parallel", "checkpoint", "workflow_ref"]
 WorkflowStatus = Literal["draft", "approved", "archived"]
 WorkflowSource = Literal["import", "generated"]
 InstanceFailurePolicy = Literal["fail_fast", "continue"]
@@ -183,6 +183,14 @@ class WorkflowStep(BaseModel):
     # (or absent) is a pure gate: someone has to say go. Checkpoint-only — a task's inputs
     # come from the plan, not from a person at runtime. See CONTRACT-NOTES.md #28.
     fields: list[CheckpointField] | None = None
+    # The template a workflow_ref step instantiates and runs as a child. workflow_ref-only,
+    # required and non-blank there (validated in domain/graph.py alongside the other
+    # per-type shape rules) — a sub-workflow step with nothing to instantiate cannot ever
+    # move past 'running'.
+    ref_template_id: str | None = None
+    # Values to substitute when the template is instantiated, in the same shape a harness
+    # passes to create_workflow_from_template. workflow_ref-only.
+    ref_parameters: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("criteria", mode="before")
     @classmethod
@@ -214,6 +222,10 @@ class WorkflowStep(BaseModel):
     @property
     def is_checkpoint(self) -> bool:
         return self.type == "checkpoint"
+
+    @property
+    def is_workflow_ref(self) -> bool:
+        return self.type == "workflow_ref"
 
     @property
     def instance_param_specs(self) -> list[InstanceParam]:

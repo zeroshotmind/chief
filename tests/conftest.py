@@ -73,6 +73,24 @@ def checkpoint(
     return step
 
 
+def workflow_ref(
+    step_id: str,
+    *,
+    ref_template_id: str,
+    ref_parameters: dict[str, str] | None = None,
+    depends_on: list[str] | None = None,
+) -> dict:
+    return {
+        "id": step_id,
+        "type": "workflow_ref",
+        "goal": f"run sub-workflow for {step_id}",
+        "harness": "claude_cli",
+        "depends_on": depends_on or [],
+        "ref_template_id": ref_template_id,
+        "ref_parameters": ref_parameters or {},
+    }
+
+
 class Api:
     """Thin helper so tests read as workflow narrative rather than URL plumbing."""
 
@@ -188,6 +206,12 @@ class Api:
 
     def withdraw(self, amendment_id: str, **body: Any):
         return self.client.post(f"/v1/amendments/{amendment_id}/withdraw", json=body)
+
+    def create_template(self, steps: list[dict], *, title: str = "test template", **kw: Any) -> str:
+        payload = {"title": title, "steps": steps, **kw}
+        response = self.client.post("/v1/templates", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()["template_id"]
 
     def get_run(self, run_id: str) -> dict:
         response = self.client.get(f"/v1/runs/{run_id}")

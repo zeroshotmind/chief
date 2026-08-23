@@ -387,6 +387,10 @@ def _reset(state: StepState) -> None:
     # current one. Nothing is lost — the caller snapshots into `history` first — and leaving
     # it attached would show a pending step reading as already decided.
     state.checkpoint = None
+    # Likewise a replayed workflow_ref: the old child run stays in the store (it is not
+    # deleted or re-linked), but this step is asking for a fresh one, so the stale id is
+    # dropped rather than left pointing at a run this attempt has nothing to do with.
+    state.child_run_id = None
     set_status(state, "pending")
 
 

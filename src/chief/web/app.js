@@ -3298,6 +3298,7 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
 
     const classes = ["node"];
     if (step.type === "checkpoint") classes.push("checkpoint");
+    if (step.type === "workflow_ref") classes.push("workflow-ref");
     if (step.ghost) classes.push("ghost");
     else if (isSelected) classes.push("sel");
     else if (pendingHere) classes.push("pend");
@@ -3357,6 +3358,20 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
                   go("approvals");
                 }
               : null,
+        }),
+      // A sub-workflow node: what it's waiting on is a child run finishing, not a person,
+      // so the tag goes straight to that run rather than to the approvals inbox.
+      step.type === "workflow_ref" &&
+        !step.ghost &&
+        el("span", {
+          class: "node-tag" + (stepState.status === "blocked" ? " waiting" : " quiet"),
+          text: stepState.status === "blocked" ? "sub-workflow running →" : "sub-workflow",
+          onClick: stepState.child_run_id
+            ? (e) => {
+                e.stopPropagation();
+                openRun(stepState.child_run_id);
+              }
+            : null,
         }),
       step.ghost && el("span", { class: "node-tag ghost", text: "proposed" }),
       !step.ghost &&

@@ -150,6 +150,10 @@ class StepState(BaseModel):
     instances: list[StepInstance] | None = None
     # Present only for a checkpoint step, once a person has decided it.
     checkpoint: CheckpointOutcome | None = None
+    # Present only for a workflow_ref step, once its child run has been registered. The
+    # child run's terminal status is cascaded onto this step automatically — there is no
+    # human decision to record, unlike checkpoint.
+    child_run_id: str | None = None
     # Set by the harness once no further instances will be registered, so the server can
     # tell "no instances yet" from "all instances done". See CONTRACT-NOTES.md #1.
     instances_closed: bool = False

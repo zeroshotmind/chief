@@ -56,15 +56,20 @@ CREATE TABLE IF NOT EXISTS workflow_versions (
 );
 
 CREATE TABLE IF NOT EXISTS runs (
-    run_id      TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    status      TEXT NOT NULL,
-    document    TEXT NOT NULL,
+    run_id           TEXT PRIMARY KEY,
+    workflow_id      TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    document         TEXT NOT NULL,
     -- The plan this run is actually executing: base_version plus only its own approved
     -- amendments (contract 1.3). Deliberately not the workflow's current definition.
-    effective   TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    effective        TEXT NOT NULL,
+    -- Set only when this run was registered for a workflow_ref step, naming the parent run
+    -- and the path (JSON list, same shape passed to report_step_update) to the step whose
+    -- completion this run's terminal status is cascaded onto.
+    parent_run_id    TEXT,
+    parent_step_path TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS runs_by_workflow ON runs (workflow_id);
 
@@ -351,17 +356,26 @@ class Store:
     # --- runs ---------------------------------------------------------------------------
 
     def create_run(
-        self, conn: sqlite3.Connection, run: RunState, effective: WorkflowDefinition
+        self,
+        conn: sqlite3.Connection,
+        run: RunState,
+        effective: WorkflowDefinition,
+        *,
+        parent_run_id: str | None = None,
+        parent_step_path: list[str] | None = None,
     ) -> None:
         conn.execute(
-            "INSERT INTO runs (run_id, workflow_id, status, document, effective, created_at, "
-            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO runs (run_id, workflow_id, status, document, effective, "
+            "parent_run_id, parent_step_path, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run.run_id,
                 run.workflow_id,
                 run.status,
                 run.model_dump_json(),
                 effective.model_dump_json(),
+                parent_run_id,
+                json.dumps(parent_step_path) if parent_step_path is not None else None,
                 run.created_at,
                 run.updated_at,
             ),
@@ -407,6 +421,17 @@ class Store:
                     run.run_id,
                 ),
             )
+
+    def get_run_parent_link(self, run_id: str) -> tuple[str, list[str]] | None:
+        """The parent run/step a workflow_ref-spawned run reports its terminal status to."""
+        row = self._one(
+            "SELECT parent_run_id, parent_step_path FROM runs WHERE run_id = ?", (run_id,)
+        )
+        if row is None:
+            raise NotFound(f"run '{run_id}' not found")
+        if row["parent_run_id"] is None:
+            return None
+        return row["parent_run_id"], json.loads(row["parent_step_path"])
 
     def list_runs(
         self, status: str | None = None, workflow_id: str | None = None

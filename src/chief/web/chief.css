@@ -656,6 +656,17 @@ details[open] > .meta-summary::before { content: "▾ "; }
   border-color: var(--warn);
   background: color-mix(in srgb, var(--warn) 6%, var(--color-surface));
 }
+/* A workflow_ref is the same "stopped, waiting on something else" shape as a checkpoint,
+   but what it's waiting on is a run, not a person — accent rather than warm, so the two
+   don't read as the same wait at a glance. */
+.node.workflow-ref {
+  border-left: 3px solid var(--color-accent-500, var(--color-accent-300));
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-md) 2px;
+}
+.node.workflow-ref.waiting {
+  border-color: var(--color-accent-500, var(--color-accent-300));
+  background: color-mix(in srgb, var(--color-accent-300) 6%, var(--color-surface));
+}
 
 /* The grip between the plan and the panel. Wider than it looks — a 3px target is a target
    you miss — with the visible line drawn by a pseudo-element inside it. */

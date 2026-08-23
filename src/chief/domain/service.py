@@ -545,7 +545,14 @@ class Chief:
 
     # --- runs ---------------------------------------------------------------------------
 
-    def register_run(self, workflow_id: str, body: RunCreate) -> RunState:
+    def register_run(
+        self,
+        workflow_id: str,
+        body: RunCreate,
+        *,
+        parent_run_id: str | None = None,
+        parent_step_path: list[str] | None = None,
+    ) -> RunState:
         defn = self.store.get_workflow(workflow_id)
         if defn.status == "draft":
             raise InvalidTransition(
@@ -576,7 +583,13 @@ class Chief:
         effective = deepcopy(defn)
         recompute(run, effective)
         with self.store.transaction() as conn:
-            self.store.create_run(conn, run, effective)
+            self.store.create_run(
+                conn,
+                run,
+                effective,
+                parent_run_id=parent_run_id,
+                parent_step_path=parent_step_path,
+            )
             self.store.audit(
                 conn,
                 "run.registered",
@@ -585,6 +598,70 @@ class Chief:
                 detail={"base_version": defn.version, "metadata": body.metadata},
             )
         return run
+
+    def _spawn_child_run(self, step: WorkflowStep, parent_run_id: str, path: list[str]) -> RunState:
+        """Instantiate a workflow_ref step's template and register a run of it as a child.
+
+        Auto-approved unconditionally, unlike ``instantiate_template``'s policy-gated path:
+        there is no one to hand a draft to here, so a workflow_ref step that could only ever
+        sit as an unapproved draft would be a step that can never move past 'running'.
+        """
+        assert step.ref_template_id is not None
+        defn = self.instantiate_template(
+            step.ref_template_id,
+            TemplateInstantiate(parameters=step.ref_parameters),
+        )
+        if defn.status == "draft":
+            defn = self.approve_workflow(
+                defn.workflow_id,
+                AmendmentDecision(
+                    decided_by=f"workflow_ref:{step.id}",
+                    reason=f"auto-approved as the child of workflow_ref step '{step.id}'",
+                ),
+            )
+        return self.register_run(
+            defn.workflow_id,
+            RunCreate(metadata={"spawned_by": f"{parent_run_id}:{'.'.join(path)}"}),
+            parent_run_id=parent_run_id,
+            parent_step_path=path,
+        )
+
+    def _cascade_child_completion(self, run: RunState) -> None:
+        """Once a run reaches a terminal status, push that onto the step that spawned it.
+
+        Only runs registered by a workflow_ref step (``_spawn_child_run``) carry a parent
+        link; an ordinary run's is None and this is a no-op. Recurses, since the parent run
+        this just completed may itself be someone's child.
+        """
+        if run.status not in ("completed", "failed"):
+            return
+        link = self.store.get_run_parent_link(run.run_id)
+        if link is None:
+            return
+        parent_run_id, parent_path = link
+        parent, parent_effective = self.store.get_run(parent_run_id)
+        _, parent_state, _ = paths.resolve(parent, parent_path, create=True)
+        if parent_state.status != "blocked":
+            # Already resolved (e.g. this cascade already ran, or a history-edit replay
+            # cleared it) — nothing left to push.
+            return
+        set_status(parent_state, run.status)
+        parent_paused = self.store.pending_amendment(parent_run_id) is not None
+        recompute(parent, parent_effective, paused=parent_paused)
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, parent)
+            self.store.audit(
+                conn,
+                "step.updated",
+                workflow_id=parent.workflow_id,
+                run_id=parent_run_id,
+                detail={
+                    "path": parent_path,
+                    "status": run.status,
+                    "cause": f"child run '{run.run_id}' finished",
+                },
+            )
+        self._cascade_child_completion(parent)
 
     def get_run(self, run_id: str) -> RunState:
         run, _ = self.store.get_run(run_id)
@@ -780,6 +857,13 @@ class Chief:
                 "to give, through resolve_checkpoint",
                 details={"step_id": step.id, "status": update.status},
             )
+        if step.is_workflow_ref and update.status not in (None, "running"):
+            raise InvariantViolation(
+                f"step '{step.id}' is a workflow_ref; a harness can report reaching it "
+                f"('running') but not how it turned out — '{update.status}' is cascaded "
+                "automatically from its child run",
+                details={"step_id": step.id, "status": update.status},
+            )
 
         _, state, enclosing = paths.resolve(run, path, create=True)
         if enclosing is not None and path[-1] not in (enclosing.body or []):
@@ -819,10 +903,16 @@ class Chief:
         if update.status is not None:
             if update.status in _SERVER_ONLY_STATUSES:
                 raise InvariantViolation(f"'{update.status}' is set by the server only")
-            # Reaching a checkpoint is all a harness gets to say about one. Reporting
-            # `running` hands it to a person and the server records `blocked`; the outcome
-            # is theirs to give, through resolve_checkpoint.
-            set_status(state, "blocked" if step.is_checkpoint else update.status)
+            if step.is_workflow_ref and update.status == "running" and state.child_run_id is None:
+                state.child_run_id = self._spawn_child_run(step, run.run_id, path).run_id
+            # Reaching a checkpoint or a workflow_ref is all a harness gets to say about
+            # one. Reporting `running` hands it to a person (or, for workflow_ref, to the
+            # child run just spawned) and the server records `blocked`; the outcome is
+            # theirs to give — through resolve_checkpoint, or automatically once the child
+            # run finishes.
+            set_status(
+                state, "blocked" if (step.is_checkpoint or step.is_workflow_ref) else update.status
+            )
 
         recompute(run, effective, paused=paused)
         with self.store.transaction() as conn:
@@ -840,6 +930,7 @@ class Chief:
                     "artifact_count": len(update.artifacts),
                 },
             )
+        self._cascade_child_completion(run)
         return run
 
     @staticmethod
@@ -1016,6 +1107,7 @@ class Chief:
                     "fields": sorted(resolution.response),
                 },
             )
+        self._cascade_child_completion(run)
         return run
 
     def register_instance(
