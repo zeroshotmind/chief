@@ -335,7 +335,9 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         """Report what happened to a step: status, artifacts, and a summary.
 
         The summary is required and must be human-readable (REQ-48) — it is what a person
-        reads to understand the run without reading the artifacts.
+        reads to know what happened and whether they need to open anything. Two or three
+        sentences; findings, tables and comparisons belong in an artifact the summary
+        points at, not in the summary itself.
 
         Before reporting `completed` on a step with criteria, check each one yourself — run
         it, open it, look — and pass `criteria_met` keyed by criterion id with a sentence of

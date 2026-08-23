@@ -128,9 +128,16 @@ waiting on. Treat that refusal as a backstop you should rarely see, not the thin
 you what is left: it can only detect a criterion you said nothing about, never one you
 answered carelessly. Chief cannot check whether a criterion truly holds — you can.
 
-**Every update needs a summary, and it must be worth reading.** It is what a person sees to
-understand the run without opening the artifacts. "Done" is not a summary; "migrated 14
-call sites, 2 needed a manual null check" is.
+**Every update needs a summary, and it must be worth reading.** It is what a person reads to
+know what happened and whether they need to open anything — not a replacement for the
+artifacts. "Done" is not a summary; "migrated 14 call sites, 2 needed a manual null check"
+is.
+
+**Two or three sentences.** If the step produced more than that — a list of findings, a
+table, a comparison — write it to a file, register it as an artifact, and let the summary
+say what it found and point at it. Long prose in a summary is unreadable at a glance and
+unsearchable afterwards, and it is the one place in Chief that cannot be reopened as a
+document. Shortening without writing the detail somewhere is losing it, not summarising.
 
 For a loop or parallel step: pass each instance's `instance_params` in its `metadata` when
 you register it — it is refused without them. Read your own instance's metadata to know

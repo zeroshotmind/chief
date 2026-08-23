@@ -428,3 +428,23 @@ def test_instructions_name_the_flow_the_skill_documents():
     """The server's instructions are the one piece of text every session sees."""
     assert "propose_amendment" in mcp_server.INSTRUCTIONS
     assert json.dumps(HARNESS_OPERATIONS)  # the list is serialisable, i.e. plain strings
+
+
+def test_every_field_a_harness_fills_says_what_to_put_in_it():
+    """The tool schema is the only guidance a harness is guaranteed to see.
+
+    ``summary`` went a long time without a description while ``metadata`` and
+    ``criteria_met`` had careful ones, and the result was exactly what an undescribed
+    required field invites: prose sized against the floor ("not 'Done'") because nothing
+    stated a ceiling. The ceiling and the instruction to put detail in an artifact are the
+    load-bearing half — assert both, so removing either fails here rather than in a run.
+    """
+    from chief.models.updates import StepUpdate
+
+    described = StepUpdate.model_json_schema()["properties"]
+    for field in ("summary", "metadata", "criteria_met"):
+        assert described[field].get("description"), f"{field} reaches a harness undescribed"
+
+    summary = described["summary"]["description"]
+    assert "two or three sentences" in summary.lower()
+    assert "artifacts" in summary

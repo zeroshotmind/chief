@@ -15,8 +15,22 @@ ReportableStatus = Literal["pending", "running", "completed", "failed"]
 class _UpdateBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # Required on every update, non-empty (REQ-48).
-    summary: str = Field(min_length=1)
+    # Required on every update, non-empty (REQ-48). Described for the same reason `metadata`
+    # is: this reaches a harness through the MCP tool's JSON schema, and the one field filled
+    # on every single call was the only one arriving with nothing said about it. The guidance
+    # it carries is a ceiling, because every other word written about summaries is a floor —
+    # "worth reading", "not 'Done'" — and a model with a floor and no ceiling writes an essay.
+    summary: str = Field(
+        min_length=1,
+        description=(
+            "What happened, in two or three sentences. This is read at a glance, in a list "
+            "and inside a node on a graph, to know what happened and whether anything needs "
+            "opening — it does not replace the artifacts. If the step produced more than a "
+            "few sentences' worth (findings, a table, a comparison, a list of hits), write "
+            "that to a file, register it in `artifacts`, and let this say what it found and "
+            "name the file. Shortening without writing the detail somewhere loses it."
+        ),
+    )
     artifacts: list[ArtifactRef] = Field(default_factory=list)
     # Described rather than commented: this reaches a harness through the MCP tool's JSON
     # schema, and an undescribed dict is a dict nobody fills in.
