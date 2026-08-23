@@ -760,6 +760,33 @@ details[open] > .meta-summary::before { content: "▾ "; }
   border-left: 2px solid var(--color-divider); color: var(--color-neutral-600);
 }
 .md-hr { border: 0; border-top: 1px solid var(--color-divider); margin: var(--space-2) 0; }
+
+/* — tables —
+   Seams rather than a boxed grid: the rest of the surface separates with hairlines, and a
+   fully ruled table would read as a heavier object than the prose around it. The wrapper
+   scrolls so a wide table stays inside its panel instead of widening the page. */
+.md-table-wrap { overflow-x: auto; margin: 0 0 var(--space-2); }
+.md-table {
+  border-collapse: collapse; font-size: 13px; line-height: 1.45;
+  /* Not `width: 100%`: a two-column table stretched across a wide panel puts a hand-span of
+     nothing between the label and its value. */
+  min-width: min(100%, 420px);
+}
+.md-table th, .md-table td {
+  padding: var(--space-1) var(--space-2); text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--color-divider);
+}
+.md-table th {
+  font-weight: 600; color: var(--color-neutral-700); white-space: nowrap;
+  border-bottom: 1px solid var(--color-divider-strong);
+}
+.md-table tbody tr:last-child td { border-bottom: 0; }
+/* Alignment comes off the divider row as a class, not an inline style: the rest of this
+   renderer sets classes, and an inline style would be the one rule a stylesheet cannot
+   reach. */
+.md-table .md-left { text-align: left; }
+.md-table .md-center { text-align: center; }
+.md-table .md-right { text-align: right; }
 .md-code {
   font-family: var(--font-mono); font-size: 11px;
   padding: 1px 4px; border-radius: 3px;

@@ -447,6 +447,71 @@ check("mdx markup in a plain markdown file stays literal", () => {
   assert.ok(text(blocks[0]).includes("<Callout>"));
 });
 
+// ── tables ───────────────────────────────────────────────────────────────────────────────
+//
+// The divider row is what makes a table a table. Prose that happens to contain pipes is far
+// more common than a table in the documents Chief shows, so the false-positive case below is
+// the one worth keeping.
+
+check("a pipe table becomes a table, header and body separated", () => {
+  const blocks = markdown("| Work | id |\n|---|---|\n| A | 1 |\n| B | 2 |");
+  const [table] = findAll(blocks, "table");
+  assert.ok(table, "a table is rendered");
+  assert.equal(findAll(blocks, "th").map(text).join(","), "Work,id");
+  assert.equal(findAll(blocks, "tr").length, 3);
+  assert.equal(findAll(blocks, "td").map(text).join(","), "A,1,B,2");
+});
+
+check("prose containing pipes is not a table", () => {
+  const blocks = markdown("just | a | sentence with pipes");
+  assert.equal(findAll(blocks, "table").length, 0);
+  assert.equal(blocks[0].tagName, "p");
+});
+
+check("a row of pipes with no divider under it is not a table", () => {
+  const blocks = markdown("| Work | id |\n| A | 1 |");
+  assert.equal(findAll(blocks, "table").length, 0);
+});
+
+check("alignment is read off the divider and set as a class", () => {
+  const blocks = markdown("| L | C | R |\n|:---|:---:|---:|\n| a | b | c |");
+  assert.deepEqual(
+    findAll(blocks, "th").map((n) => n.getAttribute("class")),
+    ["md-left", "md-center", "md-right"],
+  );
+  assert.deepEqual(
+    findAll(blocks, "td").map((n) => n.getAttribute("class")),
+    ["md-left", "md-center", "md-right"],
+  );
+});
+
+check("a ragged row is padded and an over-long one truncated to the header", () => {
+  const blocks = markdown("| A | B | C |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |");
+  const rows = findAll(blocks, "tr").slice(1);
+  assert.deepEqual(rows.map((r) => r.childNodes.length), [3, 3]);
+  assert.equal(rows[0].childNodes.map(text).join("|"), "1||");
+});
+
+check("an escaped pipe is a pipe inside a cell, not a cell boundary", () => {
+  const blocks = markdown("| a | b |\n|---|---|\n| x \\| y | z |");
+  const cells = findAll(blocks, "td").map(text);
+  assert.deepEqual(cells, ["x | y", "z"]);
+});
+
+check("markdown inside a cell is rendered, and markup in it stays text", () => {
+  const blocks = markdown("| Work | Note |\n|---|---|\n| **bold** | <b>x</b> |");
+  assert.equal(findAll(blocks, "strong").map(text).join(""), "bold");
+  assert.equal(findAll(blocks, "b").length, 0);
+  assert.ok(findAll(blocks, "td").map(text).join(" ").includes("<b>x</b>"));
+});
+
+check("a paragraph ends where a table begins", () => {
+  const blocks = markdown("Some prose here.\n| A |\n|---|\n| 1 |");
+  assert.equal(blocks[0].tagName, "p");
+  assert.equal(text(blocks[0]), "Some prose here.");
+  assert.equal(findAll(blocks, "table").length, 1);
+});
+
 // ── report ───────────────────────────────────────────────────────────────────────────────
 
 if (failures.length) {

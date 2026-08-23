@@ -588,6 +588,36 @@ const HEADING = /^(#{1,6})[ \t]+(.*)$/;
 const QUOTE = /^>[ \t]?(.*)$/;
 const RULE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
+// A GFM table: a row of cells, and under it a divider that says how many columns there are
+// and how each one is aligned. Both are required — a lone line of pipes is prose about
+// pipes, and treating it as a table is how a sentence becomes a one-cell grid.
+const TABLE_ROW = /^[ \t]*\|.*\|[ \t]*$/;
+const TABLE_DIVIDER = /^[ \t]*\|(?:[ \t]*:?-+:?[ \t]*\|)+[ \t]*$/;
+
+/** One table row into its cells. `\|` is a literal pipe — the only way to put one inside a
+    cell — so it is protected before the split and restored after, rather than parsed. */
+function cells(line) {
+  const held = "\u0000";
+  return line
+    .replace(/\\\|/g, held)
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.split(held).join("|").trim());
+}
+
+/** How each column is aligned, read off the divider row. */
+function alignments(line) {
+  return cells(line).map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return left ? "left" : null;
+  });
+}
+
 /** Markdown as a list of block nodes.
 
     A deliberate divergence from CommonMark: a single newline inside a paragraph becomes a
@@ -776,6 +806,38 @@ export function markdown(text, options = {}) {
       continue;
     }
 
+    if (TABLE_ROW.test(line) && TABLE_DIVIDER.test(lines[i + 1] || "")) {
+      const align = alignments(lines[i + 1]);
+      const table = h("table", "md-table");
+      const head = h("thead");
+      const headRow = h("tr");
+      cells(line).forEach((text, column) => {
+        add(headRow, [add(h("th", align[column] && `md-${align[column]}`), inline(text))]);
+      });
+      add(head, [headRow]);
+      add(table, [head]);
+
+      i += 2;
+      const body = h("tbody");
+      while (i < lines.length && TABLE_ROW.test(lines[i])) {
+        const row = h("tr");
+        // Padded or truncated to the header's width: a ragged row is a typo, and dropping
+        // the extra cells silently would hide the one thing the writer got wrong.
+        const values = cells(lines[i]);
+        for (let column = 0; column < align.length; column += 1) {
+          const cls = align[column] && `md-${align[column]}`;
+          add(row, [add(h("td", cls), inline(values[column] || ""))]);
+        }
+        add(body, [row]);
+        i += 1;
+      }
+      add(table, [body]);
+      // Wrapped, because a table with more columns than the panel is wide has to scroll
+      // somewhere, and scrolling the whole page sideways to read one cell is worse.
+      blocks.push(add(h("div", "md-table-wrap"), [table]));
+      continue;
+    }
+
     // A paragraph: everything up to a blank line or the start of another block.
     const para = [];
     while (
@@ -783,6 +845,7 @@ export function markdown(text, options = {}) {
       !HEADING.test(lines[i]) && !QUOTE.test(lines[i]) && !RULE.test(lines[i]) &&
       !BULLET.test(lines[i]) && !NUMBER.test(lines[i]) &&
       !/^[ \t]*(```|~~~)/.test(lines[i]) && !/^[ \t]*\$\$/.test(lines[i]) &&
+      !(TABLE_ROW.test(lines[i]) && TABLE_DIVIDER.test(lines[i + 1] || "")) &&
       !(mdx && (MODULE_LINE.test(lines[i]) || JSX_OPEN.test(lines[i])))
     ) {
       para.push(lines[i]);
