@@ -157,24 +157,25 @@ entry point — check for a template before composing a plan from scratch.
 `archive_template` is REST-only for now: retiring a template is lifecycle administration a
 person does, and no session behaviour depends on it.
 
-### Plans — logic checked before approval
+### Proof graphs — logic checked before approval
 
-Not in the contract either. A plan is a candidate written so its steps declare what they need
-from the ones before them, so a proof assistant can say whether it hangs together before a
-person is asked to approve it. Worth the extra round-trip when the work has real preconditions
-between steps; not worth it for a short errand.
+Not in the contract either. A proof graph is a workflow graph whose every edge is a theorem:
+each step declares what it needs from the ones before it, and a proof assistant says whether
+the whole thing hangs together before a person is asked to approve anything. Worth the extra
+round-trip when the work has real preconditions between steps; not worth it for a short
+errand.
 
 | Tool | Method | Note |
 |---|---|---|
-| ● `create_plan` | `create_plan` | Store a Lean plan as a draft. Nothing is checked yet. |
-| ● `list_plans` | `list_plans` | What is here, newest first. |
-| ● `get_plan` | `get_plan` | Source, verdict, and the graph that was checked. |
-| ● `verify_plan` | `verify_plan` | Check it. A plan that fails comes back 200 with diagnostics, not as an error. |
-| ● `revise_plan` | `revise_plan` | Fix the source. The verdict does not survive the edit. |
-| ● `compile_plan` | `compile_plan` | Verified plan in, draft workflow out. |
+| ● `create_proof_graph` | `create_proof_graph` | Store a Lean proof graph as a draft. Nothing is checked yet. |
+| ● `list_proof_graphs` | `list_proof_graphs` | What is here, newest first. |
+| ● `get_proof_graph` | `get_proof_graph` | Source, verdict, and the extracted graph. |
+| ● `verify_proof_graph` | `verify_proof_graph` | Check it. A graph that fails comes back 200 with diagnostics, not as an error. |
+| ● `revise_proof_graph` | `revise_proof_graph` | Fix the source. The verdict does not survive the edit. |
+| ● `compile_proof_graph` | `compile_proof_graph` | Verified graph in, draft workflow out. |
 
-`DELETE /plans/{id}` is REST-only, on the same reasoning as `delete_workflow`: erasing a
-record is not something a session needs to do on its own initiative.
+`DELETE /proof-graphs/{id}` is REST-only, on the same reasoning as `delete_workflow`: erasing
+a record is not something a session needs to do on its own initiative.
 
 ### Human-in-the-loop
 
@@ -192,8 +193,8 @@ record is not something a session needs to do on its own initiative.
 | `POST /workflows/{id}/notes` | Review feedback is said *to* a harness, like a comment. Readable through `get_workflow`. |
 | `GET /workflows/{id}/notes` | Same data the workflow document already carries; a second way to fetch it would be a tool that buys nothing. |
 | `PATCH /workflows/{id}/notes/{note_id}` | Closing the feedback you were given is deciding your own work was accepted — the loop §1 is about. |
-| `DELETE /plans/{plan_id}` | Erasing a record, like `delete_workflow` — not a session's to initiate. |
-| `GET /plans/toolchain` | Whether this instance can check plans at all. A tool would learn it by failing, which is what this exists to avoid; the failure a session does see says it plainly. |
+| `DELETE /proof-graphs/{graph_id}` | Erasing a record, like `delete_workflow` — not a session's to initiate. |
+| `GET /proof-graphs/toolchain` | Whether this instance can check proof graphs at all. A tool would learn it by failing, which is what this exists to avoid; the failure a session does see says it plainly. |
 | `PATCH /workflows/{id}` (project label) | The harness states the project when it creates the plan; re-filing one afterwards is filing, which is a person's housekeeping and not a step in any session. |
 | `GET /projects` | Derived from the workflows `list_workflows` already returns, so a tool would buy nothing. |
 | `GET /runs/{id}/artifacts/{id}/content` | A harness has the file already — it is the one that wrote it, and it has a filesystem. This exists so a *browser* can see it. |

@@ -235,12 +235,12 @@ const FILE_BODIES = {
     type: "text/mdx", name: "post.mdx",
   },
 };
-// Two checked plans: one that holds up and one that does not, which is what the plans
+// Two proof graphs: one that holds up and one that does not, which is what the graphs
 // screens are for. The verified one carries the graph the server read back out of it, with a
 // contract on the edge — a condition proven about an artifact nothing has produced yet.
 const TOOLCHAIN = { available: true, toolchain: "leanprover/lean4:v4.33.1" };
 const PLAN_GRAPH = {
-  schema: "chief.plan/v1",
+  schema: "chief.proofgraph/v1",
   title: "Fraud model refresh",
   nodes: [
     {
@@ -295,14 +295,14 @@ const PLAN_GRAPH = {
 };
 const PLANS = [
   {
-    plan_id: "pln_ok", title: "Fraud model refresh", lean_source: "import ChiefPlan\n-- …\n",
+    graph_id: "pg_ok", title: "Fraud model refresh", lean_source: "import ProofGraph\n-- …\n",
     status: "verified", project: "chief", origin_dir: null, generated_by: null,
     verification: { status: "verified", diagnostics: [], graph: PLAN_GRAPH, toolchain: TOOLCHAIN.toolchain, axioms: ["propext"] },
     verified_at: "2026-08-24T09:00:00.000Z", compiled_to: [], stale: false,
     created_at: "2026-08-24T08:00:00.000Z", updated_at: "2026-08-24T09:00:00.000Z",
   },
   {
-    plan_id: "pln_bad", title: "Docs index refresh",
+    graph_id: "pg_bad", title: "Docs index refresh",
     lean_source: Array.from({ length: 80 }, (_, i) => `-- line ${i + 1}`).join("\n"),
     status: "failed", project: "chief", origin_dir: null, generated_by: null,
     verification: {
@@ -373,10 +373,10 @@ globalThis.fetch = async (url, options) => {
     return { ok: false, status: 404, json: async () => ({ error: { code: "not_found" } }) };
   }
   const body =
-    url.endsWith("/plans/toolchain") ? TOOLCHAIN
-    : url.endsWith("/plans") ? PLANS
-    : /\/plans\/[^/]+$/.test(url) ? PLANS[0]
-    : url.includes("/plans/") ? { ...PLANS[0], compiled_to: ["wf_ok"] }
+    url.endsWith("/proof-graphs/toolchain") ? TOOLCHAIN
+    : url.endsWith("/proof-graphs") ? PLANS
+    : /\/proof-graphs\/[^/]+$/.test(url) ? PLANS[0]
+    : url.includes("/proof-graphs/") ? { ...PLANS[0], compiled_to: ["wf_ok"] }
     : url.includes("/notes") ? NOTES
     : url.includes("/audit") ? AUDIT
     : url.endsWith("/templates") ? TEMPLATES
@@ -1236,13 +1236,13 @@ const expected = [
   "Approvals inbox", "Templates", "Template detail", "Workflow detail",
 ];
 const actual = screens.map((s) => s.split(" -> ")[1]);
-// Plans: the checked-before-approval screens. The list separates a plan that holds up from
+// Proof graphs: the checked-before-approval screens. The list separates one that holds up from
 // one that does not; the verified one draws its graph through the same renderer everything
 // else uses, with the proven condition on the edge shown as a condition rather than dumped
 // into a JSON drawer; and the failed one shows the goal that did not follow, verbatim.
-clickByText("Plans");
+clickByText("Proof graphs");
 await new Promise((r) => setTimeout(r, 30));
-record("nav Plans");
+record("nav Proof graphs");
 const planRows = countClass(mainNode(), "run-row");
 const toolchainShown = JSON.stringify(mainNode()).includes("leanprover/lean4:v4.33.1");
 
@@ -1393,7 +1393,7 @@ clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
 const verified = posts.find((x) => x.url.includes("/verification"));
 
-clickByText("← Plans");
+clickByText("← Proof graphs");
 await new Promise((r) => setTimeout(r, 30));
 clickByText("Docs index refresh");
 await new Promise((r) => setTimeout(r, 40));
@@ -1606,7 +1606,7 @@ const ok =
   decision.body.decision === "approved" &&
   decision.body.response.budget === "$400" &&
   decision.body.note === "go ahead" &&
-  // Plans: both rows listed, the verified one drawn, its proven condition shown as a
+  // Proof graphs: both rows listed, the verified one drawn, its proven condition shown as a
   // condition, and the failed one showing the goal that did not follow.
   planRows === 2 &&
   toolchainShown &&
@@ -1634,7 +1634,7 @@ const ok =
   notInJsonDrawer &&
   claimsShown &&
   !!verified &&
-  verified.url.endsWith("/plans/pln_ok/verification") &&
+  verified.url.endsWith("/proof-graphs/pg_ok/verification") &&
   diagnostics === 2 &&
   goalShown &&
   blamedStep &&

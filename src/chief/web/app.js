@@ -35,7 +35,7 @@ import {
   decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addReviewNote, artifactContent, artifactModules, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
-  compilePlan, deletePlan, getPlan, listPlans, planToolchain, revisePlan, verifyPlan,
+  compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
 
@@ -1828,24 +1828,24 @@ const state = {
   templateId: null,
   templates: undefined, // undefined = not loaded yet, null = server has no templates
 
-  // Checked plans. Same three-way convention as templates: undefined until the first load,
-  // null when this Chief has no /plans endpoint at all. Not to be confused with
+  // Proof graphs. Same three-way convention as templates: undefined until the first load,
+  // null when this Chief has no /proof-graphs endpoint at all. Not to be confused with
   // `plansByRun`, which is a run's effective *workflow definition* and predates this.
-  planId: null,
-  plans: undefined,
+  graphId: null,
+  proofGraphs: undefined,
   // {available, toolchain} — whether this instance can check anything. Fetched once beside
   // the list, because a UI that offers Verify on a server that cannot verify is worse than
   // one that says why the button is not there.
   toolchain: null,
-  // plan_id currently being verified or compiled, so the button can say so and not be
+  // graph_id currently being verified or compiled, so the button can say so and not be
   // pressed twice. One at a time is enough: these are deliberate, one-off acts.
-  planBusy: null,
-  planError: null,
+  graphBusy: null,
+  graphError: null,
   // Which of the two views of the plan is showing. Null means "whichever suits this plan",
   // decided at render: the graph if there is one, the source if there is not.
-  planPane: null,
+  graphPane: null,
   // The line a diagnostic sent you to, kept so it stays marked across a refresh.
-  planLine: null,
+  graphLine: null,
 
   workflowAudit: null, // { workflowId, entries }
   // Review notes for the workflow on screen: { workflowId, notes }. Fetched per screen and
@@ -1926,12 +1926,12 @@ function setState(patch) {
 // you are* is in the hash: selection, dialogs and fetched documents are session state, and
 // putting them in the URL would make every click a history entry.
 
-const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1, plans: 1 };
+const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1, graphs: 1 };
 const ROUTED = {
-  workflow: "workflowId", detail: "runId", template: "templateId", plan: "planId",
+  workflow: "workflowId", detail: "runId", template: "templateId", graph: "graphId",
 };
 const ROUTE_KIND = {
-  workflow: "workflow", detail: "run", template: "template", plan: "plan",
+  workflow: "workflow", detail: "run", template: "template", graph: "graph",
 };
 
 function hashFor(s) {
@@ -1964,7 +1964,7 @@ function stateFromHash() {
   const [kind, raw, rawArtifact] = location.hash.replace(/^#\/?/, "").split("/");
   const id = raw && decodeURIComponent(raw);
   const blank = {
-    runId: null, workflowId: null, templateId: null, planId: null, planError: null,
+    runId: null, workflowId: null, templateId: null, graphId: null, graphError: null,
     selected: null, detail: null, dialog: null, workflowAudit: null, workflowNotes: null,
     viewer: null, viewerPending: null,
   };
@@ -2045,12 +2045,12 @@ async function loadRuns() {
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   };
-  const [runs, workflows, templates, planList, toolchain] = await Promise.all([
+  const [runs, workflows, templates, graphList, toolchain] = await Promise.all([
     listRuns(),
     listWorkflows(),
     listTemplates().catch(missingIsNull),
-    listPlans().catch(missingIsNull),
-    planToolchain().catch(() => null),
+    listProofGraphs().catch(missingIsNull),
+    proofGraphToolchain().catch(() => null),
   ]);
   for (const wf of workflows) titles[wf.workflow_id] = wf.title;
   // Amendments are one small request per run and drive the nav badge on every screen.
@@ -2073,7 +2073,7 @@ async function loadRuns() {
   return {
     runs, workflows, templates, toolchain, amendmentsByRun, plansByRun,
     // Named apart from the local `plans` below, which is a run's effective definition.
-    plans: planList,
+    proofGraphs: graphList,
   };
 }
 
@@ -2368,13 +2368,13 @@ function navBar() {
     // Absent entirely on a Chief without the endpoint, like Templates. A plan that has been
     // checked and not yet compiled is the one waiting on you, so that is what the badge
     // counts — a draft plan is still being written and a failed one is the author's problem.
-    state.plans !== null &&
+    state.proofGraphs !== null &&
       link(
-        "Plans", "plans", state.view === "plans" || state.view === "plan",
-        readyPlans().length > 0 &&
+        "Proof graphs", "graphs", state.view === "graphs" || state.view === "graph",
+        readyGraphs().length > 0 &&
           el("span", {
             class: "tag tag-accent", style: { padding: "0 7px" },
-            text: String(readyPlans().length),
+            text: String(readyGraphs().length),
           }),
       ),
     link(
@@ -4773,80 +4773,80 @@ function dialogNode() {
 // run by the rules everything else follows. So these screens do two things and stop: show
 // what was checked, and hand the result over.
 
-const planErrors = (plan) =>
-  ((plan.verification && plan.verification.diagnostics) || []).filter(
+const graphErrors = (graph) =>
+  ((graph.verification && graph.verification.diagnostics) || []).filter(
     (d) => d.severity === "error",
   );
 
-const planGraphOf = (plan) => (plan.verification && plan.verification.graph) || null;
-const planStats = (plan) => (planGraphOf(plan) || {}).stats || null;
+const extractionOf = (graph) => (graph.verification && graph.verification.graph) || null;
+const graphStatsOf = (graph) => (extractionOf(graph) || {}).stats || null;
 
 /** Checked, still checked by the toolchain running now, and not yet turned into a workflow.
-    That is the plan waiting on a person: a draft is still being written and a failed one is
+    That is the graph waiting on a person: a draft is still being written and a failed one is
     the author's to fix. */
-function readyPlans() {
-  return (state.plans || []).filter(
+function readyGraphs() {
+  return (state.proofGraphs || []).filter(
     (p) => p.status === "verified" && !p.stale && (p.compiled_to || []).length === 0,
   );
 }
 
-/** Four states, and the third is the one worth a colour of its own: a plan can be `verified`
+/** Four states, and the third is the one worth a colour of its own: a graph can be `verified`
     and still not count, because the toolchain that said so is not the one installed now. */
-function planMeta(plan) {
-  if (plan.status === "failed") return { color: BAD, label: "does not hold up" };
-  if (plan.status === "draft") return { color: "var(--color-neutral-400)", label: "not checked" };
-  if (plan.stale) return { color: WARN, label: "checked by an older toolchain" };
-  if ((plan.compiled_to || []).length) return { color: ACC, label: "compiled" };
+function graphMeta(graph) {
+  if (graph.status === "failed") return { color: BAD, label: "does not hold up" };
+  if (graph.status === "draft") return { color: "var(--color-neutral-400)", label: "not checked" };
+  if (graph.stale) return { color: WARN, label: "checked by an older toolchain" };
+  if ((graph.compiled_to || []).length) return { color: ACC, label: "compiled" };
   return { color: OK, label: "verified" };
 }
 
-function openPlan(planId) {
+function openProofGraph(graphId) {
   setState({
-    view: "plan", planId, selected: null, dialog: null,
-    planError: null, planPane: null, planLine: null,
+    view: "graph", graphId, selected: null, dialog: null,
+    graphError: null, graphPane: null, graphLine: null,
   });
 }
 
-const withPlan = (plan) =>
-  (state.plans || []).map((p) => (p.plan_id === plan.plan_id ? plan : p));
+const withGraph = (graph) =>
+  (state.proofGraphs || []).map((p) => (p.graph_id === graph.graph_id ? graph : p));
 
-async function doVerify(planId) {
-  setState({ planBusy: planId, planError: null });
+async function doVerify(graphId) {
+  setState({ graphBusy: graphId, graphError: null });
   try {
-    // A plan that does not hold up comes back 200 with its diagnostics — the check reaching a
+    // A graph that does not hold up comes back 200 with its diagnostics — the check reaching a
     // verdict is the request succeeding, so this is not a catch.
-    setState({ planBusy: null, plans: withPlan(await verifyPlan(planId)) });
+    setState({ graphBusy: null, proofGraphs: withGraph(await verifyProofGraph(graphId)) });
   } catch (err) {
-    setState({ planBusy: null, planError: err instanceof ApiError ? err.message : String(err) });
+    setState({ graphBusy: null, graphError: err instanceof ApiError ? err.message : String(err) });
   }
 }
 
-async function doCompile(planId) {
-  setState({ planBusy: planId, planError: null });
+async function doCompile(graphId) {
+  setState({ graphBusy: graphId, graphError: null });
   try {
-    const workflow = await compilePlan(planId, {});
-    setState({ planBusy: null, plans: withPlan(await getPlan(planId)) });
+    const workflow = await compileProofGraph(graphId, {});
+    setState({ graphBusy: null, proofGraphs: withGraph(await getProofGraph(graphId)) });
     // Straight to the draft it produced: compiling is a handover, and leaving someone on the
-    // plan screen to go and find the workflow is the handover not happening.
+    // graph screen to go and find the workflow is the handover not happening.
     openWorkflow(workflow.workflow_id);
     refresh();
   } catch (err) {
-    setState({ planBusy: null, planError: err instanceof ApiError ? err.message : String(err) });
+    setState({ graphBusy: null, graphError: err instanceof ApiError ? err.message : String(err) });
   }
 }
 
-function planRow(plan) {
-  const meta = planMeta(plan);
-  const stats = planStats(plan);
+function graphRow(graph) {
+  const meta = graphMeta(graph);
+  const stats = graphStatsOf(graph);
   return el(
     "button",
-    { class: "run-row", onClick: () => openPlan(plan.plan_id) },
+    { class: "run-row", onClick: () => openProofGraph(graph.graph_id) },
     dot(meta.color, false),
     el(
       "span",
       { class: "title" },
-      el("span", { text: plan.title }),
-      el("span", { class: "id text-muted", text: plan.plan_id }),
+      el("span", { text: graph.title }),
+      el("span", { class: "id text-muted", text: graph.graph_id }),
     ),
     el("span", { class: "status text-muted", text: meta.label }),
     el("span", {
@@ -4856,54 +4856,54 @@ function planRow(plan) {
   );
 }
 
-function plansScreen() {
-  const plans = state.plans;
-  if (plans === undefined)
+function proofGraphsScreen() {
+  const graphs = state.proofGraphs;
+  if (graphs === undefined)
     return el("main", { class: "narrow" }, el("p", { class: "text-muted", text: "Loading…" }));
-  if (plans === null) {
+  if (graphs === null) {
     return el(
       "main",
-      { class: "narrow", "data-screen-label": "Plans" },
-      el("header", { class: "screen-head" }, el("h4", { text: "Plans" })),
+      { class: "narrow", "data-screen-label": "Proof graphs" },
+      el("header", { class: "screen-head" }, el("h4", { text: "Proof graphs" })),
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
         text:
-          "This Chief has no /plans endpoint — it is running a build from before checked " +
-          "plans existed. Restart it to pick them up.",
+          "This Chief has no /graphs endpoint — it is running a build from before checked " +
+          "graphs existed. Restart it to pick them up.",
       }),
     );
   }
   const tc = state.toolchain;
   return el(
     "main",
-    { class: "narrow", "data-screen-label": "Plans" },
+    { class: "narrow", "data-screen-label": "Proof graphs" },
     el(
       "header",
       { class: "screen-head" },
-      el("h4", { text: "Plans" }),
+      el("h4", { text: "Proof graphs" }),
       el("span", {
         class: "text-muted", style: { fontSize: "12px" },
-        text: `${readyPlans().length} ready to compile`,
+        text: `${readyGraphs().length} ready to compile`,
       }),
     ),
-    // Said once, here, rather than discovered as a failed verification on a plan screen: an
+    // Said once, here, rather than discovered as a failed verification on a graph screen: an
     // instance without a toolchain has not found anything unsound, it simply cannot look.
     tc && !tc.available &&
       el("p", {
         class: "accent-note", style: { fontSize: "13px" },
         text:
-          "This Chief has no Lean toolchain, so plans cannot be checked here. Nothing already " +
+          "This Chief has no Lean toolchain, so graphs cannot be checked here. Nothing already " +
           "compiled is affected.",
       }),
-    plans.length === 0 &&
+    graphs.length === 0 &&
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
         text:
-          "No plans yet. A plan is a workflow written so its steps declare what they need " +
+          "No graphs yet. A graph is a workflow written so its steps declare what they need " +
           "from each other, which is then machine-checked before anyone approves it. " +
-          "See lean/README.md, or POST /plans.",
+          "See lean/README.md, or POST /graphs.",
       }),
-    el("div", { style: { display: "flex", flexDirection: "column" } }, plans.map(planRow)),
+    el("div", { style: { display: "flex", flexDirection: "column" } }, graphs.map(graphRow)),
     tc && tc.available &&
       el("p", {
         class: "text-muted mono",
@@ -4913,20 +4913,20 @@ function plansScreen() {
   );
 }
 
-/** The checked graph, in the shape the ordinary plan renderer takes.
+/** The checked graph, in the shape the ordinary graph renderer takes.
 
-    A plan's nodes are workflow steps in all but name, so they draw through the same renderer
+    A graph's nodes are workflow steps in all but name, so they draw through the same renderer
     as a workflow or a template rather than a second one that could disagree with it. The
     contracts ride in as `inputs`, which is where `contractCard` picks them up. */
-function defFromPlan(plan) {
-  const graph = planGraphOf(plan);
-  if (!graph) return null;
+function defFromGraph(graph) {
+  const extraction = extractionOf(graph);
+  if (!extraction) return null;
   return {
-    workflow_id: plan.plan_id,
-    title: graph.title,
-    // What each group is for, where the plan says. Read by the group panel, keyed by path.
-    groups: graph.groups || [],
-    steps: graph.nodes.map((n) => ({
+    workflow_id: graph.graph_id,
+    title: extraction.title,
+    // What each group is for, where the graph says. Read by the group panel, keyed by path.
+    groups: extraction.groups || [],
+    steps: extraction.nodes.map((n) => ({
       id: n.id,
       type: n.type,
       goal: n.goal,
@@ -4965,20 +4965,20 @@ function defFromPlan(plan) {
 
 /** What the panel says before a step is selected: what the check actually established.
 
-    Deliberately the counts rather than the word "verified" on its own. A plan can pass with
+    Deliberately the counts rather than the word "verified" on its own. A graph can pass with
     every condition claiming nothing, and a reader who is about to approve the workflow this
     compiles into is entitled to see the difference at the point of use. */
-function planOverviewPanel(plan, graph, topSteps) {
-  const stats = graph.stats || {};
-  const meta = planMeta(plan);
+function graphOverviewPanel(graph, extraction, topSteps) {
+  const stats = (extraction && extraction.stats) || {};
+  const meta = graphMeta(graph);
   return {
     kicker: "What was checked",
-    title: plan.title,
+    title: graph.title,
     metaLine:
       `${topSteps.length} steps · ${stats.edges || 0} edges · ` +
       `${meta.label}` +
-      (plan.verification && plan.verification.toolchain
-        ? ` · ${plan.verification.toolchain}`
+      (graph.verification && graph.verification.toolchain
+        ? ` · ${graph.verification.toolchain}`
         : ""),
     summary:
       stats.contracts_any > 0
@@ -4992,7 +4992,7 @@ function planOverviewPanel(plan, graph, topSteps) {
   };
 }
 
-/** The plan's source, numbered.
+/** The graph's source, numbered.
 
     Numbered because a diagnostic reports a line, and a line number is useless against three
     hundred lines of unnumbered `pre`. The numbers are what `diagnosticCard` jumps to, which
@@ -5000,7 +5000,7 @@ function planOverviewPanel(plan, graph, topSteps) {
 function sourceView(source, highlight) {
   return el(
     "div",
-    { class: "plan-source" },
+    { class: "graph-source" },
     ...source.split("\n").map((text, index) => {
       const line = index + 1;
       return el(
@@ -5016,7 +5016,7 @@ function sourceView(source, highlight) {
 
 /** Show the source and put the named line in view. */
 function jumpToLine(line) {
-  setState({ planPane: "source", planLine: line });
+  setState({ graphPane: "source", graphLine: line });
   // After the render, not during it: the node does not exist until `replaceChildren` has run.
   setTimeout(() => {
     const found = document.getElementById(`src-line-${line}`);
@@ -5053,19 +5053,19 @@ function diagnosticCard(d) {
   );
 }
 
-function planDetailScreen() {
-  const plan = (state.plans || []).find((p) => p.plan_id === state.planId);
-  if (!plan) {
+function graphDetailScreen() {
+  const graph = (state.proofGraphs || []).find((p) => p.graph_id === state.graphId);
+  if (!graph) {
     return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading…" }));
   }
-  const meta = planMeta(plan);
-  const stats = planStats(plan);
-  const def = defFromPlan(plan);
+  const meta = graphMeta(graph);
+  const stats = graphStatsOf(graph);
+  const def = defFromGraph(graph);
   const drawn = def ? planGraph({ def }) : null;
-  const busy = state.planBusy === plan.plan_id;
+  const busy = state.graphBusy === graph.graph_id;
   const canCheck = !state.toolchain || state.toolchain.available;
-  const errs = planErrors(plan);
-  const warnings = ((plan.verification && plan.verification.diagnostics) || []).filter(
+  const errs = graphErrors(graph);
+  const warnings = ((graph.verification && graph.verification.diagnostics) || []).filter(
     (d) => d.severity !== "error",
   );
 
@@ -5075,25 +5075,25 @@ function planDetailScreen() {
     el("button", {
       class: "btn btn-ghost",
       style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" },
-      text: "← Plans", onClick: () => go("plans"),
+      text: "← Proof graphs", onClick: () => go("graphs"),
     }),
     el(
       "div",
       { class: "screen-head", style: { marginTop: "var(--space-3)" } },
-      el("h4", { text: plan.title }),
+      el("h4", { text: graph.title }),
       el("span", { style: { fontSize: "13px", color: meta.color }, text: meta.label }),
     ),
     el("p", {
       class: "text-muted mono",
       style: { fontSize: "11px", margin: "var(--space-2) 0 0" },
       text:
-        `${plan.plan_id}` +
-        (plan.verification && plan.verification.toolchain
-          ? ` · ${plan.verification.toolchain}`
+        `${graph.graph_id}` +
+        (graph.verification && graph.verification.toolchain
+          ? ` · ${graph.verification.toolchain}`
           : "") +
-        (plan.verified_at ? ` · checked ${rel(plan.verified_at)}` : ""),
+        (graph.verified_at ? ` · checked ${rel(graph.verified_at)}` : ""),
     }),
-    // What the plan actually claims. A plan can be verified and say almost nothing, so the
+    // What the graph actually claims. A graph can be verified and say almost nothing, so the
     // count of conditions that constrain something is shown beside the count that do not —
     // "checked" without this is a badge rather than a fact.
     stats &&
@@ -5116,32 +5116,32 @@ function planDetailScreen() {
               "established nothing there — look at those edges before trusting the shape.",
           }),
       ),
-    plan.stale &&
+    graph.stale &&
       el("p", {
         class: "accent-note", style: { fontSize: "13px", marginTop: "var(--space-3)" },
         text:
           "This was checked by a Lean that is no longer the one installed, so the verdict no " +
           "longer stands. Check it again before compiling.",
       }),
-    state.planError &&
-      el("p", { class: "accent-note", style: { fontSize: "13px", marginTop: "var(--space-3)" }, text: state.planError }),
+    state.graphError &&
+      el("p", { class: "accent-note", style: { fontSize: "13px", marginTop: "var(--space-3)" }, text: state.graphError }),
     el(
       "div",
       { style: { display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)", flexWrap: "wrap" } },
       canCheck &&
         el("button", {
           class: "btn btn-sm", disabled: busy || null,
-          text: busy ? "Checking…" : plan.status === "draft" ? "Check it" : "Check again",
-          onClick: () => doVerify(plan.plan_id),
+          text: busy ? "Checking…" : graph.status === "draft" ? "Check it" : "Check again",
+          onClick: () => doVerify(graph.graph_id),
         }),
-      plan.status === "verified" && !plan.stale &&
+      graph.status === "verified" && !graph.stale &&
         el("button", {
           class: "btn btn-primary btn-sm", disabled: busy || null,
           text: "Compile to a workflow",
-          onClick: () => doCompile(plan.plan_id),
+          onClick: () => doCompile(graph.graph_id),
         }),
     ),
-    (plan.compiled_to || []).length > 0 &&
+    (graph.compiled_to || []).length > 0 &&
       el(
         "div",
         { style: { marginTop: "var(--space-3)" } },
@@ -5149,7 +5149,7 @@ function planDetailScreen() {
         el(
           "div",
           { style: { display: "flex", flexDirection: "column", gap: "2px" } },
-          plan.compiled_to.map((id) =>
+          graph.compiled_to.map((id) =>
             el("button", {
               class: "btn btn-ghost mono",
               style: { fontSize: "12px", justifyContent: "flex-start", padding: "2px 0" },
@@ -5177,14 +5177,14 @@ function planDetailScreen() {
 
   // The graph and the source are two views of one thing — the same `do` block, read once by
   // the elaborator and once by the evaluator — so they belong behind a toggle rather than
-  // stacked, and either one alone is a complete answer to "what is this plan".
+  // stacked, and either one alone is a complete answer to "what is this graph".
   //
-  // The toggle appears only when there is a graph to switch to. A plan that has not been
+  // The toggle appears only when there is a graph to switch to. A graph that has not been
   // checked, or that failed, was never run, so no graph was read out of it — and a toggle
   // with one live option is worse than no toggle at all. Those screens show the source
   // plainly, which is also the thing their diagnostics point into.
-  const pane = drawn ? state.planPane || "graph" : "source";
-  const source = sourceView(plan.lean_source, state.planLine);
+  const pane = drawn ? state.graphPane || "graph" : "source";
+  const source = sourceView(graph.lean_source, state.graphLine);
 
   if (!drawn) {
     return el(
@@ -5204,7 +5204,7 @@ function planDetailScreen() {
       class: pane === key ? "chip on" : "chip",
       "aria-pressed": pane === key ? "true" : "false",
       text: label,
-      onClick: () => setState({ planPane: key }),
+      onClick: () => setState({ graphPane: key }),
     });
 
   return el(
@@ -5220,7 +5220,7 @@ function planDetailScreen() {
     pane === "graph"
       ? splitView(
           drawn.viewport,
-          drawn.panel || planOverviewPanel(plan, planGraphOf(plan), drawn.topSteps),
+          drawn.panel || graphOverviewPanel(graph, extractionOf(graph), drawn.topSteps),
         )
       : source,
   );
@@ -5229,8 +5229,8 @@ function planDetailScreen() {
 // ── render ───────────────────────────────────────────────────────────────────────────────
 
 const SCREENS = {
-  plans: plansScreen,
-  plan: planDetailScreen,
+  graphs: proofGraphsScreen,
+  graph: graphDetailScreen,
   approvals: approvalsScreen,
   templates: templatesScreen,
   template: templateDetailScreen,

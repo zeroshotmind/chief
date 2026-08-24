@@ -31,7 +31,7 @@ its predicate says. Generating both from one syntax is the obvious next step and
 here.
 -/
 
-namespace ChiefPlan
+namespace ProofGraph
 
 /-- The name an artifact type is known by outside Lean.
 
@@ -50,7 +50,7 @@ value the predicate rejects, and the proof that it does. The last two are the no
 guard described above — for a decidable predicate they cost the author a literal and a
 `by decide` or `by simp`.
 
-Bind these with `abbrev`, not `def`: see `plan_entails` for why a `def` here breaks every edge
+Bind these with `abbrev`, not `def`: see `graph_entails` for why a `def` here breaks every edge
 that touches it. Discharge `rejects` with `by decide` — every predicate in the fragment plans
 are scoped to is decidable, so it always works and needs no thought. `by simp` is the fallback
 for the rare predicate `decide` cannot evaluate.
@@ -131,10 +131,10 @@ The ladder is ordered by cost and is entirely Lean core: `trivial` closes an `an
 `assumption` an unchanged contract, `omega` the arithmetic, `simp_all` the structural and
 boolean cases. `decide` is deliberately absent — the goal is open under a universally
 quantified `x`, so there is nothing to decide. -/
-syntax "plan_entails" : tactic
+syntax "graph_entails" : tactic
 
 macro_rules
-  | `(tactic| plan_entails) =>
+  | `(tactic| graph_entails) =>
     `(tactic| (
         intro x hx
         try simp only [Contract.pred] at hx ⊢
@@ -154,7 +154,7 @@ macro_rules
 /-- Feed an artifact to a step that demands less than is promised.
 
 Every edge in a plan goes through this. The proof obligation is synthesised by
-`plan_entails`, so an author writes `use d` and nothing else; if the entailment does not
+`graph_entails`, so an author writes `use d` and nothing else; if the entailment does not
 hold, the plan does not compile, and the error names the two contracts.
 
 `c₂` is implicit and is fixed by unification with the type the consuming step demands, so the
@@ -164,7 +164,7 @@ nothing to unify against, and the goal comes out stated against a metavariable, 
 that names neither `use` nor the fix. Steps take their handles as parameters; `plan` applies
 them. -/
 def use {α : Type} {c₁ : Contract α} (r : Ref α c₁) {c₂ : Contract α}
-    (_entails : ∀ x, c₁.pred x → c₂.pred x := by plan_entails) : Ref α c₂ :=
+    (_entails : ∀ x, c₁.pred x → c₂.pred x := by graph_entails) : Ref α c₂ :=
   ⟨r.source⟩
 
-end ChiefPlan
+end ProofGraph

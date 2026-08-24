@@ -424,14 +424,14 @@ PUT    /v1/config/workflow-approval-policy                 (extension, draft aut
 
 GET    /v1/projects                                        (extension, labels in use)
 
-POST   /v1/plans                                           (extension, checked plans)
-GET    /v1/plans                                           (extension, checked plans)
-GET    /v1/plans/toolchain                                 (extension, checked plans)
-GET    /v1/plans/{plan_id}                                 (extension, checked plans)
-PUT    /v1/plans/{plan_id}                                 (extension, checked plans)
-DELETE /v1/plans/{plan_id}                                 (extension, checked plans)
-POST   /v1/plans/{plan_id}/verification                    (extension, checked plans)
-POST   /v1/plans/{plan_id}/workflows                       (extension, compile to a draft)
+POST   /v1/proof-graphs                                    (extension, proof graphs)
+GET    /v1/proof-graphs                                    (extension, proof graphs)
+GET    /v1/proof-graphs/toolchain                          (extension, proof graphs)
+GET    /v1/proof-graphs/{graph_id}                         (extension, proof graphs)
+PUT    /v1/proof-graphs/{graph_id}                         (extension, proof graphs)
+DELETE /v1/proof-graphs/{graph_id}                         (extension, proof graphs)
+POST   /v1/proof-graphs/{graph_id}/verification            (extension, proof graphs)
+POST   /v1/proof-graphs/{graph_id}/workflows               (extension, compile to a draft)
 
 GET    /v1/audit                                           (extension)
 ```

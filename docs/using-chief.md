@@ -258,38 +258,42 @@ A workflow is single-use — approved once, executed once — so reuse lives in 
 plan with `{{ parameters }}` in it. Instantiating one produces a draft workflow, which still
 needs approving. You can also turn a workflow you already ran into a template.
 
-## Checked plans — catching a broken plan before it runs
+## Proof graphs — workflows that compile
 
 A workflow says what the steps are and what order they go in. It does not say what each step
-needs from the ones before it, so nothing notices when a plan asks a step to work from
+needs from the ones before it, so nothing notices when a step is asked to work from
 something the previous step was never going to produce. You find out halfway through.
 
-A **plan** closes that gap. It is written as a Lean file (see `lean/README.md`) where each step
-declares what it demands of its inputs and what it promises about its output, and the server
-checks that every promise actually satisfies the demand it feeds — for every possible value,
-not a sampled one. A plan that holds up compiles into an ordinary draft workflow and is
-approved and run like any other.
+A **proof graph** closes that gap: a workflow graph whose every edge is a theorem. It is
+written as a Lean file (see `lean/README.md`) where each step declares what it demands of its
+inputs and what it promises about its output, and the server checks that every promise
+actually satisfies the demand it feeds — for every possible value, not a sampled one. A graph
+that holds up compiles into an ordinary draft workflow and is approved and run like any other;
+it also stands on its own as the checked, reviewable definition of the process.
 
 ```
-create_plan → verify_plan → (read the diagnostics, revise_plan, verify again) → compile_plan
+create_proof_graph → verify_proof_graph → (read the diagnostics, revise, verify again)
+  → compile_proof_graph
 ```
 
 What that buys you, precisely: a step cannot be written that reads an artifact without naming
 the step producing it, so a missing dependency is impossible rather than merely discouraged; a
-condition that excludes nothing cannot be written down at all, so a plan cannot be made to pass
-by promising nothing; and anything downstream of a checkpoint depends on the approval it
-returns, so no ordering of the plan skips the gate.
+condition that excludes nothing cannot be written down at all, so a graph cannot be made to
+pass by promising nothing; and anything downstream of a checkpoint depends on the approval it
+returns, so no ordering of the graph skips the gate. Steps can carry their algorithms as
+checked pseudocode, artifacts carry schemas derived from their structures, and groups carry
+descriptions — all from the one Lean source.
 
 What it does not buy you, and does not pretend to: whether a step's work is any *good*. That
 stays exactly where it was — criteria a person or a harness answers for. The checking is about
-whether the plan hangs together, not whether it is a good idea.
+whether the graph hangs together, not whether it is a good idea.
 
 Worth the extra round-trip when steps have real preconditions that would be expensive to
 discover late. Not worth it for a short errand.
 
-Lean is optional. `GET /v1/plans/toolchain` says whether this instance can check anything; if
-it cannot, verification is refused outright rather than reported as a plan that failed, and
-everything already compiled goes on running untouched.
+Lean is optional. `GET /v1/proof-graphs/toolchain` says whether this instance can check
+anything; if it cannot, verification is refused outright rather than reported as a graph that
+failed, and everything already compiled goes on running untouched.
 
 ## Approval policy
 

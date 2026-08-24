@@ -28,7 +28,7 @@ from ..ids import now
 from ..models import (
     Amendment,
     ApprovalPolicy,
-    Plan,
+    ProofGraph,
     ReviewNote,
     RunState,
     WorkflowDefinition,
@@ -108,18 +108,18 @@ CREATE TABLE IF NOT EXISTS review_notes (
 );
 CREATE INDEX IF NOT EXISTS notes_by_workflow ON review_notes (workflow_id, seq);
 
--- A candidate plan, written so its logic can be checked before anyone approves it. The Lean
--- source and the verdict on it both live in the document; ``status`` and ``project`` are
--- lifted out because listing filters on them.
-CREATE TABLE IF NOT EXISTS plans (
-    plan_id    TEXT PRIMARY KEY,
+-- A proof graph: a candidate process whose logic is checked before anyone approves it. The
+-- Lean source and the verdict on it both live in the document; ``status`` and ``project``
+-- are lifted out because listing filters on them.
+CREATE TABLE IF NOT EXISTS proof_graphs (
+    graph_id   TEXT PRIMARY KEY,
     status     TEXT NOT NULL,
     project    TEXT,
     document   TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS plans_by_project ON plans (project);
+CREATE INDEX IF NOT EXISTS proof_graphs_by_project ON proof_graphs (project);
 
 CREATE TABLE IF NOT EXISTS config (
     key      TEXT PRIMARY KEY,
@@ -148,7 +148,32 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._conn:
+            self._adopt_plans_table(self._conn)
             self._conn.executescript(SCHEMA)
+
+    # The proof_graphs table was born under the name ``plans``. A database written before
+    # the rename is adopted on open — table, key column, and the key inside each stored
+    # document — so its graphs come up intact; the ids keep whatever prefix they were
+    # minted with.
+    @staticmethod
+    def _adopt_plans_table(conn: sqlite3.Connection) -> None:
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        if "plans" not in tables or "proof_graphs" in tables:
+            return
+        conn.execute("ALTER TABLE plans RENAME TO proof_graphs")
+        conn.execute("ALTER TABLE proof_graphs RENAME COLUMN plan_id TO graph_id")
+        conn.execute("DROP INDEX IF EXISTS plans_by_project")
+        for row in conn.execute("SELECT graph_id, document FROM proof_graphs").fetchall():
+            document = json.loads(row["document"])
+            if "plan_id" in document:
+                document["graph_id"] = document.pop("plan_id")
+                conn.execute(
+                    "UPDATE proof_graphs SET document = ? WHERE graph_id = ?",
+                    (json.dumps(document), row["graph_id"]),
+                )
 
     def close(self) -> None:
         self._conn.close()
@@ -592,45 +617,48 @@ class Store:
             rows = self._all("SELECT document FROM templates ORDER BY created_at, template_id", ())
         return [WorkflowTemplate.model_validate_json(r["document"]) for r in rows]
 
-    # --- plans --------------------------------------------------------------------------
+    # --- proof graphs -------------------------------------------------------------------
 
-    def create_plan(self, conn: sqlite3.Connection, plan: Plan) -> None:
+    def create_proof_graph(self, conn: sqlite3.Connection, graph: ProofGraph) -> None:
         conn.execute(
-            "INSERT INTO plans (plan_id, status, project, document, created_at, updated_at) "
+            "INSERT INTO proof_graphs "
+            "(graph_id, status, project, document, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
-                plan.plan_id,
-                plan.status,
-                plan.project,
-                plan.model_dump_json(),
-                plan.created_at,
-                plan.updated_at,
+                graph.graph_id,
+                graph.status,
+                graph.project,
+                graph.model_dump_json(),
+                graph.created_at,
+                graph.updated_at,
             ),
         )
 
-    def save_plan(self, conn: sqlite3.Connection, plan: Plan) -> None:
+    def save_proof_graph(self, conn: sqlite3.Connection, graph: ProofGraph) -> None:
         conn.execute(
-            "UPDATE plans SET status = ?, project = ?, document = ?, updated_at = ? "
-            "WHERE plan_id = ?",
+            "UPDATE proof_graphs SET status = ?, project = ?, document = ?, updated_at = ? "
+            "WHERE graph_id = ?",
             (
-                plan.status,
-                plan.project,
-                plan.model_dump_json(),
-                plan.updated_at,
-                plan.plan_id,
+                graph.status,
+                graph.project,
+                graph.model_dump_json(),
+                graph.updated_at,
+                graph.graph_id,
             ),
         )
 
-    def plan_exists(self, plan_id: str) -> bool:
-        return self._one("SELECT 1 FROM plans WHERE plan_id = ?", (plan_id,)) is not None
+    def proof_graph_exists(self, graph_id: str) -> bool:
+        return self._one("SELECT 1 FROM proof_graphs WHERE graph_id = ?", (graph_id,)) is not None
 
-    def get_plan(self, plan_id: str) -> Plan:
-        row = self._one("SELECT document FROM plans WHERE plan_id = ?", (plan_id,))
+    def get_proof_graph(self, graph_id: str) -> ProofGraph:
+        row = self._one("SELECT document FROM proof_graphs WHERE graph_id = ?", (graph_id,))
         if row is None:
-            raise NotFound(f"plan '{plan_id}' not found")
-        return Plan.model_validate_json(row["document"])
+            raise NotFound(f"proof graph '{graph_id}' not found")
+        return ProofGraph.model_validate_json(row["document"])
 
-    def list_plans(self, *, status: str | None = None, project: str | None = None) -> list[Plan]:
+    def list_proof_graphs(
+        self, *, status: str | None = None, project: str | None = None
+    ) -> list[ProofGraph]:
         where: list[str] = []
         params: list[Any] = []
         if status:
@@ -641,12 +669,13 @@ class Store:
             params.append(project)
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         rows = self._all(
-            f"SELECT document FROM plans{clause} ORDER BY created_at DESC, plan_id", tuple(params)
+            f"SELECT document FROM proof_graphs{clause} ORDER BY created_at DESC, graph_id",
+            tuple(params),
         )
-        return [Plan.model_validate_json(row["document"]) for row in rows]
+        return [ProofGraph.model_validate_json(row["document"]) for row in rows]
 
-    def delete_plan(self, conn: sqlite3.Connection, plan_id: str) -> None:
-        conn.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
+    def delete_proof_graph(self, conn: sqlite3.Connection, graph_id: str) -> None:
+        conn.execute("DELETE FROM proof_graphs WHERE graph_id = ?", (graph_id,))
 
     # --- audit --------------------------------------------------------------------------
 

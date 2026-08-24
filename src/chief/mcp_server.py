@@ -42,10 +42,10 @@ from .models import (
     CheckpointResolution,
     InstanceCreate,
     InstanceUpdate,
-    Plan,
-    PlanCompile,
-    PlanCreate,
-    PlanRevise,
+    ProofGraph,
+    ProofGraphCompile,
+    ProofGraphCreate,
+    ProofGraphRevise,
     RunCreate,
     RunState,
     StepInstance,
@@ -118,12 +118,12 @@ HARNESS_OPERATIONS = [
     "create_template",
     "create_template_from_workflow",
     "create_workflow_from_template",
-    "create_plan",
-    "list_plans",
-    "get_plan",
-    "revise_plan",
-    "verify_plan",
-    "compile_plan",
+    "create_proof_graph",
+    "list_proof_graphs",
+    "get_proof_graph",
+    "revise_proof_graph",
+    "verify_proof_graph",
+    "compile_proof_graph",
 ]
 
 
@@ -303,56 +303,59 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         """
         return service.create_template_from_workflow(workflow_id, body or TemplateFromWorkflow())
 
-    # --- plans ----------------------------------------------------------------------------
+    # --- proof graphs ----------------------------------------------------------------------------
     #
-    # `delete_plan` is deliberately absent, for the same reason `delete_workflow` is: erasing
+    # `delete_proof_graph` is deliberately absent, for the same reason `delete_workflow` is: erasing
     # a record is not something a session needs to do on its own initiative.
 
     @tool()
     @_guard
-    def create_plan(body: PlanCreate) -> Plan:
-        """Write a plan whose logic can be checked before anyone is asked to approve it.
+    def create_proof_graph(body: ProofGraphCreate) -> ProofGraph:
+        """Write a proof graph: a workflow graph whose every edge is a theorem, checked before
+        anyone is asked to approve anything.
 
-        `lean_source` is a whole Lean file written against the ChiefPlan prelude, where each
+        `lean_source` is a whole Lean file written against the ProofGraph prelude, where each
         step declares what it needs from the ones before it. Checking it establishes that
         every one of those demands is met by what feeds it. Nothing is checked yet — this
-        stores the plan as a draft; call `verify_plan` next.
+        stores the graph as a draft; call `verify_proof_graph` next.
 
         Reach for this when the work has real preconditions between steps that would be
         expensive to discover halfway through. A short errand does not need it.
         """
-        return service.create_plan(body)
+        return service.create_proof_graph(body)
 
     @tool()
     @_guard
-    def list_plans(status: str | None = None, project: str | None = None) -> list[Plan]:
-        """Plans on this server, newest first. Filter by status or project."""
-        return service.list_plans(status=status, project=project)
+    def list_proof_graphs(
+        status: str | None = None, project: str | None = None
+    ) -> list[ProofGraph]:
+        """Proof graphs on this server, newest first. Filter by status or project."""
+        return service.list_proof_graphs(status=status, project=project)
 
     @tool()
     @_guard
-    def get_plan(plan_id: str) -> Plan:
-        """Read a plan: its source, the verdict on it, and the graph that was checked."""
-        return service.get_plan(plan_id)
+    def get_proof_graph(graph_id: str) -> ProofGraph:
+        """Read a proof graph: its source, the verdict on it, and the extracted graph."""
+        return service.get_proof_graph(graph_id)
 
     @tool()
     @_guard
-    def revise_plan(plan_id: str, body: PlanRevise) -> Plan:
-        """Replace a plan's source, usually to fix what verification reported.
+    def revise_proof_graph(graph_id: str, body: ProofGraphRevise) -> ProofGraph:
+        """Replace a proof graph's source, usually to fix what verification reported.
 
-        The verdict does not survive the edit — the plan goes back to draft and must be
+        The verdict does not survive the edit — the graph goes back to draft and must be
         verified again. That is the point: a verdict belongs to the text that earned it.
         """
-        return service.revise_plan(plan_id, body)
+        return service.revise_proof_graph(graph_id, body)
 
     @tool()
     @_guard
-    def verify_plan(plan_id: str) -> Plan:
-        """Check the plan and record what came back.
+    def verify_proof_graph(graph_id: str) -> ProofGraph:
+        """Check the proof graph and record what came back.
 
-        A plan that does not hold up is not an error — it comes back with `status: failed`
+        A graph that does not hold up is not an error — it comes back with `status: failed`
         and `verification.diagnostics` saying what failed and where. Read those, fix the
-        source with `revise_plan`, and verify again. The diagnostics name the exact condition
+        source with `revise_proof_graph`, and verify again. The diagnostics name the exact condition
         that does not follow, with both sides in view, so they are worth reading closely
         rather than guessing from.
 
@@ -360,18 +363,20 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         strengthen the upstream promise or weaken the downstream demand — whichever is true
         of the work, not whichever makes the message go away.
         """
-        return service.verify_plan(plan_id)
+        return service.verify_proof_graph(graph_id)
 
     @tool()
     @_guard
-    def compile_plan(plan_id: str, body: PlanCompile | None = None) -> WorkflowDefinition:
-        """Turn a verified plan into a draft workflow.
+    def compile_proof_graph(
+        graph_id: str, body: ProofGraphCompile | None = None
+    ) -> WorkflowDefinition:
+        """Turn a verified proof graph into a draft workflow.
 
-        Refused unless the plan is verified. The result is a draft like any other: it still
-        needs `approve_workflow` and a run, and the conditions the plan proved travel with it
+        Refused unless the graph is verified. The result is a draft like any other: it still
+        needs `approve_workflow` and a run, and the conditions the graph proved travel with it
         as the steps' inputs and criteria.
         """
-        return service.compile_plan(plan_id, body or PlanCompile())
+        return service.compile_proof_graph(graph_id, body or ProofGraphCompile())
 
     # --- runs -----------------------------------------------------------------------------
 

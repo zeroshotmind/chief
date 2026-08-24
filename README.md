@@ -93,11 +93,13 @@ on the artifacts a run produced, a file viewer that renders markdown, maths, ima
 **projects** to file workflows under, **templates** for plans worth reusing, and an
 **approval policy** for the routine ones.
 
-For work whose steps have real preconditions, there are **checked plans**. A plan is written
-so each step declares what it needs from the ones before it, and the server proves — before
-anyone approves anything — that every one of those demands is met by what feeds it. It then
-compiles into an ordinary draft workflow. It says nothing about whether the work is any good;
-what it rules out is a plan that was never going to hold together.
+For work whose steps have real preconditions, there are **proof graphs** — workflows that
+compile. A proof graph is a workflow graph whose every edge is a theorem: each step declares
+what it needs from the ones before it, and the server proves — before anyone approves
+anything — that every one of those demands is met by what feeds it. It stands on its own as
+the checked definition of a process, and compiles into an ordinary draft workflow when you
+want one. It says nothing about whether the work is any good; what it rules out is a process
+that was never going to hold together.
 **→ [lean/README.md](lean/README.md)**, and Lean is optional — without it everything else is
 unchanged.
 
@@ -126,7 +128,7 @@ src/chief/
   mcp_server.py   MCP tools, mounted at /mcp on the same app
   lean/       checking a plan's logic, and compiling it into a workflow
   web/        the UI: static files, no build step
-lean/         the ChiefPlan Lean prelude a plan is written against
+lean/         the ProofGraph Lean prelude a proof graph is written against
 site/         the landing page, published to GitHub Pages
 ```
 

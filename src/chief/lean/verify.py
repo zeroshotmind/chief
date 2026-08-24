@@ -1,18 +1,18 @@
-"""Running Lean over a plan and reading the graph back out.
+"""Running Lean over a graph and reading the graph back out.
 
 The whole of verification is one subprocess. The file is copied to a temporary directory with
 ``#print axioms`` appended, ``lake env lean`` is run over it once, and both things we need
-come back on the same stream: the diagnostics, and — if it compiled — the JSON the plan's own
-``#eval emitPlan`` printed between markers.
+come back on the same stream: the diagnostics, and — if it compiled — the JSON the graph's own
+``#eval emitGraph`` printed between markers.
 
 Three layers of checking happen, and it is worth being precise about which is load-bearing:
 
 * **The kernel.** Every edge's entailment, and the non-vacuity of every contract. This is the
   part that means something, and it is not something this file implements — it is what Lean
   did before printing anything.
-* **The axiom check.** ``#print axioms`` on the plan reports every axiom the plan's term
-  transitively depends on. A `sorry` anywhere the plan reaches shows up as ``sorryAx``; a
-  `native_decide` shows up as ``Lean.ofReduceBool``. Both would let a plan claim a proof it
+* **The axiom check.** ``#print axioms`` on the graph reports every axiom the graph's term
+  transitively depends on. A `sorry` anywhere the graph reaches shows up as ``sorryAx``; a
+  `native_decide` shows up as ``Lean.ofReduceBool``. Both would let a graph claim a proof it
   does not have, and both are caught here rather than by grep, which is why this runs even
   though the source lint below also looks for them.
 * **The source lint.** Fast, and about the things the kernel has no opinion on: an
@@ -20,12 +20,12 @@ Three layers of checking happen, and it is worth being precise about which is lo
   the extracted graph differ from the verified one, which breaks the single-source property
   the whole design rests on.
 
-A plan that fails any of these is ``failed``, and the diagnostics are what a planner reads to
+A graph that fails any of these is ``failed``, and the diagnostics are what a planner reads to
 repair it. Lean's own error text is mostly left alone — "unsolved goals, hx : auc ≥ 70,
 ⊢ auc ≥ 75" names the exact entailment that does not hold, and no wording invented here would
 beat it. Three things are done to it, all for the same reason:
 
-* the consequences of an earlier failure are dropped, so a plan does not report a `sorry` its
+* the consequences of an earlier failure are dropped, so a graph does not report a `sorry` its
   author never wrote merely because Lean declined to run `#eval` in a file that failed;
 * the duplicate "could not synthesize default value" that accompanies every failed edge is
   dropped, because it names an internal parameter and doubles the error count;
@@ -47,14 +47,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..models import Diagnostic, PlanGraph, VerifyResult
-from ..models.plan import SOUND_AXIOMS
+from ..models import Diagnostic, ExtractedGraph, VerifyResult
+from ..models.proof_graph import SOUND_AXIOMS
 
-BEGIN_MARKER = "--CHIEF-PLAN-BEGIN--"
-END_MARKER = "--CHIEF-PLAN-END--"
+BEGIN_MARKER = "--PROOF-GRAPH-BEGIN--"
+END_MARKER = "--PROOF-GRAPH-END--"
 
-#: The name a plan file must bind its plan to, and the symbol the axiom check is run against.
-ENTRY_POINT = "plan"
+#: The name a graph file must bind its graph to, and the symbol the axiom check is run against.
+ENTRY_POINT = "graph"
 
 # The severity may carry a category — `error(lean.unknownIdentifier):` — and a parser that
 # only knows the bare form drops exactly the errors that name the offending identifier,
@@ -80,27 +80,27 @@ _BANNED = (
                                        "running compiled code rather than by the kernel"),
     (re.compile(r"\bsorry\b"), "contains a `sorry`"),
     (re.compile(r"^\s*set_option\s+\S*maxHeartbeats", re.MULTILINE),
-     "raises maxHeartbeats, which is not needed for the decidable fragment plans are "
+     "raises maxHeartbeats, which is not needed for the decidable fragment graphs are "
      "scoped to"),
 )
 
-#: A `Contract` bound with `def` is opaque to `plan_entails`, so every edge touching it fails
+#: A `Contract` bound with `def` is opaque to `graph_entails`, so every edge touching it fails
 #: with an error that looks like the contract is wrong when it is only unreducible. Common
 #: enough, and confusing enough, to be worth naming rather than leaving to the goal display.
 _DEF_CONTRACT = re.compile(r"^\s*def\s+(?P<name>\w+)\s*:\s*Contract\b", re.MULTILINE)
 
 
 class LeanUnavailable(RuntimeError):
-    """No Lean toolchain, or no ``ChiefPlan`` package to check against.
+    """No Lean toolchain, or no ``ProofGraph`` package to check against.
 
-    Raised rather than returned: a plan that could not be checked is not a plan that failed,
-    and collapsing the two would let a machine without ``lake`` quietly mark every plan
+    Raised rather than returned: a graph that could not be checked is not a graph that failed,
+    and collapsing the two would let a machine without ``lake`` quietly mark every graph
     unsound.
     """
 
 
 def package_dir() -> Path | None:
-    """Where the ``ChiefPlan`` Lean package lives.
+    """Where the ``ProofGraph`` Lean package lives.
 
     ``CHIEF_LEAN_DIR`` wins, so a deployment that ships the package elsewhere can say so.
     Otherwise it is found by walking up from this file, which is what makes a checkout work
@@ -121,15 +121,15 @@ def available() -> bool:
     """Whether this machine can verify anything at all.
 
     Checked before offering verification rather than discovered by a failing subprocess: Lean
-    is an optional dependency, and an instance without it should say plans cannot be verified
+    is an optional dependency, and an instance without it should say graphs cannot be verified
     here, not that they are unsound.
     """
     return shutil.which("lake") is not None and package_dir() is not None
 
 
 #: What `lake build` leaves behind. Its absence is the state a fresh checkout is in, and the
-#: state that used to make every plan look unsound.
-_BUILT = Path(".lake") / "build" / "lib" / "lean" / "ChiefPlan.olean"
+#: state that used to make every graph look unsound.
+_BUILT = Path(".lake") / "build" / "lib" / "lean" / "ProofGraph.olean"
 
 
 def is_built(package: Path) -> bool:
@@ -139,13 +139,13 @@ def is_built(package: Path) -> bool:
 def ensure_built(package: Path, *, timeout: float = 600.0) -> None:
     """Build the prelude if it has not been built here.
 
-    A checkout has no `.lake`, so without this the first plan anyone checks fails with Lean
-    reporting an unknown module prefix — which reads as *"this plan is broken"* when what is
+    A checkout has no `.lake`, so without this the first graph anyone checks fails with Lean
+    reporting an unknown module prefix — which reads as *"this graph is broken"* when what is
     actually true is *"nothing has been compiled yet"*. That is precisely the confusion the
     rest of this module exists to prevent, arriving through the back door.
 
     Built once and then skipped, so it costs a couple of seconds on a new machine and nothing
-    afterwards. A build that fails raises rather than returning a verdict: a plan that could
+    afterwards. A build that fails raises rather than returning a verdict: a graph that could
     not be checked has not been found unsound.
     """
     if is_built(package):
@@ -157,11 +157,11 @@ def ensure_built(package: Path, *, timeout: float = 600.0) -> None:
         )
     except subprocess.TimeoutExpired as exc:
         raise LeanUnavailable(
-            f"building the ChiefPlan prelude took longer than {timeout:g}s"
+            f"building the ProofGraph prelude took longer than {timeout:g}s"
         ) from exc
     if completed.returncode != 0 or not is_built(package):
         raise LeanUnavailable(
-            "the ChiefPlan prelude could not be built, so no plan can be checked here:\n"
+            "the ProofGraph prelude could not be built, so no graph can be checked here:\n"
             + ((completed.stderr or completed.stdout or "").strip()[-2000:] or "no output")
         )
 
@@ -201,7 +201,7 @@ def lint_source(source: str) -> list[Diagnostic]:
                 Diagnostic(
                     severity="error",
                     line=_line_of(source, match.start()),
-                    message=f"a plan may not be verified when it {what}",
+                    message=f"a graph may not be verified when it {what}",
                 )
             )
 
@@ -212,7 +212,7 @@ def lint_source(source: str) -> list[Diagnostic]:
                 line=_line_of(source, match.start()),
                 message=(
                     f"contract '{match.group('name')}' is bound with `def`; use `abbrev` so "
-                    "`plan_entails` can see the predicate underneath the name"
+                    "`graph_entails` can see the predicate underneath the name"
                 ),
             )
         )
@@ -221,21 +221,21 @@ def lint_source(source: str) -> list[Diagnostic]:
         out.append(
             Diagnostic(
                 severity="error",
-                message=f"a plan must define `{ENTRY_POINT} : PlanM Unit`",
+                message=f"a graph must define `{ENTRY_POINT} : GraphM Unit`",
             )
         )
-    if "emitPlan" not in stripped:
+    if "emitGraph" not in stripped:
         out.append(
             Diagnostic(
                 severity="error",
-                message=f'a plan must end with `#eval emitPlan "<title>" {ENTRY_POINT}`',
+                message=f'a graph must end with `#eval emitGraph "<title>" {ENTRY_POINT}`',
             )
         )
     return out
 
 
 def def_bound_contracts(source: str) -> set[str]:
-    """Contracts bound with `def`, which `plan_entails` cannot see through."""
+    """Contracts bound with `def`, which `graph_entails` cannot see through."""
     return {m.group("name") for m in _DEF_CONTRACT.finditer(_strip_noise(source))}
 
 
@@ -298,7 +298,7 @@ def parse_output(
 
     flush()
     for diagnostic in diagnostics:
-        diagnostic.message = diagnostic.message.replace(source_name, "plan")
+        diagnostic.message = diagnostic.message.replace(source_name, "graph")
     return diagnostics, ("\n".join(payload).strip() or None), axioms
 
 
@@ -307,11 +307,11 @@ _STEP_CALL = re.compile(r"\b(?:task|checkpoint)\s+\"(?P<id>[^\"]+)\"")
 
 
 def attribute_diagnostics(
-    source: str, graph: PlanGraph | None, diagnostics: list[Diagnostic]
+    source: str, graph: ExtractedGraph | None, diagnostics: list[Diagnostic]
 ) -> list[Diagnostic]:
     """Best-effort: point each diagnostic at the step it is about.
 
-    A failing entailment is reported where the edge is written, which is in the plan's ``do``
+    A failing entailment is reported where the edge is written, which is in the graph's ``do``
     block — a line naming the consuming *function*, not the step id. So the mapping goes
     through the source: each ``def`` is scanned for the ``task``/``checkpoint`` call inside it,
     which gives function name to step id, and a diagnostic is attributed to the definition it
@@ -322,7 +322,7 @@ def attribute_diagnostics(
     placed simply has no ``step_id``.
 
     The step ids come from the source rather than from ``graph``, because the case this exists
-    for is the case where there is no graph: a plan that failed to compile printed nothing, and
+    for is the case where there is no graph: a graph that failed to compile printed nothing, and
     that is precisely when a reader needs to know which node broke.
     """
     lines = source.splitlines()
@@ -372,7 +372,7 @@ def attribute_diagnostics(
 
 
 #: Lean refuses to run `#eval` in a file that already failed to elaborate, and says so in
-#: terms of the `sorry` axiom — because an errored term becomes one. On a plan whose author
+#: terms of the `sorry` axiom — because an errored term becomes one. On a graph whose author
 #: wrote no `sorry` that message is a consequence of the real error and reads as a second,
 #: mystifying one. Dropped when something else already failed; kept when it stands alone,
 #: where it is the only thing saying why no graph came back.
@@ -388,7 +388,7 @@ def _drop_cascades(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
 
 #: Lean reports a failed `use` twice at one position: once to say the default value for the
 #: entailment argument could not be synthesised, and once with the goal that was left. Only the
-#: second says anything — the first names an internal parameter a plan author never writes, and
+#: second says anything — the first names an internal parameter a graph author never writes, and
 #: it doubles the error count on every failing edge.
 _SYNTH = "could not synthesize default value for parameter"
 
@@ -445,7 +445,7 @@ def _collapse_opaque(message: str) -> tuple[str, set[str]]:
 def explain_opaque(diagnostics: list[Diagnostic], opaque: set[str]) -> list[Diagnostic]:
     """Make an entailment failure caused by a `def`-bound contract say so.
 
-    The severity stays `error` — the plan really did fail to check here — but the message now
+    The severity stays `error` — the graph really did fail to check here — but the message now
     names the cause rather than leaving a reader to infer a defect in a contract that may be
     entirely sound. Without this the only thing standing between the reader and editing a
     correct contract is the lint warning several screens up.
@@ -470,15 +470,15 @@ def explain_opaque(diagnostics: list[Diagnostic], opaque: set[str]) -> list[Diag
 
 
 def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
-    """Check one plan and, if it holds up, read its graph out.
+    """Check one graph and, if it holds up, read its graph out.
 
-    ``source`` is the whole of a plan file, exactly as its author wrote it. Nothing is
+    ``source`` is the whole of a graph file, exactly as its author wrote it. Nothing is
     rewritten except the appended ``#print axioms``, which goes at the end so every line
     number a diagnostic reports still points where the author is looking.
     """
     if not available():
         raise LeanUnavailable(
-            "verifying a plan needs the Lean toolchain (`lake` on PATH) and the ChiefPlan "
+            "verifying a graph needs the Lean toolchain (`lake` on PATH) and the ProofGraph "
             "package; neither is required to run a workflow that was already compiled"
         )
     package = package_dir()
@@ -488,10 +488,10 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
     if any(d.severity == "error" for d in lint):
         return VerifyResult(status="failed", diagnostics=lint, toolchain=toolchain_version())
 
-    # Before anything is checked, not after: an unbuilt prelude makes every plan look broken.
+    # Before anything is checked, not after: an unbuilt prelude makes every graph look broken.
     ensure_built(package)
 
-    with tempfile.TemporaryDirectory(prefix="chief-plan-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="chief-graph-") as tmp:
         path = Path(tmp) / "Plan.lean"
         body = source if source.endswith("\n") else source + "\n"
         path.write_text(f"{body}\n#print axioms {ENTRY_POINT}\n", encoding="utf-8")
@@ -531,27 +531,27 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
             Diagnostic(
                 severity="error",
                 message=(
-                    "the plan depends on "
+                    "the graph depends on "
                     + ", ".join(sorted(unsound))
                     + " — a proof here was not checked by the kernel"
                 ),
             )
         )
 
-    graph: PlanGraph | None = None
+    graph: ExtractedGraph | None = None
     if payload:
         try:
-            graph = PlanGraph.model_validate_json(payload)
+            graph = ExtractedGraph.model_validate_json(payload)
         except Exception as exc:
-            # Not a verdict on the plan. The JSON is printed by the prelude, never by the
-            # plan's author, so a shape this cannot read means the prelude and this server
+            # Not a verdict on the graph. The JSON is printed by the prelude, never by the
+            # graph's author, so a shape this cannot read means the prelude and this server
             # disagree about what a graph is — a checkout where one was updated and the other
             # was not, or a server still running the code it was started with. Reporting that
-            # as "the plan does not hold up" is the same lie as an unbuilt prelude was, and it
-            # is worse here because the plan is fine.
+            # as "the graph does not hold up" is the same lie as an unbuilt prelude was, and it
+            # is worse here because the graph is fine.
             raise LeanUnavailable(
-                "the ChiefPlan prelude printed a graph this server cannot read, so nothing "
-                "about the plan could be established. The prelude and the server are out of "
+                "the ProofGraph prelude printed a graph this server cannot read, so nothing "
+                "about the graph could be established. The prelude and the server are out of "
                 f"step — restarting the server usually settles it. Details: {exc}"
             ) from exc
 
@@ -564,7 +564,7 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
                 Diagnostic(
                     severity="error",
                     message=(
-                        "every contract in this plan is `any`, so verification established "
+                        "every contract in this graph is `any`, so verification established "
                         "nothing about it; give the artifacts that matter a real condition"
                     ),
                 )

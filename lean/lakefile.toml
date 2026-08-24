@@ -1,12 +1,12 @@
-name = "chief-plan"
+name = "proof-graph"
 version = "0.1.0"
-defaultTargets = ["ChiefPlan"]
+defaultTargets = ["ProofGraph"]
 
 # No dependencies, deliberately. Mathlib would bring `tauto`, `polyrith` and a richer
 # `simp` set, and it would also bring a multi-minute cold build and a version pin to keep
-# in step with the toolchain. Everything `plan_entails` needs — `omega`, `simp_all`,
+# in step with the toolchain. Everything `graph_entails` needs — `omega`, `simp_all`,
 # `decide`, `trivial` — is in Lean core, and a plan that needs more than those is a plan
 # whose contracts have drifted out of the decidable fragment this is scoped to.
 
 [[lean_lib]]
-name = "ChiefPlan"
+name = "ProofGraph"

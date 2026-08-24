@@ -30,7 +30,7 @@ that reads it — at plan time, in the consumer's own step. What travels here is
 what was already enforced, in the same way the drawn graph is a record of the checked one.
 -/
 
-namespace ChiefPlan
+namespace ProofGraph
 
 /-- One field of an artifact's schema: name, pretty-printed type, and — where the field's
 type is itself a structure whose schema was derived — that structure's fields, nested. -/
@@ -105,4 +105,4 @@ elab "artifact_schema " id:ident : command => do
   elabCommand (← `(instance $instName:ident : ArtifactSchema $id := ⟨$listStx⟩))
 
 end Schema
-end ChiefPlan
+end ProofGraph

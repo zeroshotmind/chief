@@ -1,4 +1,4 @@
-import ChiefPlan.Contract
+import ProofGraph.Contract
 
 /-!
 # The algorithm a step carries
@@ -26,7 +26,7 @@ legend. The algorithm's honesty boundary runs exactly there: everything between 
 calls is arithmetic a reader can audit, and everything behind one is the outside world.
 -/
 
-namespace ChiefPlan
+namespace ProofGraph
 
 /-- The shapes algorithm expressions are checked against. Deliberately small: what fits a
 benchmark or pipeline specification, not a general mathematics. -/
@@ -147,11 +147,11 @@ syntax "argmax " ident " ∈ " term ", " term : term
 syntax "filter " ident " ∈ " term ", " term : term
 macro_rules
   | `(Σ $x ∈ $s, $b) =>
-      `(ChiefPlan.Alg.sumOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
+      `(ProofGraph.Alg.sumOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
   | `(argmax $x ∈ $s, $b) =>
-      `(ChiefPlan.Alg.argmaxOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
+      `(ProofGraph.Alg.argmaxOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
   | `(filter $x ∈ $s, $b) =>
-      `(ChiefPlan.Alg.filterOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
+      `(ProofGraph.Alg.filterOver $(Lean.quote x.getId.toString) $s (fun $x => $b))
 
 namespace Alg
 
@@ -175,8 +175,8 @@ syntax "x!(" term ", " ident ")" : term
 syntax "x!(" term ")" : term
 macro_rules
   | `(x!($r, $f)) =>
-      `(ChiefPlan.Alg.field $r (fun a => a.$f) $(Lean.quote f.getId.toString))
-  | `(x!($r)) => `(ChiefPlan.Alg.whole $r)
+      `(ProofGraph.Alg.field $r (fun a => a.$f) $(Lean.quote f.getId.toString))
+  | `(x!($r)) => `(ProofGraph.Alg.whole $r)
 
 namespace Alg
 open Ty
@@ -295,7 +295,7 @@ structure AlgState where
 deriving Inhabited
 
 /-- The monad an algorithm is written in: state, and nothing else — the same austerity as
-`PlanM`, for the same reason. -/
+`GraphM`, for the same reason. -/
 abbrev AlgM := StateM AlgState
 
 private def emit (text : String) : AlgM Unit :=
@@ -377,4 +377,4 @@ def AlgM.record (a : AlgM Unit) : AlgRecord :=
   { lines := st.lines, externals := dedupPairs st.oracles, problems := st.problems }
 
 end Alg
-end ChiefPlan
+end ProofGraph

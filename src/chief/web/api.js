@@ -136,37 +136,40 @@ export const instantiateTemplate = (templateId, parameters, title) =>
 export const createTemplateFromWorkflow = (workflowId, body) =>
   post(`/workflows/${workflowId}/template`, body);
 
-/** Plans: a candidate whose logic can be checked before anyone approves it.
+/** Proof graphs: a workflow graph whose every edge is a theorem, checked before anyone
+    approves anything.
 
     Older than the feature and newer than the UI both happen, so every one of these is
-    allowed to 404 at the caller — `listPlans` is the one the shell asks for on load, and it
-    treats a 404 as "this Chief has no plans endpoint" rather than as an error worth stopping
-    for, exactly as templates do. */
-export const listPlans = () => request("/plans");
-export const getPlan = (planId) => request(`/plans/${planId}`);
+    allowed to 404 at the caller — `listProofGraphs` is the one the shell asks for on load,
+    and it treats a 404 as "this Chief has no proof-graphs endpoint" rather than as an error
+    worth stopping for, exactly as templates do. */
+export const listProofGraphs = () => request("/proof-graphs");
+export const getProofGraph = (graphId) => request(`/proof-graphs/${graphId}`);
 
-/** Whether this instance can check a plan at all. Asked before offering the button: an
-    instance without a Lean toolchain must say so, not report every plan as unsound. */
-export const planToolchain = () => request("/plans/toolchain");
+/** Whether this instance can check a graph at all. Asked before offering the button: an
+    instance without a Lean toolchain must say so, not report every graph as unsound. */
+export const proofGraphToolchain = () => request("/proof-graphs/toolchain");
 
-/** Run the check and store what came back. A plan that does not hold up is a 200 carrying
+/** Run the check and store what came back. A graph that does not hold up is a 200 carrying
     `status: "failed"` and the diagnostics — the check reaching a verdict is the request
     succeeding, so the caller reads the body rather than catching. */
-export const verifyPlan = (planId) => post(`/plans/${planId}/verification`, {});
+export const verifyProofGraph = (graphId) => post(`/proof-graphs/${graphId}/verification`, {});
 
 /** Replace the source. The server drops the verdict: it belonged to the text that earned it. */
-export const revisePlan = (planId, leanSource, reason) =>
-  request(`/plans/${planId}`, {
+export const reviseProofGraph = (graphId, leanSource, reason) =>
+  request(`/proof-graphs/${graphId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lean_source: leanSource, reason: reason || null }),
   });
 
-/** Lower a verified plan into a draft workflow. Refused unless it is verified by the
+/** Lower a verified graph into a draft workflow. Refused unless it is verified by the
     toolchain running now. */
-export const compilePlan = (planId, body) => post(`/plans/${planId}/workflows`, body || {});
+export const compileProofGraph = (graphId, body) =>
+  post(`/proof-graphs/${graphId}/workflows`, body || {});
 
-export const deletePlan = (planId) => request(`/plans/${planId}`, { method: "DELETE" });
+export const deleteProofGraph = (graphId) =>
+  request(`/proof-graphs/${graphId}`, { method: "DELETE" });
 
 /** The audit log for one workflow (REQ-20). How a decision comment is read back after the
     moment it was typed: the decision is an event, not a field on the workflow. */

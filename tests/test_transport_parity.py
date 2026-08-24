@@ -491,8 +491,8 @@ def open_mcp_session(client):
 def test_both_transports_spell_a_plan_graph_the_same_way(client):
     """REQ-4 at the level of a field name, which is where it is easiest to break.
 
-    ``PlanGraph`` names its version marker ``schema_`` and aliases it back to ``schema``,
-    because a bare ``schema`` would shadow a BaseModel attribute; ``PlanPort`` does the same
+    ``ExtractedGraph`` names its version marker ``schema_`` and aliases it back to ``schema``,
+    because a bare ``schema`` would shadow a BaseModel attribute; ``GraphPort`` does the same
     for an artifact's field schema. FastAPI serialises response models by alias and
     pydantic's own ``model_dump`` does not, so a transport that reached for the latter would
     emit ``schema_`` where REST emits ``schema`` — the same document spelled two ways
@@ -503,12 +503,12 @@ def test_both_transports_spell_a_plan_graph_the_same_way(client):
     call = open_mcp_session(client)
     source = (chief_lean.package_dir() / "Examples" / "Pipeline.lean").read_text(encoding="utf-8")
 
-    made = call("create_plan", {"body": {"title": "parity", "lean_source": source}}, 2)
-    checked = call("verify_plan", {"plan_id": made["plan_id"]}, 3)
+    made = call("create_proof_graph", {"body": {"title": "parity", "lean_source": source}}, 2)
+    checked = call("verify_proof_graph", {"graph_id": made["graph_id"]}, 3)
 
     assert checked["status"] == "verified", checked["verification"]["diagnostics"]
     over_mcp = checked["verification"]["graph"]
-    over_rest = client.get(f"/v1/plans/{made['plan_id']}").json()["verification"]["graph"]
+    over_rest = client.get(f"/v1/proof-graphs/{made['graph_id']}").json()["verification"]["graph"]
     assert sorted(over_mcp) == sorted(over_rest)
     assert "schema" in over_mcp
     assert over_mcp["nodes"] == over_rest["nodes"]

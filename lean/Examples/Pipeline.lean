@@ -1,7 +1,7 @@
-import ChiefPlan
+import ProofGraph
 
 /-!
-# A worked plan
+# A worked proof graph
 
 Refreshing a fraud model: harvest events, build a dataset, fit, have someone look at it,
 deploy. Five steps, and every arrow between them carries a condition the kernel checked.
@@ -24,7 +24,7 @@ Change `fitModel` to promise `auc ≥ 70` and the file stops compiling, pointing
 That is the whole feature in one edit.
 -/
 
-open ChiefPlan Alg
+open ProofGraph Alg
 
 /-! ## Artifacts -/
 
@@ -59,7 +59,7 @@ artifact_schema Deployment
 
 /-! ## Contracts
 
-Every one of these is an `abbrev`, not a `def`. `plan_entails` has to see through the name to
+Every one of these is an `abbrev`, not a `def`. `graph_entails` has to see through the name to
 the predicate underneath, and `abbrev` is what makes the definition reducible enough for it
 to do so. A `def` here produces entailment failures that look like the contract is wrong when
 it is only opaque.
@@ -92,12 +92,12 @@ abbrev shipped : Contract Deployment :=
 
 /-! ## Steps -/
 
-def harvest : PlanM (Ref RawEvents harvested) :=
+def harvest : GraphM (Ref RawEvents harvested) :=
   task "harvest" "Pull the last 90 days of transaction events into one place." harvested
     (criteria := ["event count recorded in the artifact",
                   "date range covers 90 days ending today"])
 
-def buildDataset (e : Ref RawEvents usable) : PlanM (Ref Dataset trainable) :=
+def buildDataset (e : Ref RawEvents usable) : GraphM (Ref Dataset trainable) :=
   task "build_dataset" "Join events to chargeback outcomes and write a labelled table."
     trainable
     (criteria := ["row count and label balance recorded",
@@ -106,8 +106,8 @@ def buildDataset (e : Ref RawEvents usable) : PlanM (Ref Dataset trainable) :=
 
 /-- `fit_model` also carries its algorithm — pseudocode rendered from a checked term, with
 the training routine and the scorer showing up as the external calls they are. See
-`ChiefPlan/Alg.lean` for what is and is not established by this. -/
-def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
+`ProofGraph/Alg.lean` for what is and is not established by this. -/
+def fitModel (d : Ref Dataset enoughToFit) : GraphM (Ref Model accurate) :=
   task "fit_model" "Train the gradient-boosted classifier and record held-out AUC." accurate
     (criteria := ["held-out AUC recorded", "training config saved beside the model"])
     (inputs := [input "dataset" d])
@@ -119,13 +119,13 @@ def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
       whenever (Term.ge auc (Term.param "τ")) do
         ret M)
 
-def review (m : Ref Model reviewable) : PlanM (Ref Approval granted) :=
+def review (m : Ref Model reviewable) : GraphM (Ref Approval granted) :=
   checkpoint "review" "Decide whether this model is fit to serve live traffic."
     (fields := ["decision", "concerns"])
     (inputs := [input "model" m])
 
 def deploy (m : Ref Model accurate) (a : Ref Approval granted) :
-    PlanM (Ref Deployment shipped) :=
+    GraphM (Ref Deployment shipped) :=
   task "deploy" "Roll the approved model out behind the existing scoring endpoint." shipped
     (criteria := ["endpoint returns scores from the new model",
                   "rollback path written down"])
@@ -133,7 +133,7 @@ def deploy (m : Ref Model accurate) (a : Ref Approval granted) :
 
 /-! ## The plan -/
 
-def plan : PlanM Unit := do
+def graph : GraphM Unit := do
   let raw ← harvest
   let ds ← buildDataset (use raw)
   let model ← fitModel (use ds)
@@ -141,4 +141,4 @@ def plan : PlanM Unit := do
   let _ ← deploy (use model) (use ok)
   pure ()
 
-#eval emitPlan "Fraud model refresh" plan
+#eval emitGraph "Fraud model refresh" graph

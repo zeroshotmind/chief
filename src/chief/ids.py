@@ -26,8 +26,8 @@ def template_id() -> str:
     return f"tpl_{_token()}"
 
 
-def plan_id() -> str:
-    return f"pln_{_token()}"
+def proof_graph_id() -> str:
+    return f"pg_{_token()}"
 
 
 def amendment_id() -> str:

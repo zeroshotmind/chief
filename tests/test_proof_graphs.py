@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from chief.lean import attribute_diagnostics, available, compile_plan, verify_source
+from chief.lean import attribute_diagnostics, available, compile_graph, verify_source
 from chief.lean.verify import (
     LeanUnavailable,
     ensure_built,
@@ -22,7 +22,7 @@ from chief.lean.verify import (
     package_dir,
     parse_output,
 )
-from chief.models import PlanGraph
+from chief.models import ExtractedGraph
 
 needs_lean = pytest.mark.skipif(not available(), reason="no Lean toolchain on this machine")
 
@@ -39,8 +39,8 @@ def errors(result) -> list[str]:
 
 # A whole plan in as few lines as a plan can be written, for the cases that need a file rather
 # than an edit of the worked example.
-MINIMAL = """import ChiefPlan
-open ChiefPlan
+MINIMAL = """import ProofGraph
+open ProofGraph
 
 structure Doc where
   words : Nat
@@ -53,18 +53,18 @@ abbrev {first} : Contract Doc :=
 abbrev {second} : Contract Doc :=
   {second_body}
 
-def writeIt : PlanM (Ref Doc {first}) :=
+def writeIt : GraphM (Ref Doc {first}) :=
   task "{write_id}" "Write the thing." {first}
 
-def reviseIt (d : Ref Doc {second}) : PlanM (Ref Doc {second}) :=
+def reviseIt (d : Ref Doc {second}) : GraphM (Ref Doc {second}) :=
   task "{revise_id}" "Revise the thing." {second} (inputs := [input "draft" d])
 
-def plan : PlanM Unit := do
+def graph : GraphM Unit := do
   let d ← writeIt
   let _ ← reviseIt (use d)
   pure ()
 
-#eval emitPlan "Minimal" plan
+#eval emitGraph "Minimal" graph
 """
 
 
@@ -153,7 +153,7 @@ def test_a_plan_whose_contracts_all_say_nothing_is_refused() -> None:
     result = verify_source(source)
 
     assert result.status == "failed"
-    assert any("every contract in this plan is `any`" in m for m in errors(result))
+    assert any("every contract in this graph is `any`" in m for m in errors(result))
     assert result.graph is not None
     assert result.graph.stats.vacuous
 
@@ -196,16 +196,16 @@ def test_lint_refuses_the_constructs_that_would_let_extraction_lie() -> None:
         ("example : True := by native_decide", "native_decide"),
         ("example : True := by sorry", "sorry"),
     ]:
-        found = lint_source(f"import ChiefPlan\ndef plan := 1\nemitPlan\n{snippet}\n")
+        found = lint_source(f"import ProofGraph\ndef graph := 1\nemitGraph\n{snippet}\n")
         assert any(expected in d.message for d in found if d.severity == "error"), snippet
 
 
 def test_lint_does_not_fire_on_words_inside_goals_and_comments() -> None:
     """A step whose goal mentions an axiom is a step, not a proof."""
     source = (
-        "import ChiefPlan\n"
-        "def plan := 1\n"
-        "emitPlan\n"
+        "import ProofGraph\n"
+        "def graph := 1\n"
+        "emitGraph\n"
         '-- we are sorry about the axiom here\n'
         'def goal := "say sorry to the reviewer and state the axiom"\n'
     )
@@ -215,7 +215,7 @@ def test_lint_does_not_fire_on_words_inside_goals_and_comments() -> None:
 
 def test_lint_names_a_def_bound_contract() -> None:
     """The most common way a correct plan fails to compile, called out by name."""
-    source = "import ChiefPlan\ndef plan := 1\nemitPlan\ndef trainable : Contract Dataset := x\n"
+    source = "import ProofGraph\ndef graph := 1\nemitGraph\ndef trainable : Contract Dataset := x\n"
 
     warnings = [d for d in lint_source(source) if d.severity == "warning"]
 
@@ -225,10 +225,10 @@ def test_lint_names_a_def_bound_contract() -> None:
 
 
 def test_lint_requires_a_plan_and_an_emit() -> None:
-    found = [d.message for d in lint_source("import ChiefPlan\n") if d.severity == "error"]
+    found = [d.message for d in lint_source("import ProofGraph\n") if d.severity == "error"]
 
-    assert any("must define `plan : PlanM Unit`" in message for message in found)
-    assert any("emitPlan" in message for message in found)
+    assert any("must define `graph : GraphM Unit`" in message for message in found)
+    assert any("emitGraph" in message for message in found)
 
 
 # --------------------------------------------------------------------------- output parsing
@@ -253,15 +253,15 @@ def test_parse_output_keeps_a_wrapped_message_in_one_piece() -> None:
 
 def test_parse_output_reads_the_payload_and_the_axioms() -> None:
     stream = (
-        "--CHIEF-PLAN-BEGIN--\n"
-        '{"schema":"chief.plan/v1"}\n'
-        "--CHIEF-PLAN-END--\n"
+        "--PROOF-GRAPH-BEGIN--\n"
+        '{"schema":"chief.proofgraph/v1"}\n'
+        "--PROOF-GRAPH-END--\n"
         "/tmp/Plan.lean:30:0: info: 'plan' depends on axioms: [propext, Quot.sound]\n"
     )
 
     diagnostics, payload, axioms = parse_output(stream, source_name="/tmp/Plan.lean")
 
-    assert payload == '{"schema":"chief.plan/v1"}'
+    assert payload == '{"schema":"chief.proofgraph/v1"}'
     assert axioms == ["propext", "Quot.sound"]
     assert diagnostics == []
 
@@ -269,9 +269,9 @@ def test_parse_output_reads_the_payload_and_the_axioms() -> None:
 # --------------------------------------------------------------------------- compilation
 
 
-def graph(**overrides) -> PlanGraph:
+def graph(**overrides) -> ExtractedGraph:
     base = {
-        "schema": "chief.plan/v1",
+        "schema": "chief.proofgraph/v1",
         "title": "Fraud model refresh",
         "nodes": [
             {
@@ -321,11 +321,11 @@ def graph(**overrides) -> PlanGraph:
         },
     }
     base.update(overrides)
-    return PlanGraph.model_validate(base)
+    return ExtractedGraph.model_validate(base)
 
 
 def test_compile_turns_data_flow_into_dependencies_and_inputs() -> None:
-    workflow = compile_plan(graph())
+    workflow = compile_graph(graph())
 
     review = next(step for step in workflow.steps if step.id == "review")
     assert review.depends_on == ["fit"]
@@ -340,7 +340,7 @@ def test_compile_turns_data_flow_into_dependencies_and_inputs() -> None:
 
 def test_compile_restates_a_promise_as_a_criterion() -> None:
     """Proven at plan time for all values; confirmed at run time for the one produced."""
-    workflow = compile_plan(graph())
+    workflow = compile_graph(graph())
 
     fit = next(step for step in workflow.steps if step.id == "fit")
     texts = [criterion.text for criterion in fit.criteria]
@@ -350,7 +350,7 @@ def test_compile_restates_a_promise_as_a_criterion() -> None:
 
 def test_compile_leaves_criteria_off_a_checkpoint() -> None:
     """A person's decision is not a condition a harness answers for."""
-    workflow = compile_plan(graph())
+    workflow = compile_graph(graph())
 
     review = next(step for step in workflow.steps if step.id == "review")
     assert review.criteria == []
@@ -358,13 +358,13 @@ def test_compile_leaves_criteria_off_a_checkpoint() -> None:
 
 
 def test_compile_takes_its_title_from_the_plan_unless_told_otherwise() -> None:
-    assert compile_plan(graph()).title == "Fraud model refresh"
-    assert compile_plan(graph(), title="Something else").title == "Something else"
+    assert compile_graph(graph()).title == "Fraud model refresh"
+    assert compile_graph(graph(), title="Something else").title == "Something else"
 
 
 def test_a_compiled_plan_is_accepted_by_the_ordinary_workflow_rules(api) -> None:
     """Nothing downstream can tell it from a hand-written plan, which is the point."""
-    workflow = compile_plan(graph(), project="chief")
+    workflow = compile_graph(graph(), project="chief")
 
     response = api.create_workflow(
         [step.model_dump(exclude_none=True) for step in workflow.steps],
@@ -381,7 +381,7 @@ def test_the_worked_example_compiles_into_a_workflow_chief_accepts(api) -> None:
     result = verify_source(example_source())
     assert result.graph is not None
 
-    workflow = compile_plan(result.graph, project="chief", generated_by="lean")
+    workflow = compile_graph(result.graph, project="chief", generated_by="lean")
     response = api.create_workflow(
         [step.model_dump(exclude_none=True) for step in workflow.steps], title=workflow.title
     )
@@ -399,13 +399,13 @@ def test_the_worked_example_compiles_into_a_workflow_chief_accepts(api) -> None:
 def test_a_failure_is_placed_even_when_no_graph_came_back() -> None:
     """The case attribution exists for: a plan that did not compile printed nothing."""
     source = (
-        "import ChiefPlan\n"
-        "open ChiefPlan\n"
+        "import ProofGraph\n"
+        "open ProofGraph\n"
         "\n"
-        "def fitModel (d : Ref Dataset trainable) : PlanM (Ref Model accurate) :=\n"
+        "def fitModel (d : Ref Dataset trainable) : GraphM (Ref Model accurate) :=\n"
         '  task "fit_model" "Fit it." accurate\n'
         "\n"
-        "def plan : PlanM Unit := do\n"
+        "def graph : GraphM Unit := do\n"
         "  let m ← fitModel (use ds)\n"
         "  pure ()\n"
     )
@@ -506,7 +506,7 @@ def test_a_graph_this_server_cannot_read_is_not_a_plan_that_failed(monkeypatch) 
         def model_validate_json(_payload: str):
             raise ValueError("nodes.0.group: extra inputs are not permitted")
 
-    monkeypatch.setattr(verify, "PlanGraph", Refuses)
+    monkeypatch.setattr(verify, "ExtractedGraph", Refuses)
 
     with pytest.raises(LeanUnavailable) as raised:
         verify_source(example_source())
@@ -530,7 +530,7 @@ ALG_STEP = """
 
 
 def with_algorithm(body: str = ALG_STEP) -> str:
-    source = minimal().replace("open ChiefPlan", "open ChiefPlan Alg")
+    source = minimal().replace("open ProofGraph", "open ProofGraph Alg")
     return source.replace(
         'task "revise" "Revise the thing." weak (inputs := [input "draft" d])',
         'task "revise" "Revise the thing." weak (inputs := [input "draft" d])' + body,
@@ -596,8 +596,8 @@ def test_a_group_description_travels_and_a_dangling_one_is_refused() -> None:
         'task "revise" "Revise the thing." weak (inputs := [input "draft" d]) '
         '(group := "Polish")',
     ).replace(
-        "def plan : PlanM Unit := do",
-        "def plan : PlanM Unit := do\n"
+        "def graph : GraphM Unit := do",
+        "def graph : GraphM Unit := do\n"
         '  describeGroup "Polish" "Everything after the first draft."',
     )
 
@@ -613,8 +613,8 @@ def test_a_group_description_travels_and_a_dangling_one_is_refused() -> None:
     # rather than displayed.
     dangling = verify_source(
         minimal().replace(
-            "def plan : PlanM Unit := do",
-            "def plan : PlanM Unit := do\n  describeGroup \"Ghost\" \"A part nobody is in.\"",
+            "def graph : GraphM Unit := do",
+            "def graph : GraphM Unit := do\n  describeGroup \"Ghost\" \"A part nobody is in.\"",
         )
     )
     assert dangling.status == "failed"
@@ -648,11 +648,11 @@ def test_a_derived_schema_travels_on_both_ends_of_an_edge() -> None:
 
 
 def test_compile_restates_a_schema_as_a_validation_criterion() -> None:
-    from chief.models import PlanField
+    from chief.models import SchemaField
 
     node = graph().nodes[0]
-    node.produces.schema_ = [PlanField(name="rows", type="Nat")]
-    compiled = compile_plan(graph(nodes=[node]))
+    node.produces.schema_ = [SchemaField(name="rows", type="Nat")]
+    compiled = compile_graph(graph(nodes=[node]))
 
     step = compiled.steps[0]
     texts = [c.text for c in step.criteria]

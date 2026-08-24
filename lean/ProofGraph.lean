@@ -1,39 +1,40 @@
-import ChiefPlan.Contract
-import ChiefPlan.Alg
-import ChiefPlan.Schema
-import ChiefPlan.Graph
-import ChiefPlan.Emit
+import ProofGraph.Contract
+import ProofGraph.Alg
+import ProofGraph.Schema
+import ProofGraph.Graph
+import ProofGraph.Emit
 
 /-!
-# ChiefPlan
+# ProofGraph
 
-The vocabulary a Chief plan is written against. Every plan starts:
+The vocabulary a proof graph is written against — a workflow graph whose every edge is a
+theorem. Every proof-graph file starts:
 
 ```lean
-import ChiefPlan
-open ChiefPlan
+import ProofGraph
+open ProofGraph
 ```
 
-Both lines. Everything here lives in the `ChiefPlan` namespace, so an import on its own leaves
+Both lines. Everything here lives in the `ProofGraph` namespace, so an import on its own leaves
 every name below unresolved.
 
-A plan is an ordinary Lean file. Artifact types are `structure`s, conditions on them are
-`Contract`s, steps are functions returning `PlanM (Ref …)`, and the plan is a `do` block
+A proof graph is an ordinary Lean file. Artifact types are `structure`s, conditions on them are
+`Contract`s, steps are functions returning `GraphM (Ref …)`, and the graph is a `do` block
 composing them. If it compiles, every step's demands are met by what feeds it — proven for all
-values, not sampled. If it runs, the graph it describes can be read off it and handed to Chief.
+values, not sampled. If it runs, the graph can be read off it and handed to Chief.
 
 ## The shape a step must have
 
 This is the one rule that is not obvious from the vocabulary, and the one whose failure is
 hardest to read. **Write each step as a `def` whose parameters are the handles it consumes, and
-put `use` at the call site in `plan` — never inside the step's own `inputs` list.**
+put `use` at the call site in `graph` — never inside the step's own `inputs` list.**
 
 ```lean
 -- Right: the parameter type is what fixes the demand.
-def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
+def fitModel (d : Ref Dataset enoughToFit) : GraphM (Ref Model accurate) :=
   task "fit_model" "Train the classifier." accurate (inputs := [input "dataset" d])
 
-def plan : PlanM Unit := do
+def graph : GraphM Unit := do
   let ds ← buildDataset
   let _ ← fitModel (use ds)     -- `use` here, where the demand is known
   pure ()
@@ -51,13 +52,13 @@ metavariable and cannot be discharged. The error you get names neither `use` nor
 shows an unreduced `match` on a metavariable — so it is worth getting this right from the
 start.
 
-`plan` must be called exactly that, must have type `PlanM Unit`, and therefore ends with
+`graph` must be called exactly that, must have type `GraphM Unit`, and therefore ends with
 `pure ()`: every step returns a handle, so the `do` block's last line would otherwise give it
 the wrong type.
 
 ## Everything you get
 
-**Artifacts and conditions** (`ChiefPlan.Contract`)
+**Artifacts and conditions** (`ProofGraph.Contract`)
 
 * `ArtifactType α` — a class carrying the name your artifact type is known by outside Lean.
   One instance per structure: `instance : ArtifactType Dataset := ⟨"Dataset"⟩`.
@@ -78,11 +79,11 @@ the wrong type.
   producer fails every consumer that reads it, at plan time.
 * `use r` — feed a handle to a step demanding less than was promised. Every edge goes through
   it; the proof is found for you.
-* `plan_entails` — the tactic that finds it. Read its docstring for what it covers.
+* `graph_entails` — the tactic that finds it. Read its docstring for what it covers.
 
-**Steps and the graph** (`ChiefPlan.Graph`)
+**Steps and the graph** (`ProofGraph.Graph`)
 
-* `PlanM` — the monad a plan is written in.
+* `GraphM` — the monad a proof graph is written in.
 * `task id goal out (harness := "claude") (criteria := []) (inputs := []) (produces := "out")`
   — record a step and return a handle to what it produces. `out` is the contract this step
   *promises*; `produces` names the output port, and is worth setting to something meaningful
@@ -94,7 +95,7 @@ the wrong type.
   and a group may hold steps of its own as well as sub-groups. Nothing checks it and nothing
   derives from it — naming a phase says nothing about what any step demands.
 * `describeGroup path description` — say what a group is for, in a line, shown when the
-  group is inspected. Optional, like the grouping; call it anywhere in `plan`'s `do` block.
+  group is inspected. Optional, like the grouping; call it anywhere in `graph`'s `do` block.
   Describing a group no step belongs to is a problem at extraction — a description of
   nothing is stale text, and it is refused rather than displayed.
 * `checkpoint id goal (fields := []) (inputs := [])` — record a point where a person decides,
@@ -104,7 +105,7 @@ the wrong type.
   cleared. A step taking `Ref Approval granted` cannot be written without it, which is what
   makes a gate structural rather than merely an ordering.
 
-**Step algorithms** (`ChiefPlan.Alg`) — optional, and needing `open ChiefPlan Alg`
+**Step algorithms** (`ProofGraph.Alg`) — optional, and needing `open ProofGraph Alg`
 
 A task may carry its algorithm: numbered pseudocode rendered from a term Lean checked.
 What is checked is scope and shape — every variable is a field of an artifact the step
@@ -115,7 +116,7 @@ routines) are named oracle terms, collected into a legend, so a reader sees exac
 the outside world enters.
 
 ```lean
-def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
+def fitModel (d : Ref Dataset enoughToFit) : GraphM (Ref Model accurate) :=
   task "fit_model" "Train the classifier." accurate
     (inputs := [input "dataset" d])
     (algorithm := some do
@@ -142,15 +143,15 @@ def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
   `"db"`, `"algo"`), then the call's name, then arguments. Annotate the result shape
   (`: Term Ty.text`) whenever it feeds something polymorphic — when in doubt, annotate.
 
-**Extraction** (`ChiefPlan.Emit`)
+**Extraction** (`ProofGraph.Emit`)
 
-* `emitPlan (title : String) (plan : PlanM Unit) : IO Unit` — print the graph as JSON. Every
-  plan file ends with `#eval emitPlan "…" plan`.
-* `problems` and `stats` are computed here, when the plan is *run*, not by the kernel: a
+* `emitGraph (title : String) (graph : GraphM Unit) : IO Unit` — print the graph as JSON.
+  Every proof-graph file ends with `#eval emitGraph "…" graph`.
+* `problems` and `stats` are computed here, when the graph is *run*, not by the kernel: a
   repeated step id or a handle naming a step that was never recorded compiles perfectly and
   shows up only in the extracted JSON.
 
-## Checking a plan
+## Checking a proof graph
 
 From the repository's `lean/` directory, with an absolute path to your file:
 
@@ -158,8 +159,8 @@ From the repository's `lean/` directory, with an absolute path to your file:
 lake env lean /path/to/Plan.lean
 ```
 
-Run it from anywhere else and Lean cannot find `ChiefPlan`, reporting it as an unknown module
-prefix — which reads like the plan's import is wrong when only the working directory is.
+Run it from anywhere else and Lean cannot find `ProofGraph`, reporting it as an unknown module
+prefix — which reads like the file's import is wrong when only the working directory is.
 
-`Examples/Pipeline.lean` is a complete worked plan; start there.
+`Examples/Pipeline.lean` is a complete worked proof graph; start there.
 -/

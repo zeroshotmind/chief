@@ -307,7 +307,7 @@ class WorkflowDefinition(BaseModel):
     # Set only when this workflow was instantiated from a template (extension).
     from_template: TemplateOrigin | None = None
     # Set only when this workflow was compiled from a checked plan (extension).
-    from_plan: PlanOrigin | None = None
+    from_graph: GraphOrigin | None = None
     # When the plan was first submitted and when it was last written. These are facts about
     # the record rather than parts of the plan, so they are kept in the store's own columns
     # and filled in on the way out — not carried in the stored document, where a stale copy
@@ -335,7 +335,7 @@ class WorkflowDefinition(BaseModel):
         return {s.id: s for s in self.steps}
 
 
-class PlanOrigin(BaseModel):
+class GraphOrigin(BaseModel):
     """Where a workflow came from, when it was compiled from a checked plan.
 
     Lineage rather than a live link, for the same reason as ``TemplateOrigin``: the plan may be
@@ -351,7 +351,7 @@ class PlanOrigin(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plan_id: str
+    graph_id: str
     #: What the plan's own statistics said at the moment it was compiled — how many contracts
     #: it carried and how many of them constrained anything. Copied rather than looked up so
     #: that a workflow can be read without the plan, and so a later revision of the plan cannot

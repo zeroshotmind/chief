@@ -1,4 +1,4 @@
-import ChiefPlan.Graph
+import ProofGraph.Graph
 
 /-!
 # Extraction
@@ -22,7 +22,7 @@ compiler frontend into every plan check for one escaper. Non-ASCII passes throug
 which is valid JSON; only the characters that must be escaped are.
 -/
 
-namespace ChiefPlan
+namespace ProofGraph
 namespace Json
 
 private def hexDigit (n : Nat) : Char :=
@@ -149,9 +149,9 @@ def stats (nodes : List Node) : String :=
        ("contracts_any", num (ports.filter (!·.refined)).length),
        ("algorithms", num (nodes.filter (·.algorithm.isSome)).length)]
 
-def planJson (title : String) (st : PlanState) : String :=
+def graphJson (title : String) (st : GraphState) : String :=
   let nodes := st.nodes
-  obj [("schema", str "chief.plan/v1"),
+  obj [("schema", str "chief.proofgraph/v1"),
        ("title", str title),
        ("nodes", arr (nodes.map Node.toJson)),
        ("groups", arr (st.groups.map fun (path, description) =>
@@ -161,13 +161,13 @@ def planJson (title : String) (st : PlanState) : String :=
 
 /-- The markers the verifier scans for. Lean writes warnings and hints to the same stream,
 so the payload has to be delimited rather than assumed to be the whole of stdout. -/
-def beginMarker : String := "--CHIEF-PLAN-BEGIN--"
-def endMarker : String := "--CHIEF-PLAN-END--"
+def beginMarker : String := "--PROOF-GRAPH-BEGIN--"
+def endMarker : String := "--PROOF-GRAPH-END--"
 
-/-- Print a plan's graph. Every plan file ends with `#eval emitPlan "…" plan`. -/
-def emitPlan (title : String) (p : PlanM Unit) : IO Unit := do
+/-- Print a plan's graph. Every proof-graph file ends with `#eval emitGraph "…" graph`. -/
+def emitGraph (title : String) (p : GraphM Unit) : IO Unit := do
   IO.println beginMarker
-  IO.println (planJson title p.final)
+  IO.println (graphJson title p.final)
   IO.println endMarker
 
-end ChiefPlan
+end ProofGraph

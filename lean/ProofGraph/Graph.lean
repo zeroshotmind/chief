@@ -1,12 +1,12 @@
-import ChiefPlan.Contract
-import ChiefPlan.Alg
-import ChiefPlan.Schema
+import ProofGraph.Contract
+import ProofGraph.Alg
+import ProofGraph.Schema
 
 /-!
 # The plan as a graph
 
 `Contract.lean` makes edges checkable. This file makes them *recoverable*: a plan is written
-as a `do` block in `PlanM`, and running that block records the nodes and edges it built.
+as a `do` block in `GraphM`, and running that block records the nodes and edges it built.
 
 The single-source property matters more than it looks. There is no second file describing the
 graph, no annotation to keep in step with the composition, and so nothing to diff: the thing
@@ -24,7 +24,7 @@ body as a function of the instance parameter and registers construct-plus-body o
 a real design in its own right and is not attempted here.
 -/
 
-namespace ChiefPlan
+namespace ProofGraph
 
 /-- One artifact crossing one edge, flattened for extraction.
 
@@ -66,7 +66,7 @@ structure Node where
 deriving Repr, Inhabited
 
 /-- What a plan accumulates as it is run. -/
-structure PlanState where
+structure GraphState where
   nodes : List Node := []
   /-- One line per described group: path, then what that part of the work is for. -/
   groups : List (String × String) := []
@@ -76,7 +76,7 @@ deriving Inhabited
 
 No `IO`, no failure, no nondeterminism — a plan is a description being assembled, and the
 narrower this is the less a plan can do besides describe itself. -/
-abbrev PlanM := StateM PlanState
+abbrev GraphM := StateM GraphState
 
 /-- Name an artifact being fed to a step.
 
@@ -94,7 +94,7 @@ def input {α : Type} [ArtifactType α] [ArtifactSchema α] {c : Contract α}
 /-- Record a step and return a handle to what it produces.
 
 `out` is the contract the step *promises*. It is an explicit argument rather than an inferred
-one because it appears in the result type — `PlanM (Ref β out)` — so writing it is how the
+one because it appears in the result type — `GraphM (Ref β out)` — so writing it is how the
 author states the promise, and every later consumer is checked against it. -/
 def task {β : Type} [ArtifactType β] [ArtifactSchema β] (id : String) (goal : String)
     (out : Contract β)
@@ -103,7 +103,7 @@ def task {β : Type} [ArtifactType β] [ArtifactSchema β] (id : String) (goal :
     (inputs : List Port := [])
     (produces : String := "out")
     (group : String := "")
-    (algorithm : Option (Alg.AlgM Unit) := none) : PlanM (Ref β out) := do
+    (algorithm : Option (Alg.AlgM Unit) := none) : GraphM (Ref β out) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
         id, kind := "task", goal, harness, group, criteria, fields := [], inputs,
@@ -142,7 +142,7 @@ design avoids. What is checked is that everything downstream of the decision dep
 def checkpoint (id : String) (goal : String)
     (fields : List String := [])
     (inputs : List Port := [])
-    (group : String := "") : PlanM (Ref Approval granted) := do
+    (group : String := "") : GraphM (Ref Approval granted) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
         id, kind := "checkpoint", goal, harness := "human", group, criteria := [], fields,
@@ -164,13 +164,13 @@ step belongs to is a problem at extraction, since a description of nothing is ex
 kind of stale text this design refuses to display. Nesting works by path —
 `describeGroup "Encoder" "…"` describes the box that `group := "Encoder/Training"` steps
 sit inside. -/
-def describeGroup (path : String) (description : String) : PlanM Unit :=
+def describeGroup (path : String) (description : String) : GraphM Unit :=
   modify fun s => { s with groups := s.groups ++ [(path, description)] }
 
 /-- Run a plan and hand back the nodes it recorded, in the order they were written. -/
-def PlanM.nodes (p : PlanM Unit) : List Node := (p.run {}).2.nodes
+def GraphM.nodes (p : GraphM Unit) : List Node := (p.run {}).2.nodes
 
 /-- Run a plan and hand back everything it recorded. -/
-def PlanM.final (p : PlanM Unit) : PlanState := (p.run {}).2
+def GraphM.final (p : GraphM Unit) : GraphState := (p.run {}).2
 
-end ChiefPlan
+end ProofGraph
