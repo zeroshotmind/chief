@@ -241,6 +241,33 @@ def compile_proof_graph(
     return service.compile_proof_graph(graph_id, body)
 
 
+# Review notes on a proof graph: the same conversation as notes on a workflow draft, and
+# the same one-way channel — a person writes and closes them here, a harness reads them off
+# the document `get_proof_graph` returns and answers by revising the source.
+@router.post(
+    "/proof-graphs/{graph_id}/notes",
+    response_model=ReviewNote,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_graph_note(graph_id: str, body: ReviewNoteCreate, service: Service) -> ReviewNote:
+    """Leave a note on a step, or on the graph as a whole when ``step_id`` is omitted."""
+    return service.add_graph_note(graph_id, body)
+
+
+@router.get("/proof-graphs/{graph_id}/notes", response_model=list[ReviewNote])
+def list_graph_notes(
+    graph_id: str, service: Service, resolved: bool | None = None
+) -> list[ReviewNote]:
+    return service.list_graph_notes(graph_id, resolved)
+
+
+@router.patch("/proof-graphs/{graph_id}/notes/{note_id}", response_model=ReviewNote)
+def decide_graph_note(
+    graph_id: str, note_id: str, body: ReviewNoteDecision, service: Service
+) -> ReviewNote:
+    return service.decide_graph_note(graph_id, note_id, body)
+
+
 @router.delete("/proof-graphs/{graph_id}")
 def delete_proof_graph(graph_id: str, service: Service) -> dict[str, Any]:
     return service.delete_proof_graph(graph_id)

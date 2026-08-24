@@ -171,6 +171,18 @@ export const compileProofGraph = (graphId, body) =>
 export const deleteProofGraph = (graphId) =>
   request(`/proof-graphs/${graphId}`, { method: "DELETE" });
 
+/** Review notes on a proof graph: the same one-way channel as notes on a workflow draft.
+    A person writes and closes them here; a harness reads them off `getProofGraph` and
+    answers by revising the source. */
+export const listGraphNotes = (graphId) => request(`/proof-graphs/${graphId}/notes`);
+export const addGraphNote = (graphId, body) => post(`/proof-graphs/${graphId}/notes`, body);
+export const decideGraphNote = (graphId, noteId, resolved) =>
+  request(`/proof-graphs/${graphId}/notes/${noteId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolved, resolved_by: "human" }),
+  });
+
 /** The audit log for one workflow (REQ-20). How a decision comment is read back after the
     moment it was typed: the decision is an event, not a field on the workflow. */
 export const getWorkflowAudit = (workflowId) => request(`/audit?workflow_id=${workflowId}`);

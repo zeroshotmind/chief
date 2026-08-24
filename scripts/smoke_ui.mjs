@@ -272,6 +272,9 @@ const PLAN_GRAPH = {
         contract: "auc ≥ 80", refined: true,
         schema: [{ name: "auc", type: "Nat", fields: [] }],
       },
+      // Fixed before anything runs: shown as an artifact card beside the contracted inputs.
+      fixed: [{ label: "warehouse", ref: "configs/events-warehouse.yaml",
+                description: "warehouse config" }],
       // The step's algorithm: rendered lines with indentation, and the external calls the
       // term reached for — pseudocode a reviewer reads, never something presented as proven.
       algorithm: {
@@ -293,6 +296,23 @@ const PLAN_GRAPH = {
   problems: [],
   stats: { nodes: 3, edges: 1, contracts_total: 3, contracts_refined: 3, contracts_any: 0 },
 };
+// One open review note on the verified graph's fit_model node, and one on the graph as a
+// whole — the same conversation as notes on a workflow draft, on the graph's own routes.
+const GRAPH_NOTES = [
+  {
+    note_id: "note_g1", workflow_id: "pg_ok", step_id: "fit_model",
+    step_goal: "Fit the classifier.", body: "hold out a validation year, not a random split",
+    author: "human", created_at: "2026-08-24T09:30:00.000Z",
+    resolved: false, resolved_at: null, resolved_by: null, via: null, orphaned: false,
+  },
+  {
+    note_id: "note_g2", workflow_id: "pg_ok", step_id: null,
+    step_goal: null, body: "the whole graph assumes one language of events",
+    author: "human", created_at: "2026-08-24T09:31:00.000Z",
+    resolved: false, resolved_at: null, resolved_by: null, via: null, orphaned: false,
+  },
+];
+
 const PLANS = [
   {
     graph_id: "pg_ok", title: "Fraud model refresh", lean_source: "import ProofGraph\n-- …\n",
@@ -374,6 +394,7 @@ globalThis.fetch = async (url, options) => {
   }
   const body =
     url.endsWith("/proof-graphs/toolchain") ? TOOLCHAIN
+    : url.includes("/proof-graphs/") && url.includes("/notes") ? GRAPH_NOTES
     : url.endsWith("/proof-graphs") ? PLANS
     : /\/proof-graphs\/[^/]+$/.test(url) ? PLANS[0]
     : url.includes("/proof-graphs/") ? { ...PLANS[0], compiled_to: ["wf_ok"] }
@@ -1243,6 +1264,18 @@ const actual = screens.map((s) => s.split(" -> ")[1]);
 clickByText("Proof graphs");
 await new Promise((r) => setTimeout(r, 30));
 record("nav Proof graphs");
+// The nav lights exactly one tab: opening Proof graphs must unlight Workflows.
+const navNow = JSON.stringify(roots.app);
+const litOnce =
+  !/aria-current":"page"[^]*?Workflows[^]*?aria-current":"page"/.test("") &&
+  (() => {
+    const lit = [];
+    (function walk(n) {
+      if (n["aria-current"] === "page") lit.push(JSON.stringify(n));
+      for (const c of n.children || []) walk(c);
+    })(roots.app);
+    return lit.length === 1 && lit[0].includes("Proof graphs");
+  })();
 const planRows = countClass(mainNode(), "run-row");
 const toolchainShown = JSON.stringify(mainNode()).includes("leanprover/lean4:v4.33.1");
 
@@ -1335,6 +1368,15 @@ const weakeningVisible = stepText.includes("count ≥ 50000") && stepText.includ
 // indentation the term carried, and the external calls printed once as a legend rather than
 // tagged inline. It reads as a listing, not a proof — no accent colouring is asserted here
 // because none is applied.
+// The fixed input renders through artifactCard — a thing with a ref, beside the
+// conditions — and the review-note thread hangs off the node, same as on a workflow draft.
+const fixedShown =
+  countClass(mainNode(), "art-head") >= 1 &&
+  stepText.includes("configs/events-warehouse.yaml");
+const graphNoteBadges = countClass(mainNode(), "node-notes");
+const graphNoteThread =
+  stepText.includes("hold out a validation year, not a random split") &&
+  countClass(mainNode(), "note") >= 1;
 const algLines = countClass(mainNode(), "alg-line");
 const algShown =
   algLines === 3 &&
@@ -1389,6 +1431,14 @@ const outerGrpPanel =
   // Nobody described this group, so the panel explains itself instead of inventing one.
   outerText.includes("What crosses this boundary");
 
+// The note box posts to the graph's own notes route, not the workflow one.
+setNoteBox: {
+  const boxes = findByClass(mainNode(), "note-input");
+  if (boxes.length) {
+    boxes[0].value = "check it against last year too";
+    (boxes[0].onInput || (() => {}))({ target: boxes[0] });
+  }
+}
 clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
 const verified = posts.find((x) => x.url.includes("/verification"));
@@ -1413,6 +1463,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
+console.log(`             fixed=${fixedShown}, notes: badges=${graphNoteBadges} thread=${graphNoteThread}, nav-single=${litOnce}`);
 console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
@@ -1625,6 +1676,10 @@ const ok =
   weakeningVisible &&
   schemaShown &&
   schemaNested &&
+  fixedShown &&
+  graphNoteBadges === 1 &&
+  graphNoteThread &&
+  litOnce &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
   algIndented === 1 &&

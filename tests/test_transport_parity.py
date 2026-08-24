@@ -47,6 +47,12 @@ REST_ONLY = {
     "add_review_note",
     "list_review_notes",
     "decide_review_note",
+    # The same channel on a proof graph, one-way for the same reason: a harness reads the
+    # notes off `get_proof_graph` and answers by revising the source; writing or closing
+    # them is the reviewer's side of the conversation.
+    "add_graph_note",
+    "list_graph_notes",
+    "decide_graph_note",
     # A harness states the project when it creates the plan. Re-filing one afterwards, and
     # reading the list of labels in use, are both housekeeping in front of a person.
     "label_workflow",

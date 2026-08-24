@@ -278,3 +278,55 @@ def test_the_whole_journey_from_source_to_an_approved_workflow(client) -> None:
     steps = {step["id"]: step for step in workflow["steps"]}
     assert steps["fit_model"]["inputs"]["dataset"]["contract"] == "rows ≥ 500, labelled"
     assert steps["fit_model"]["inputs"]["dataset"]["from_step"] == "build_dataset"
+
+
+def test_review_notes_ride_on_a_proof_graph(client, store) -> None:
+    """The same conversation as notes on a workflow draft, on the graph's own routes: a
+    note lands on a step or on the graph as a whole, rides out on the single read, and is
+    closed by a person — there is no MCP tool for any of it."""
+    graph = store_verified_plan(store, toolchain="leanprover/lean4:v4.33.1")
+
+    on_step = client.post(
+        f"/v1/proof-graphs/{graph.graph_id}/notes",
+        json={"body": "hold out a validation year", "step_id": "fit", "author": "roy"},
+    )
+    assert on_step.status_code == 201, on_step.text
+    note = on_step.json()
+    assert note["step_id"] == "fit"
+    # The goal is copied on at write time, so an orphaned note can still say what it was about.
+    assert note["step_goal"]
+
+    whole = client.post(
+        f"/v1/proof-graphs/{graph.graph_id}/notes",
+        json={"body": "this assumes one events language", "author": "roy"},
+    )
+    assert whole.status_code == 201 and whole.json()["step_id"] is None
+
+    # A step the extraction does not have is refused, not filed.
+    missing = client.post(
+        f"/v1/proof-graphs/{graph.graph_id}/notes",
+        json={"body": "?", "step_id": "nothere", "author": "roy"},
+    )
+    assert missing.status_code == 422
+
+    # The single read carries them, like get_workflow.
+    doc = client.get(f"/v1/proof-graphs/{graph.graph_id}").json()
+    assert [n["body"] for n in doc["review_notes"]] == [
+        "hold out a validation year",
+        "this assumes one events language",
+    ]
+
+    # Closing is a decision, and deciding the same way twice is refused.
+    closed = client.patch(
+        f"/v1/proof-graphs/{graph.graph_id}/notes/{note['note_id']}",
+        json={"resolved": True, "resolved_by": "roy"},
+    )
+    assert closed.status_code == 200 and closed.json()["resolved"] is True
+    again = client.patch(
+        f"/v1/proof-graphs/{graph.graph_id}/notes/{note['note_id']}",
+        json={"resolved": True, "resolved_by": "roy"},
+    )
+    assert again.status_code == 409
+
+    listed = client.get(f"/v1/proof-graphs/{graph.graph_id}/notes?resolved=false").json()
+    assert [n["body"] for n in listed] == ["this assumes one events language"]

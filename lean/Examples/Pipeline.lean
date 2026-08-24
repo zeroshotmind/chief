@@ -96,6 +96,8 @@ def harvest : GraphM (Ref RawEvents harvested) :=
   task "harvest" "Pull the last 90 days of transaction events into one place." harvested
     (criteria := ["event count recorded in the artifact",
                   "date range covers 90 days ending today"])
+    (fixed := [given "warehouse" "configs/events-warehouse.yaml"
+                 "connection and table map for the events warehouse"])
 
 def buildDataset (e : Ref RawEvents usable) : GraphM (Ref Dataset trainable) :=
   task "build_dataset" "Join events to chargeback outcomes and write a labelled table."

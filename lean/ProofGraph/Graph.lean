@@ -43,6 +43,20 @@ structure Port where
   schema : List SchemaField := []
 deriving Repr, Inhabited
 
+/-- An artifact fixed before anything runs: a file, a document, a URL the step starts from,
+known at graph time rather than produced by an upstream step. No contract rides on it —
+nothing upstream promised it into existence — so nothing about it is proven; it is shown,
+and the compiled workflow hands it to the harness as an input like any other. -/
+structure FixedArtifact where
+  label : String
+  ref : String
+  description : String := ""
+deriving Repr, Inhabited
+
+/-- `given "spec" "docs/spec.md" "the product spec"` — name a fixed input. -/
+def given (label : String) (ref : String) (description : String := "") : FixedArtifact :=
+  { label, ref, description }
+
 /-- A step, in the shape Chief will receive it. -/
 structure Node where
   id : String
@@ -58,6 +72,8 @@ structure Node where
   /-- What a checkpoint asks a person for. Empty on a task. -/
   fields : List String
   inputs : List Port
+  /-- Inputs fixed before anything runs, shown beside the contracted ones. -/
+  fixed : List FixedArtifact
   produces : Option Port
   /-- The step's algorithm, already run to lines and a legend, if the plan gives one. Its
   problems surface with the graph's — a step whose pseudocode names a variable nothing
@@ -103,10 +119,11 @@ def task {β : Type} [ArtifactType β] [ArtifactSchema β] (id : String) (goal :
     (inputs : List Port := [])
     (produces : String := "out")
     (group : String := "")
+    (fixed : List FixedArtifact := [])
     (algorithm : Option (Alg.AlgM Unit) := none) : GraphM (Ref β out) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
-        id, kind := "task", goal, harness, group, criteria, fields := [], inputs,
+        id, kind := "task", goal, harness, group, criteria, fields := [], inputs, fixed,
         produces := some {
           label := produces
           source := id
@@ -142,11 +159,12 @@ design avoids. What is checked is that everything downstream of the decision dep
 def checkpoint (id : String) (goal : String)
     (fields : List String := [])
     (inputs : List Port := [])
-    (group : String := "") : GraphM (Ref Approval granted) := do
+    (group : String := "")
+    (fixed : List FixedArtifact := []) : GraphM (Ref Approval granted) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
         id, kind := "checkpoint", goal, harness := "human", group, criteria := [], fields,
-        inputs,
+        inputs, fixed,
         produces := some {
           label := "approval"
           source := id

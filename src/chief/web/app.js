@@ -33,7 +33,8 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
   decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
-  addReviewNote, artifactContent, artifactModules, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
+  addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
+  decideGraphNote, decideReviewNote, labelWorkflow, listAmendments, listGraphNotes,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
@@ -2088,8 +2089,16 @@ async function refresh() {
         : null;
     patch.workflowNotes =
       state.view === "workflow" && state.workflowId
-        ? { workflowId: state.workflowId, notes: await listReviewNotes(state.workflowId) }
-        : null;
+        ? {
+            workflowId: state.workflowId, kind: "workflow",
+            notes: await listReviewNotes(state.workflowId),
+          }
+        : state.view === "graph" && state.graphId
+          ? {
+              workflowId: state.graphId, kind: "graph",
+              notes: await listGraphNotes(state.graphId).catch(() => []),
+            }
+          : null;
 
     // A workflow that is executing shows its execution: the same screen, further along. The
     // run carries the *effective* plan, which is the base plan plus any applied amendment,
@@ -2357,7 +2366,7 @@ function navBar() {
     // too.
     link(
       "Workflows", "workflows",
-      state.view !== "approvals" && state.view !== "templates" && state.view !== "template",
+      !["approvals", "templates", "template", "graphs", "graph"].includes(state.view),
       // A draft cannot run until someone approves it (REQ-32), so it is as much "waiting on
       // you" as a pending amendment is. Counting it here is what makes that visible.
       drafts > 0 &&
@@ -4226,7 +4235,9 @@ async function postNote(workflow, stepId) {
   const body = noteDraftFor(key).body.trim();
   if (!body) return;
   try {
-    await addReviewNote(workflow.workflow_id, {
+    const kind = (state.workflowNotes && state.workflowNotes.kind) || "workflow";
+    const send = kind === "graph" ? addGraphNote : addReviewNote;
+    await send(workflow.workflow_id, {
       body,
       step_id: stepId || null,
       author: "human",
@@ -4244,7 +4255,9 @@ async function postNote(workflow, stepId) {
 
 async function decideNote(workflow, note, resolved) {
   try {
-    await decideReviewNote(workflow.workflow_id, note.note_id, resolved);
+    const kind = (state.workflowNotes && state.workflowNotes.kind) || "workflow";
+    const decide = kind === "graph" ? decideGraphNote : decideReviewNote;
+    await decide(workflow.workflow_id, note.note_id, resolved);
     await refresh();
   } catch (err) {
     setState({ error: err instanceof ApiError ? err.message : String(err) });
@@ -4804,7 +4817,9 @@ function openProofGraph(graphId) {
   setState({
     view: "graph", graphId, selected: null, dialog: null,
     graphError: null, graphPane: null, graphLine: null,
+    workflowNotes: null, noteDrafts: {}, noteShow: {},
   });
+  refresh();
 }
 
 const withGraph = (graph) =>
@@ -4934,8 +4949,8 @@ function defFromGraph(graph) {
       group: n.group || null,
       criteria: (n.criteria || []).map((text, i) => ({ id: `c${i + 1}`, text })),
       depends_on: n.depends_on || [],
-      inputs: Object.fromEntries(
-        (n.inputs || []).map((port) => [
+      inputs: Object.fromEntries([
+        ...(n.inputs || []).map((port) => [
           port.label,
           {
             artifact_type: port.artifact_type,
@@ -4945,7 +4960,13 @@ function defFromGraph(graph) {
             schema: port.schema || [],
           },
         ]),
-      ),
+        // Fixed at graph time, so drawn through artifactCard like a run's inputs — a
+        // thing with a ref, not a condition.
+        ...(n.fixed || []).map((f) => [
+          f.label,
+          { type: "file", ref: f.ref, description: f.description || f.label },
+        ]),
+      ]),
       outputs: n.produces
         ? {
             [n.produces.label]: {
@@ -5220,7 +5241,13 @@ function graphDetailScreen() {
     pane === "graph"
       ? splitView(
           drawn.viewport,
-          drawn.panel || graphOverviewPanel(graph, extractionOf(graph), drawn.topSteps),
+          // Whichever panel is showing carries the note thread, exactly as on the workflow
+          // screen. The def stands in as the subject: its workflow_id is the graph's id, so
+          // the same noteBlock posts and resolves against the graph's own notes routes.
+          Object.assign(
+            drawn.panel || graphOverviewPanel(graph, extractionOf(graph), drawn.topSteps),
+            { noteWorkflow: def },
+          ),
         )
       : source,
   );

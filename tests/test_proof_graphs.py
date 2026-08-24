@@ -695,3 +695,27 @@ def test_a_row_types_schema_nests_under_the_field_that_carries_it() -> None:
     # `body : String` is a leaf: String was never derived, so it does not explode.
     assert by_name["rows"].fields[0].fields == []
     assert by_name["words"].fields == []
+
+
+@needs_lean
+def test_a_fixed_input_travels_and_compiles_as_an_artifact() -> None:
+    """`given` names an input known before anything runs. Nothing about it is proven — no
+    contract rides on it — and compilation hands it to the harness in the artifact shape
+    the run screens already draw, beside the contracted inputs."""
+    result = verify_source(example_source())
+
+    assert result.status == "verified", errors(result)
+    assert result.graph is not None
+    harvest = result.graph.node("harvest")
+    assert harvest is not None
+    assert [(f.label, f.ref) for f in harvest.fixed] == [
+        ("warehouse", "configs/events-warehouse.yaml")
+    ]
+
+    compiled = compile_graph(result.graph)
+    step = next(s for s in compiled.steps if s.id == "harvest")
+    fixed = step.inputs["warehouse"]
+    assert fixed["type"] == "file" and fixed["ref"] == "configs/events-warehouse.yaml"
+    # The contracted inputs are untouched beside it.
+    fit = next(s for s in compiled.steps if s.id == "fit_model")
+    assert fit.inputs["dataset"]["contract"]

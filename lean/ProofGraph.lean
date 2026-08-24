@@ -101,6 +101,10 @@ the wrong type.
 * `checkpoint id goal (fields := []) (inputs := [])` — record a point where a person decides,
   and return their approval as an artifact.
 * `input label r` — name an artifact being fed to a step. This is what creates the edge.
+* `given label ref description` — a fixed input: a file, config or URL known before anything
+  runs, passed as `(fixed := [given "spec" "docs/spec.md" "the product spec"])`. No contract
+  rides on it and nothing about it is proven — it is shown beside the contracted inputs, and
+  the compiled workflow hands it to the harness as an ordinary input.
 * `Approval` and `granted` — the artifact a checkpoint returns and the contract saying it was
   cleared. A step taking `Ref Approval granted` cannot be written without it, which is what
   makes a gate structural rather than merely an ordering.

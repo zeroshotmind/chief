@@ -88,6 +88,9 @@ def Node.toJson (n : Node) : String :=
        ("fields", arr (n.fields.map str)),
        ("depends_on", arr ((n.inputs.map (·.source)).eraseDups.map str)),
        ("inputs", arr (n.inputs.map Port.toJson)),
+       ("fixed", arr (n.fixed.map fun f =>
+          obj [("label", str f.label), ("ref", str f.ref),
+               ("description", str f.description)])),
        ("produces", match n.produces with
                     | none => "null"
                     | some p => Port.toJson p),

@@ -23,6 +23,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .review import ReviewNote
+
 #: A proof graph is ``draft`` until it has been checked, and then says how that went.
 #: Deliberately not a workflow status: a graph is never "approved" or "archived", it is
 #: compiled into something that can be.
@@ -122,6 +124,21 @@ class StepAlgorithm(BaseModel):
     externals: list[AlgExternal] = Field(default_factory=list)
 
 
+class FixedArtifact(BaseModel):
+    """An input fixed before anything runs — a file, a config, a URL the step starts from.
+
+    Known at graph time rather than produced by an upstream step, so no contract rides on
+    it and nothing about it is proven: it is shown beside the contracted inputs, and the
+    compiled workflow hands it to the harness as an ordinary input.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    ref: str
+    description: str = ""
+
+
 class GraphNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -135,6 +152,8 @@ class GraphNode(BaseModel):
     fields: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     inputs: list[GraphPort] = Field(default_factory=list)
+    #: Inputs fixed at graph time, shown beside the contracted ones.
+    fixed: list[FixedArtifact] = Field(default_factory=list)
     produces: GraphPort | None = None
     #: The step's algorithm, if the graph gives one.
     algorithm: StepAlgorithm | None = None
@@ -241,6 +260,10 @@ class ProofGraph(BaseModel):
     #: Workflows compiled from this graph, oldest first. Lineage, not a live link: the workflow
     #: is amendable afterwards and this must keep saying what it was made from.
     compiled_to: list[str] = Field(default_factory=list)
+    #: Feedback a reviewer left while reading the graph, each note on a step or on the graph
+    #: as a whole — the same conversation as review notes on a workflow draft, attached the
+    #: same way: on the single read, from their own table, never stored in this document.
+    review_notes: list[ReviewNote] = Field(default_factory=list)
     #: Whether the toolchain that produced the stored verdict is still the one installed.
     #: Server-owned and recomputed on every read, never trusted from the stored document — a
     #: graph that goes on displaying "verified" across a toolchain change is exactly the kind

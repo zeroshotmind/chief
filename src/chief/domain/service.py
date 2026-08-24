@@ -586,7 +586,14 @@ class Chief:
         return graph
 
     def get_proof_graph(self, graph_id: str) -> ProofGraph:
-        return self._freshen(self.store.get_proof_graph(graph_id))
+        graph = self._freshen(self.store.get_proof_graph(graph_id))
+        # The one read that carries the review notes, exactly as get_workflow does: whoever
+        # is about to revise the source gets the feedback in the document they were going to
+        # fetch anyway. The list leaves them off.
+        graph.review_notes = self._attach_graph_orphaning(
+            graph, self.store.list_review_notes(graph_id)
+        )
+        return graph
 
     def list_proof_graphs(
         self, *, status: str | None = None, project: str | None = None
@@ -715,6 +722,106 @@ class Chief:
                 detail={"graph_id": graph_id, "compiled_to": graph.compiled_to},
             )
         return {"graph_id": graph_id, "deleted": True, "compiled_to": graph.compiled_to}
+
+    # --- review notes on a proof graph --------------------------------------------------
+    #
+    # The same machinery as notes on a workflow draft, because it is the same conversation:
+    # a person reads the thing, says what should change on the node it is about, and whoever
+    # revises the source reads the notes off the document first. The notes table's subject
+    # column is named ``workflow_id`` for historical reasons; a graph note stores its
+    # graph_id there, and nothing joins on it.
+
+    @staticmethod
+    def _attach_graph_orphaning(
+        graph: ProofGraph, notes: list[ReviewNote]
+    ) -> list[ReviewNote]:
+        """Orphaning against the extracted graph, where there is one.
+
+        A draft whose source changed since its last check has no extraction to compare
+        against, so nothing is marked orphaned there — claiming a step is gone when the
+        truth is "not yet re-checked" would be the checker's own sin of presenting
+        could-not-look as looked-and-found-wanting.
+        """
+        extraction = graph.graph
+        if extraction is None:
+            return list(notes)
+        present = {node.id for node in extraction.nodes}
+        return [
+            note.model_copy(
+                update={"orphaned": note.step_id is not None and note.step_id not in present}
+            )
+            for note in notes
+        ]
+
+    def add_graph_note(self, graph_id: str, body: ReviewNoteCreate) -> ReviewNote:
+        graph = self.store.get_proof_graph(graph_id)
+        step_goal = None
+        if body.step_id is not None:
+            extraction = graph.graph
+            node = extraction.node(body.step_id) if extraction else None
+            if extraction is not None and node is None:
+                raise ValidationFailed(
+                    f"graph '{graph_id}' has no step '{body.step_id}'",
+                    details={"graph_id": graph_id, "step_id": body.step_id},
+                )
+            step_goal = node.goal if node else None
+        note = ReviewNote(
+            note_id=new_note_id(),
+            workflow_id=graph_id,
+            step_id=body.step_id,
+            step_goal=step_goal,
+            body=body.body,
+            author=body.author,
+            created_at=now(),
+            via=current_transport.get(),
+        )
+        with self.store.transaction() as conn:
+            self.store.add_review_note(conn, note)
+            self.store.audit(
+                conn,
+                "graph.note_added",
+                detail={
+                    "graph_id": graph_id,
+                    "note_id": note.note_id,
+                    "step_id": note.step_id,
+                    "author": note.author,
+                },
+            )
+        return note
+
+    def list_graph_notes(
+        self, graph_id: str, resolved: bool | None = None
+    ) -> list[ReviewNote]:
+        graph = self.store.get_proof_graph(graph_id)
+        notes = self._attach_graph_orphaning(graph, self.store.list_review_notes(graph_id))
+        if resolved is None:
+            return notes
+        return [n for n in notes if n.resolved is resolved]
+
+    def decide_graph_note(
+        self, graph_id: str, note_id: str, decision: ReviewNoteDecision
+    ) -> ReviewNote:
+        """Close a note, or put it back. A person's call, never a harness's — the same
+        reasoning as on workflow notes, and the same absence of an MCP tool."""
+        self.store.get_proof_graph(graph_id)
+        note = self.store.get_review_note(graph_id, note_id)
+        if note.resolved is decision.resolved:
+            raise InvalidTransition(
+                f"review note '{note_id}' is already "
+                f"{'resolved' if note.resolved else 'open'}"
+            )
+        note.resolved = decision.resolved
+        note.resolved_at = now() if decision.resolved else None
+        note.resolved_by = decision.resolved_by if decision.resolved else None
+        with self.store.transaction() as conn:
+            self.store.save_review_note(conn, note)
+            self.store.audit(
+                conn,
+                "graph.note_decided",
+                detail={"graph_id": graph_id, "note_id": note_id,
+                        "resolved": decision.resolved},
+            )
+        return note
 
     def lean_available(self) -> dict[str, Any]:
         """Whether this instance can check a graph, and with what."""

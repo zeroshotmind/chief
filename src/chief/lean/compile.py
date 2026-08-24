@@ -63,7 +63,7 @@ def _inputs_for(node: GraphNode) -> dict[str, object]:
     about it. ``from_step`` is redundant with ``depends_on`` and kept anyway — it says *why*
     the dependency exists, which ``depends_on`` alone cannot.
     """
-    return {
+    contracted: dict[str, object] = {
         port.label: {
             "artifact_type": port.artifact_type,
             "contract": port.contract,
@@ -73,6 +73,15 @@ def _inputs_for(node: GraphNode) -> dict[str, object]:
         }
         for port in node.inputs
     }
+    # Fixed inputs ride beside the contracted ones, in the artifact shape the run screens
+    # already render: a thing with a type and a ref, not a condition.
+    for fixed in node.fixed:
+        contracted[fixed.label] = {
+            "type": "file",
+            "ref": fixed.ref,
+            "description": fixed.description or fixed.label,
+        }
+    return contracted
 
 
 def _outputs_for(node: GraphNode) -> dict[str, object]:

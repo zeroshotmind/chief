@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 55 REST routes and requires them to correspond one-to-one. This doc
+against what is now 58 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by
@@ -191,6 +191,7 @@ a record is not something a session needs to do on its own initiative.
 | `GET /audit` | Observer surface — §1. |
 | `POST /runs/{id}/artifacts/{id}/comments` | A comment is said *to* a harness — §1. Readable through `get_run`. |
 | `POST /workflows/{id}/notes` | Review feedback is said *to* a harness, like a comment. Readable through `get_workflow`. |
+| `POST/GET/PATCH /proof-graphs/{id}/notes…` | The same one-way channel on a proof graph: a person writes and closes notes, a harness reads them off `get_proof_graph` and answers by revising the source. |
 | `GET /workflows/{id}/notes` | Same data the workflow document already carries; a second way to fetch it would be a tool that buys nothing. |
 | `PATCH /workflows/{id}/notes/{note_id}` | Closing the feedback you were given is deciding your own work was accepted — the loop §1 is about. |
 | `DELETE /proof-graphs/{graph_id}` | Erasing a record, like `delete_workflow` — not a session's to initiate. |
