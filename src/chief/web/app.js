@@ -4193,6 +4193,10 @@ function render() {
   // typed into is destroyed mid-word. Its identity and selection are carried across.
   const active = document.activeElement;
   const keepFocus = active && active.id ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
+  // Same problem as focus, for the file viewer: its body is rebuilt fresh every render,
+  // including the 15s poll, so a scroll position held only in the old (about-to-be-
+  // discarded) DOM node would otherwise snap back to the top mid-read.
+  const viewerScroll = document.querySelector(".viewer-body")?.scrollTop;
   // replaceChildren has no conditional-child idiom of its own — a skipped branch reaching
   // it would be stringified into the page — so the list is filtered before it gets there.
   root.replaceChildren(
@@ -4204,6 +4208,10 @@ function render() {
       fileViewer(),
     ].filter((n) => n instanceof Node),
   );
+  if (viewerScroll) {
+    const body = document.querySelector(".viewer-body");
+    if (body) body.scrollTop = viewerScroll;
+  }
 
   // The dialog is a sibling of the app tree and is rebuilt only when it changes identity,
   // so re-renders driven by polling do not wipe what has been typed into the reason field.
