@@ -258,6 +258,39 @@ A workflow is single-use — approved once, executed once — so reuse lives in 
 plan with `{{ parameters }}` in it. Instantiating one produces a draft workflow, which still
 needs approving. You can also turn a workflow you already ran into a template.
 
+## Checked plans — catching a broken plan before it runs
+
+A workflow says what the steps are and what order they go in. It does not say what each step
+needs from the ones before it, so nothing notices when a plan asks a step to work from
+something the previous step was never going to produce. You find out halfway through.
+
+A **plan** closes that gap. It is written as a Lean file (see `lean/README.md`) where each step
+declares what it demands of its inputs and what it promises about its output, and the server
+checks that every promise actually satisfies the demand it feeds — for every possible value,
+not a sampled one. A plan that holds up compiles into an ordinary draft workflow and is
+approved and run like any other.
+
+```
+create_plan → verify_plan → (read the diagnostics, revise_plan, verify again) → compile_plan
+```
+
+What that buys you, precisely: a step cannot be written that reads an artifact without naming
+the step producing it, so a missing dependency is impossible rather than merely discouraged; a
+condition that excludes nothing cannot be written down at all, so a plan cannot be made to pass
+by promising nothing; and anything downstream of a checkpoint depends on the approval it
+returns, so no ordering of the plan skips the gate.
+
+What it does not buy you, and does not pretend to: whether a step's work is any *good*. That
+stays exactly where it was — criteria a person or a harness answers for. The checking is about
+whether the plan hangs together, not whether it is a good idea.
+
+Worth the extra round-trip when steps have real preconditions that would be expensive to
+discover late. Not worth it for a short errand.
+
+Lean is optional. `GET /v1/plans/toolchain` says whether this instance can check anything; if
+it cannot, verification is refused outright rather than reported as a plan that failed, and
+everything already compiled goes on running untouched.
+
 ## Approval policy
 
 If approving every routine plan by hand gets tiring, the approval policy can auto-approve

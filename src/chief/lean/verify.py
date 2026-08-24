@@ -21,8 +21,20 @@ Three layers of checking happen, and it is worth being precise about which is lo
   the whole design rests on.
 
 A plan that fails any of these is ``failed``, and the diagnostics are what a planner reads to
-repair it. Lean's own error text is left alone: "unsolved goals ⊢ 5000 ≤ x.rows" names the
-exact entailment that does not hold, and no wording invented here would beat it.
+repair it. Lean's own error text is mostly left alone — "unsolved goals, hx : auc ≥ 70,
+⊢ auc ≥ 75" names the exact entailment that does not hold, and no wording invented here would
+beat it. Three things are done to it, all for the same reason:
+
+* the consequences of an earlier failure are dropped, so a plan does not report a `sorry` its
+  author never wrote merely because Lean declined to run `#eval` in a file that failed;
+* the duplicate "could not synthesize default value" that accompanies every failed edge is
+  dropped, because it names an internal parameter and doubles the error count;
+* an entailment that failed only because a contract was bound with `def` is told to say so.
+  That message is the one case where Lean's own text actively misleads: the unreduced `match`
+  it prints reads as *"the incoming promise is unknown"*, which points a reader straight at a
+  contract that is usually perfectly correct.
+
+Everything else is passed through verbatim.
 """
 
 from __future__ import annotations
@@ -180,6 +192,11 @@ def lint_source(source: str) -> list[Diagnostic]:
     return out
 
 
+def def_bound_contracts(source: str) -> set[str]:
+    """Contracts bound with `def`, which `plan_entails` cannot see through."""
+    return {m.group("name") for m in _DEF_CONTRACT.finditer(_strip_noise(source))}
+
+
 def parse_output(
     output: str, *, source_name: str
 ) -> tuple[list[Diagnostic], str | None, list[str]]:
@@ -327,6 +344,89 @@ def _drop_cascades(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     return [d for d in diagnostics if _CASCADE not in d.message]
 
 
+#: Lean reports a failed `use` twice at one position: once to say the default value for the
+#: entailment argument could not be synthesised, and once with the goal that was left. Only the
+#: second says anything — the first names an internal parameter a plan author never writes, and
+#: it doubles the error count on every failing edge.
+_SYNTH = "could not synthesize default value for parameter"
+
+
+def _drop_synthesis_noise(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+    placed = {
+        (d.line, d.column) for d in diagnostics if d.severity == "error" and _SYNTH not in d.message
+    }
+    return [
+        d
+        for d in diagnostics
+        if _SYNTH not in d.message or (d.line, d.column) not in placed
+    ]
+
+
+_OPAQUE_OPEN = "(match (motive := Contract"
+_OPAQUE_NAME = re.compile(r"Prop\)\s*(?P<name>[A-Za-z_][A-Za-z0-9_']*)\s+with")
+
+
+def _collapse_opaque(message: str) -> tuple[str, set[str]]:
+    """Replace an unreduced `Contract.pred` match with the name it could not see through.
+
+    A contract bound with `def` does not reduce, so the hypothesis Lean prints is the whole
+    `match` term rather than the predicate. Left alone it reads as *"the incoming promise is
+    unknown"*, which points a reader at the contract's own definition — an edge that is very
+    often perfectly correct and fails only because the name is opaque. Collapsing the term to
+    the name says what is actually true and takes the trap out of the message.
+    """
+    names: set[str] = set()
+    out = message
+    while True:
+        start = out.find(_OPAQUE_OPEN)
+        if start == -1:
+            return out, names
+        depth, end = 0, start
+        while end < len(out):
+            if out[end] == "(":
+                depth += 1
+            elif out[end] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        if end >= len(out):
+            return out, names
+        found = _OPAQUE_NAME.search(out[start : end + 1])
+        name = found.group("name") if found else None
+        if name:
+            names.add(name)
+        label = f"‹{name} — opaque›" if name else "‹opaque contract›"
+        out = out[:start] + label + out[end + 1 :]
+
+
+def explain_opaque(diagnostics: list[Diagnostic], opaque: set[str]) -> list[Diagnostic]:
+    """Make an entailment failure caused by a `def`-bound contract say so.
+
+    The severity stays `error` — the plan really did fail to check here — but the message now
+    names the cause rather than leaving a reader to infer a defect in a contract that may be
+    entirely sound. Without this the only thing standing between the reader and editing a
+    correct contract is the lint warning several screens up.
+    """
+    out: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        message, names = _collapse_opaque(diagnostic.message)
+        blocking = sorted(names & opaque)
+        if blocking:
+            named = ", ".join(f"'{name}'" for name in blocking)
+            message = (
+                f"this edge could not be checked because {named} is bound with `def`, so its "
+                "predicate cannot be seen through the name. Change it to `abbrev` and verify "
+                "again — the entailment itself may well hold.\n\n" + message
+            )
+        out.append(
+            diagnostic if message == diagnostic.message else diagnostic.model_copy(
+                update={"message": message}
+            )
+        )
+    return out
+
+
 def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
     """Check one plan and, if it holds up, read its graph out.
 
@@ -422,8 +522,11 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
 
     # Placed here rather than left to the caller: a stored result whose diagnostics were never
     # attributed shows every failure on nothing, and the endpoint that stores it has no reason
-    # to know it had to ask.
-    diagnostics = attribute_diagnostics(source, graph, _drop_cascades(diagnostics))
+    # to know it had to ask. Order matters — the consequences of an earlier failure are dropped
+    # before what is left is explained and placed.
+    diagnostics = _drop_synthesis_noise(_drop_cascades(diagnostics))
+    diagnostics = explain_opaque(diagnostics, def_bound_contracts(source))
+    diagnostics = attribute_diagnostics(source, graph, diagnostics)
 
     failed = completed.returncode != 0 or graph is None
     failed = failed or any(d.severity == "error" for d in diagnostics)

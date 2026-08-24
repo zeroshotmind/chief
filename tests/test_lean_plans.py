@@ -407,3 +407,47 @@ def test_a_failure_is_placed_even_when_no_graph_came_back() -> None:
     placed = attribute_diagnostics(source, None, diagnostics)
 
     assert placed[0].step_id == "fit_model"
+
+
+# --------------------------------------------------------------------------- message quality
+
+
+DEF_BOUND = MINIMAL.replace("abbrev {first}", "def {first}")
+
+
+@needs_lean
+def test_a_def_bound_contract_says_why_the_edge_could_not_be_checked() -> None:
+    """Lean's own text points at a contract that is usually correct. This one does not."""
+    source = DEF_BOUND.format(
+        first="strong",
+        second="weak",
+        first_body='.refine (fun d => d.words ≥ 500) "words ≥ 500" ⟨0⟩ (by decide)',
+        second_body='.refine (fun d => d.words ≥ 100) "words ≥ 100" ⟨0⟩ (by decide)',
+        write_id="write",
+        revise_id="revise",
+    )
+
+    result = verify_source(source)
+
+    assert result.status == "failed"
+    blamed = "\n".join(errors(result))
+    assert "'strong' is bound with `def`" in blamed
+    assert "Change it to `abbrev`" in blamed
+    # And the unreadable match term is collapsed to the name it could not see through.
+    assert "motive := Contract" not in blamed
+    assert "‹strong — opaque›" in blamed
+
+
+@needs_lean
+def test_a_failed_edge_is_reported_once_not_twice() -> None:
+    """The synthesis message names an internal parameter and says nothing a reader can use."""
+    weakened = example_source().replace(
+        '(fun m => m.auc ≥ 80) "auc ≥ 80"', '(fun m => m.auc ≥ 70) "auc ≥ 70"'
+    )
+
+    result = verify_source(weakened)
+
+    assert result.status == "failed"
+    assert not any("could not synthesize default value" in m for m in errors(result))
+    assert len(errors(result)) == 1
+    assert "auc ≥ 75" in errors(result)[0]
