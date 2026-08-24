@@ -2379,7 +2379,7 @@ function navBar() {
     // counts — a draft plan is still being written and a failed one is the author's problem.
     state.proofGraphs !== null &&
       link(
-        "Proof graphs", "graphs", state.view === "graphs" || state.view === "graph",
+        "Proof Graphs", "graphs", state.view === "graphs" || state.view === "graph",
         readyGraphs().length > 0 &&
           el("span", {
             class: "tag tag-accent", style: { padding: "0 7px" },
@@ -4312,12 +4312,20 @@ function noteBlock(workflow, stepId) {
   const key = stepId || NOTE_PLAN;
   const open = notes.filter((n) => !n.resolved);
   const done = notes.filter((n) => n.resolved);
-  const draft = workflow.status === "draft";
+  // A workflow invites notes while it is a draft; a proof graph invites them always,
+  // because every status of a graph is one a revision can answer — that is what
+  // `notesOpen` on the subject says.
+  const inviting = workflow.status === "draft" || workflow.notesOpen === true;
   const writable = workflow.status !== "archived";
-  if (!draft && notes.length === 0) return null;
+  if (!inviting && notes.length === 0) return null;
 
+  const onGraph = (state.workflowNotes || {}).kind === "graph";
   const showing = !!state.noteShow[key];
-  const label = stepId ? "Feedback on this step" : "Feedback on the plan";
+  const label = stepId
+    ? "Feedback on this step"
+    : onGraph
+      ? "Feedback on the graph"
+      : "Feedback on the plan";
   return [
     el(
       "span",
@@ -4351,7 +4359,9 @@ function noteBlock(workflow, stepId) {
               text: noteDraftFor(key).body,
               placeholder: stepId
                 ? "What should change about this step?"
-                : "What should change about the plan?",
+                : onGraph
+                  ? "What should change about the graph?"
+                  : "What should change about the plan?",
               onInput: (e) => setNoteDraft(key, { body: e.target.value, error: null }),
               // Enter is a newline here, so sending needs the modifier. Same key as every
               // other multi-line box a person types a message into.
@@ -4878,8 +4888,8 @@ function proofGraphsScreen() {
   if (graphs === null) {
     return el(
       "main",
-      { class: "narrow", "data-screen-label": "Proof graphs" },
-      el("header", { class: "screen-head" }, el("h4", { text: "Proof graphs" })),
+      { class: "narrow", "data-screen-label": "Proof Graphs" },
+      el("header", { class: "screen-head" }, el("h4", { text: "Proof Graphs" })),
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
         text:
@@ -4891,11 +4901,11 @@ function proofGraphsScreen() {
   const tc = state.toolchain;
   return el(
     "main",
-    { class: "narrow", "data-screen-label": "Proof graphs" },
+    { class: "narrow", "data-screen-label": "Proof Graphs" },
     el(
       "header",
       { class: "screen-head" },
-      el("h4", { text: "Proof graphs" }),
+      el("h4", { text: "Proof Graphs" }),
       el("span", {
         class: "text-muted", style: { fontSize: "12px" },
         text: `${readyGraphs().length} ready to compile`,
@@ -4939,6 +4949,8 @@ function defFromGraph(graph) {
   return {
     workflow_id: graph.graph_id,
     title: extraction.title,
+    // Notes are invited at every status — see noteBlock. A graph is always revisable.
+    notesOpen: true,
     // What each group is for, where the graph says. Read by the group panel, keyed by path.
     groups: extraction.groups || [],
     steps: extraction.nodes.map((n) => ({
@@ -5096,7 +5108,7 @@ function graphDetailScreen() {
     el("button", {
       class: "btn btn-ghost",
       style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" },
-      text: "← Proof graphs", onClick: () => go("graphs"),
+      text: "← Proof Graphs", onClick: () => go("graphs"),
     }),
     el(
       "div",

@@ -1261,7 +1261,7 @@ const actual = screens.map((s) => s.split(" -> ")[1]);
 // one that does not; the verified one draws its graph through the same renderer everything
 // else uses, with the proven condition on the edge shown as a condition rather than dumped
 // into a JSON drawer; and the failed one shows the goal that did not follow, verbatim.
-clickByText("Proof graphs");
+clickByText("Proof Graphs");
 await new Promise((r) => setTimeout(r, 30));
 record("nav Proof graphs");
 // The nav lights exactly one tab: opening Proof graphs must unlight Workflows.
@@ -1274,7 +1274,7 @@ const litOnce =
       if (n["aria-current"] === "page") lit.push(JSON.stringify(n));
       for (const c of n.children || []) walk(c);
     })(roots.app);
-    return lit.length === 1 && lit[0].includes("Proof graphs");
+    return lit.length === 1 && lit[0].includes("Proof Graphs");
   })();
 const planRows = countClass(mainNode(), "run-row");
 const toolchainShown = JSON.stringify(mainNode()).includes("leanprover/lean4:v4.33.1");
@@ -1377,6 +1377,17 @@ const graphNoteBadges = countClass(mainNode(), "node-notes");
 const graphNoteThread =
   stepText.includes("hold out a validation year, not a random split") &&
   countClass(mainNode(), "note") >= 1;
+// The invitation must survive an empty thread: this step has no notes, and the box is
+// offered anyway, because a graph is always revisable. This is the exact case the
+// draft-status gate silently swallowed.
+clickByText("Pull the events.");
+await new Promise((r) => setTimeout(r, 30));
+const emptyThreadText = JSON.stringify(mainNode());
+const emptyThreadInvites =
+  emptyThreadText.includes("Feedback on this step") &&
+  emptyThreadText.includes("leave a note");
+clickByText("Fit the classifier.");
+await new Promise((r) => setTimeout(r, 30));
 const algLines = countClass(mainNode(), "alg-line");
 const algShown =
   algLines === 3 &&
@@ -1443,7 +1454,7 @@ clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
 const verified = posts.find((x) => x.url.includes("/verification"));
 
-clickByText("← Proof graphs");
+clickByText("← Proof Graphs");
 await new Promise((r) => setTimeout(r, 30));
 clickByText("Docs index refresh");
 await new Promise((r) => setTimeout(r, 40));
@@ -1463,7 +1474,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
-console.log(`             fixed=${fixedShown}, notes: badges=${graphNoteBadges} thread=${graphNoteThread}, nav-single=${litOnce}`);
+console.log(`             fixed=${fixedShown}, notes: badges=${graphNoteBadges} thread=${graphNoteThread} empty-invites=${emptyThreadInvites}, nav-single=${litOnce}`);
 console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
@@ -1679,6 +1690,7 @@ const ok =
   fixedShown &&
   graphNoteBadges === 1 &&
   graphNoteThread &&
+  emptyThreadInvites &&
   litOnce &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
