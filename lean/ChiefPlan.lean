@@ -5,12 +5,53 @@ import ChiefPlan.Emit
 /-!
 # ChiefPlan
 
-The vocabulary a Chief plan is written against. `import ChiefPlan` gets all of it.
+The vocabulary a Chief plan is written against. Every plan starts:
+
+```lean
+import ChiefPlan
+open ChiefPlan
+```
+
+Both lines. Everything here lives in the `ChiefPlan` namespace, so an import on its own leaves
+every name below unresolved.
 
 A plan is an ordinary Lean file. Artifact types are `structure`s, conditions on them are
 `Contract`s, steps are functions returning `PlanM (Ref …)`, and the plan is a `do` block
 composing them. If it compiles, every step's demands are met by what feeds it — proven for all
 values, not sampled. If it runs, the graph it describes can be read off it and handed to Chief.
+
+## The shape a step must have
+
+This is the one rule that is not obvious from the vocabulary, and the one whose failure is
+hardest to read. **Write each step as a `def` whose parameters are the handles it consumes, and
+put `use` at the call site in `plan` — never inside the step's own `inputs` list.**
+
+```lean
+-- Right: the parameter type is what fixes the demand.
+def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
+  task "fit_model" "Train the classifier." accurate (inputs := [input "dataset" d])
+
+def plan : PlanM Unit := do
+  let ds ← buildDataset
+  let _ ← fitModel (use ds)     -- `use` here, where the demand is known
+  pure ()
+```
+
+```lean
+-- Wrong: nothing tells `use` what it is weakening *to*.
+task "fit_model" "Train the classifier." accurate
+  (inputs := [input "dataset" (use ds)])
+```
+
+`use` works out what to prove by unifying with the contract the consuming step demands. Written
+inline in `inputs` there is no such type to unify against, so the goal is stated against a
+metavariable and cannot be discharged. The error you get names neither `use` nor the fix — it
+shows an unreduced `match` on a metavariable — so it is worth getting this right from the
+start.
+
+`plan` must be called exactly that, must have type `PlanM Unit`, and therefore ends with
+`pure ()`: every step returns a handle, so the `do` block's last line would otherwise give it
+the wrong type.
 
 ## Everything you get
 
@@ -29,8 +70,11 @@ values, not sampled. If it runs, the graph it describes can be read off it and h
 **Steps and the graph** (`ChiefPlan.Graph`)
 
 * `PlanM` — the monad a plan is written in.
-* `task id goal out (harness := "claude") (criteria := []) (inputs := [])` — record a step and
-  return a handle to what it produces.
+* `task id goal out (harness := "claude") (criteria := []) (inputs := []) (produces := "out")`
+  — record a step and return a handle to what it produces. `out` is the contract this step
+  *promises*; `produces` names the output port, and is worth setting to something meaningful
+  (`"ledger"`, `"model"`) since it is what the artifact is called wherever it is shown.
+  Everything after `out` is a named optional argument — pass them by name, not by position.
 * `checkpoint id goal (fields := []) (inputs := [])` — record a point where a person decides,
   and return their approval as an artifact.
 * `input label r` — name an artifact being fed to a step. This is what creates the edge.
@@ -40,8 +84,11 @@ values, not sampled. If it runs, the graph it describes can be read off it and h
 
 **Extraction** (`ChiefPlan.Emit`)
 
-* `emitPlan title plan` — print the graph as JSON. Every plan file ends with
-  `#eval emitPlan "…" plan`, and the plan itself must be called `plan`.
+* `emitPlan (title : String) (plan : PlanM Unit) : IO Unit` — print the graph as JSON. Every
+  plan file ends with `#eval emitPlan "…" plan`.
+* `problems` and `stats` are computed here, when the plan is *run*, not by the kernel: a
+  repeated step id or a handle naming a step that was never recorded compiles perfectly and
+  shows up only in the extracted JSON.
 
 ## Checking a plan
 

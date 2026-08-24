@@ -158,7 +158,11 @@ Every edge in a plan goes through this. The proof obligation is synthesised by
 hold, the plan does not compile, and the error names the two contracts.
 
 `c₂` is implicit and is fixed by unification with the type the consuming step demands, so the
-obligation is elaborated with both sides known. -/
+obligation is elaborated with both sides known. That is also why this belongs at the call site
+in `plan`, and never inside a step's own `inputs := [input "x" (use r)]` — written there it has
+nothing to unify against, and the goal comes out stated against a metavariable, with an error
+that names neither `use` nor the fix. Steps take their handles as parameters; `plan` applies
+them. -/
 def use {α : Type} {c₁ : Contract α} (r : Ref α c₁) {c₂ : Contract α}
     (_entails : ∀ x, c₁.pred x → c₂.pred x := by plan_entails) : Ref α c₂ :=
   ⟨r.source⟩

@@ -71,6 +71,17 @@ document reads well, whether a review was thorough, whether the right people wer
 Those stay where they already were: conditions a person or a harness answers for. Pushing them
 into Lean would mean either a proof nobody can write or a predicate that quietly says nothing.
 
+**And one thing to watch, which nothing here can catch.** A contract is proven non-vacuous —
+it must exclude something — but nothing can check that it excludes the *right* things. A step
+that really needs eight webhook handlers can demand `≥ 1`, and that contract is perfectly
+constructible, verifies cleanly, and is counted as refined. An author writing under
+demonstration pressure — reaching for a demand that visibly exercises the weakening machinery
+rather than one that states what the step needs — produces exactly this, and the plan looks
+just as good as one that does not. This was found by an agent auditing its own first draft,
+and it is the failure mode a reader of a verified plan should be looking for: not "is anything
+proven", which the statistics answer, but "does each demand say what that step actually needs",
+which only reading them does.
+
 ## Scope
 
 `task` and `checkpoint` only. `loop` and `parallel` want a combinator that takes a body as a
