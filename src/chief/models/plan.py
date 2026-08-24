@@ -76,6 +76,8 @@ class PlanNode(BaseModel):
     type: Literal["task", "checkpoint"]
     goal: str
     harness: str
+    #: Which part of the work this step belongs to, if the plan says. A label for a reader.
+    group: str | None = None
     criteria: list[str] = Field(default_factory=list)
     fields: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)

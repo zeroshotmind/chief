@@ -487,3 +487,26 @@ def test_a_prelude_that_cannot_be_built_is_unavailable_not_unsound(tmp_path) -> 
 
     with pytest.raises(LeanUnavailable):
         ensure_built(tmp_path, timeout=120)
+
+
+@needs_lean
+def test_a_graph_this_server_cannot_read_is_not_a_plan_that_failed(monkeypatch) -> None:
+    """The prelude prints the graph, never the author — so an unreadable one is version skew.
+
+    Reporting it as a verdict tells someone their plan is broken when the plan is fine and the
+    two halves of the checker are out of step. The same distinction the whole module keeps:
+    "could not look" is not "looked and found it wanting".
+    """
+    import chief.lean.verify as verify
+
+    class Refuses:
+        @staticmethod
+        def model_validate_json(_payload: str):
+            raise ValueError("nodes.0.group: extra inputs are not permitted")
+
+    monkeypatch.setattr(verify, "PlanGraph", Refuses)
+
+    with pytest.raises(LeanUnavailable) as raised:
+        verify_source(example_source())
+
+    assert "out of step" in str(raised.value)

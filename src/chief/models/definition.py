@@ -152,6 +152,21 @@ class WorkflowStep(BaseModel):
         ),
     )
     depends_on: list[str] = Field(default_factory=list)
+    # Which part of the work this step belongs to. Purely a label: nothing derives from it,
+    # no rule mentions it, and two steps sharing one are not related by it in any way the
+    # server knows about. It exists because a plan past about eight steps stops reading as a
+    # shape, and the phase a step belongs to is the one thing a reader cannot recover from
+    # the graph — "training the encoder" is not a property of any edge. An open namespace
+    # like `harness` and `project`: adding a group is writing one, not changing a schema.
+    group: str | None = Field(
+        default=None,
+        description=(
+            "Which part of the work this step belongs to, e.g. 'Collection' or 'Evaluation'. "
+            "Steps sharing a group are drawn together under that label. Optional, and worth "
+            "setting only on a plan big enough that its shape is hard to read; use the same "
+            "wording across the steps of one group, since the label is matched literally."
+        ),
+    )
     inputs: dict[str, Any] = Field(default_factory=dict)
     body: list[str] | None = None
     # Governs whether a failed instance (or a failed step inside an instance body) fails

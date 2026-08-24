@@ -244,12 +244,12 @@ const PLAN_GRAPH = {
   title: "Fraud model refresh",
   nodes: [
     {
-      id: "harvest", type: "task", goal: "Pull the events.", harness: "claude",
+      id: "harvest", type: "task", goal: "Pull the events.", harness: "claude", group: "Collection",
       criteria: ["count recorded"], fields: [], depends_on: [], inputs: [],
       produces: { label: "out", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 50000", refined: true },
     },
     {
-      id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude",
+      id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude", group: "Modelling",
       criteria: ["AUC recorded"], fields: [], depends_on: ["harvest"],
       inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
       produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
@@ -1102,6 +1102,9 @@ if (NO_TEMPLATES) {
 // The checkpoint the run is stopped at: it draws as a node marked waiting, and the inbox
 // asks the question, takes the answer, and sends it.
 const waitingNodes = countClass(mainNode(), "checkpoint");
+// No step here declares a group, so nothing is drawn round anything and the layout is the
+// one it always was — grouping must not move a plan that never asked for it.
+const ungroupedBoxes = countClass(mainNode(), "group-box");
 
 clickByText("Approvals");
 await new Promise((r) => setTimeout(r, 30));
@@ -1205,6 +1208,10 @@ await new Promise((r) => setTimeout(r, 30));
 record("nav Plan detail");
 const planNodes = countClass(mainNode(), "node");
 const claimsShown = JSON.stringify(mainNode()).includes("3 of 3 conditions constrain");
+// A step says which part of the work it belongs to, and the graph draws a lane round each.
+const groupBoxes = countClass(mainNode(), "group-box");
+const groupLabels = JSON.stringify(mainNode());
+const groupsNamed = groupLabels.includes("Collection") && groupLabels.includes("Modelling");
 
 // Selecting the step that reads something shows what was proven about what it reads. The
 // condition is drawn as a condition — not through artifactCard, which would offer to open a
@@ -1251,6 +1258,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, not-json=${notInJsonDrawer}, verified-post=${verified && verified.url}`);
+console.log(`             groups=${groupBoxes} boxes, named=${groupsNamed}, ungrouped-plan-boxes=${ungroupedBoxes}`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 
@@ -1446,6 +1454,11 @@ const ok =
   planRows === 2 &&
   toolchainShown &&
   planNodes === 2 &&
+  // One lane per declared group, labelled; and a plan that declares none is laid out exactly
+  // as it was, with nothing drawn round it.
+  groupBoxes === 2 &&
+  groupsNamed &&
+  ungroupedBoxes === 0 &&
   contractCards === 1 &&
   contractShown &&
   notInJsonDrawer &&

@@ -106,6 +106,9 @@ const executionsOf = (workflow, runs) =>
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
 const NODE_H = 62;
+// Room around a group's members, and the strip its label sits in above them.
+const GROUP_PAD = 12;
+const GROUP_LABEL_H = 18;
 // A construct is not drawn as a container: its body steps join the main graph as ordinary
 // nodes, and the construct itself shrinks to a small gate the cycle passes through — repeat
 // or exit for a loop, a join for a parallel. This is the gate's height.
@@ -2729,6 +2732,53 @@ function approvalsScreen() {
 
 /** Lay the plan's top-level steps out in dependency layers, including the ghost steps a
     pending amendment proposes to insert. */
+/** Columns, when the steps say which part of the work they belong to.
+
+    A group is only worth drawing a boundary around if the boundary can be trusted, and in a
+    layered graph it cannot be drawn after the fact: depth is fixed by the longest path, and
+    functional phases interleave across depths — in the benchmark plan, collection and taxonomy
+    both occupy layer 1. A box around either would enclose a node from the other, which is
+    worse than no box.
+
+    So grouping is a layout constraint rather than a decoration. Each group is given a lane —
+    a contiguous run of columns, held across every layer it spans — sized by the most members
+    it has in any one layer. Lanes are disjoint by construction, so a group's rectangle
+    contains its own nodes and nothing else, and two rectangles can never overlap.
+
+    Returns null when nothing declares a group, and then the layout is exactly what it was:
+    this must not move a single existing plan. -/ */
+function lanesFor(all, layers) {
+  const order = [];
+  const seen = new Set();
+  for (const step of all) {
+    const key = step.group || "";
+    if (!seen.has(key)) {
+      seen.add(key);
+      order.push(key);
+    }
+  }
+  if (!order.some((key) => key !== "")) return null;
+
+  // A lane is as wide as the most members the group has in any single layer.
+  const wide = new Map(order.map((key) => [key, 1]));
+  for (const layer of layers) {
+    const count = new Map();
+    for (const step of layer || []) {
+      const key = step.group || "";
+      count.set(key, (count.get(key) || 0) + 1);
+    }
+    for (const [key, n] of count) wide.set(key, Math.max(wide.get(key), n));
+  }
+
+  const offset = new Map();
+  let column = 0;
+  for (const key of order) {
+    offset.set(key, column);
+    column += wide.get(key);
+  }
+  return { order, wide, offset, columns: column };
+}
+
 function layout(topSteps, ghosts, rewires, width, heightFor) {
   const all = [...topSteps, ...ghosts];
   const byId = new Map(all.map((s) => [s.id, s]));
@@ -2766,7 +2816,8 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   const layers = [];
   for (const step of all) (layers[depth[step.id]] ||= []).push(step);
 
-  const widest = Math.max(1, ...layers.map((l) => l.length));
+  const lanes = lanesFor(all, layers);
+  const widest = lanes ? lanes.columns : Math.max(1, ...layers.map((l) => l.length));
   // 170 is the floor at which a node still reads. Past that the plan does not get narrower,
   // it gets wider than the window — twelve steps side by side need 2400px however big the
   // window is — so the layout reports what it actually needed and the viewport scrolls.
@@ -2781,18 +2832,32 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   const pos = {};
   let y = 14;
   let bottom = 0;
+  const columnX = (slot) => 16 + slot * (nodeW + GAP);
   for (const layer of layers) {
     let tallest = NODE_H;
+    // Within a lane, a layer holding fewer than the lane's width sits centred in it.
+    const used = new Map();
     layer.forEach((step, i) => {
       const h = heightFor(step);
       tallest = Math.max(tallest, h);
-      pos[step.id] = { x: 16 + i * (nodeW + GAP), y, h };
+      let slot = i;
+      if (lanes) {
+        const key = step.group || "";
+        const taken = used.get(key) || 0;
+        used.set(key, taken + 1);
+        const room = lanes.wide.get(key);
+        const here = layer.filter((s) => (s.group || "") === key).length;
+        slot = lanes.offset.get(key) + Math.floor((room - here) / 2) + taken;
+      }
+      pos[step.id] = { x: columnX(slot), y, h };
     });
     bottom = y + tallest;
     y += tallest + DROP;
   }
-  // A lone node in a layer centres under its dependencies (or over its dependents).
-  for (const layer of layers) {
+  // A lone node in a layer centres under its dependencies (or over its dependents). Skipped
+  // entirely under lanes: drifting toward a dependency is exactly how a node leaves its lane,
+  // and a node outside its own group's box is the one thing this must never produce.
+  for (const layer of lanes ? [] : layers) {
     if (layer.length !== 1) continue;
     const step = layer[0];
     const deps = (step.depends_on || []).filter((id) => pos[id]);
@@ -2807,7 +2872,29 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
     pos[step.id].x = Math.max(16, Math.min(pos[step.id].x, planeW - nodeW - 16));
   }
 
-  return { all, pos, nodeW, height: bottom + 24, ghostIds, planeW };
+  // The rectangles, in lane coordinates rather than from where the members happened to land:
+  // a lane's full width is the box's width even where one layer holds a single node, so the
+  // shape stays a rectangle rather than a staircase.
+  const groups = [];
+  if (lanes) {
+    for (const key of lanes.order) {
+      if (!key) continue;
+      const members = all.filter((s) => (s.group || "") === key && pos[s.id]);
+      if (!members.length) continue;
+      const top = Math.min(...members.map((s) => pos[s.id].y));
+      const base = Math.max(...members.map((s) => pos[s.id].y + (pos[s.id].h ?? NODE_H)));
+      const first = lanes.offset.get(key);
+      groups.push({
+        label: key,
+        x: columnX(first) - GROUP_PAD,
+        y: top - GROUP_PAD - GROUP_LABEL_H,
+        w: columnX(first + lanes.wide.get(key) - 1) + nodeW + GROUP_PAD - (columnX(first) - GROUP_PAD),
+        h: base + GROUP_PAD - (top - GROUP_PAD - GROUP_LABEL_H),
+      });
+    }
+  }
+
+  return { all, pos, nodeW, height: bottom + 24, ghostIds, planeW, groups };
 }
 
 const MARKERS = { ok: OK, warn: WARN, bad: BAD, dim: DIM, acc: ACC };
@@ -3378,7 +3465,8 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   // Constructs flatten into the display graph: body steps inline, the construct as a gate.
   const display = flattenConstructs(topSteps, ctx);
   const heightFor = (step) => (step.gate ? GATE_H : NODE_H);
-  const { all, pos, nodeW, height, ghostIds, planeW } = layout(display, ghosts, rewires, width, heightFor);
+  const { all, pos, nodeW, height, ghostIds, planeW, groups } =
+    layout(display, ghosts, rewires, width, heightFor);
   // Room for the horizontal scrollbar, but only when there is one to make room for.
   const scrolls = planeW > width;
 
@@ -3612,7 +3700,28 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           transform: scale < 1 ? `scale(${scale})` : "none",
         },
       },
-      svgEl("svg", { width: String(planeW), height: String(height) }, edgeDefs(), paths),
+      svgEl(
+        "svg",
+        { width: String(planeW), height: String(height) },
+        edgeDefs(),
+        // Behind the edges and under the nodes, and drawn in no colour of its own. Status is
+        // what carries colour in this graph — a green dot means something — and a coloured
+        // box round a phase would compete with the one signal a reader is scanning for.
+        (groups || []).map((g) =>
+          svgEl(
+            "g",
+            { class: "group" },
+            svgEl("rect", {
+              class: "group-box", x: String(g.x), y: String(g.y),
+              width: String(g.w), height: String(g.h), rx: "10",
+            }),
+            svgEl("text", {
+              class: "group-label", x: String(g.x + 10), y: String(g.y + 13),
+            }, g.label),
+          ),
+        ),
+        paths,
+      ),
       nodes,
     ),
   );
@@ -4519,6 +4628,7 @@ function defFromPlan(plan) {
       type: n.type,
       goal: n.goal,
       harness: n.harness,
+      group: n.group || null,
       criteria: (n.criteria || []).map((text, i) => ({ id: `c${i + 1}`, text })),
       depends_on: n.depends_on || [],
       inputs: Object.fromEntries(

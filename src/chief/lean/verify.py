@@ -539,13 +539,18 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
     if payload:
         try:
             graph = PlanGraph.model_validate_json(payload)
-        except Exception as exc:  # noqa: BLE001 - reported, not raised
-            diagnostics.append(
-                Diagnostic(
-                    severity="error",
-                    message=f"the plan printed a graph that could not be read: {exc}",
-                )
-            )
+        except Exception as exc:
+            # Not a verdict on the plan. The JSON is printed by the prelude, never by the
+            # plan's author, so a shape this cannot read means the prelude and this server
+            # disagree about what a graph is — a checkout where one was updated and the other
+            # was not, or a server still running the code it was started with. Reporting that
+            # as "the plan does not hold up" is the same lie as an unbuilt prelude was, and it
+            # is worse here because the plan is fine.
+            raise LeanUnavailable(
+                "the ChiefPlan prelude printed a graph this server cannot read, so nothing "
+                "about the plan could be established. The prelude and the server are out of "
+                f"step — restarting the server usually settles it. Details: {exc}"
+            ) from exc
 
     if graph is not None:
         diagnostics.extend(

@@ -45,6 +45,9 @@ structure Node where
   kind : String
   goal : String
   harness : String
+  /-- Which part of the work this step belongs to, or empty. A label for a reader, never
+  something the checking reads: naming a phase says nothing about what any step demands. -/
+  group : String
   criteria : List String
   /-- What a checkpoint asks a person for. Empty on a task. -/
   fields : List String
@@ -84,10 +87,11 @@ def task {β : Type} [ArtifactType β] (id : String) (goal : String)
     (harness : String := "claude")
     (criteria : List String := [])
     (inputs : List Port := [])
-    (produces : String := "out") : PlanM (Ref β out) := do
+    (produces : String := "out")
+    (group : String := "") : PlanM (Ref β out) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
-        id, kind := "task", goal, harness, criteria, fields := [], inputs,
+        id, kind := "task", goal, harness, group, criteria, fields := [], inputs,
         produces := some {
           label := produces
           source := id
@@ -119,10 +123,12 @@ kind of claim a proof assistant makes, and pretending otherwise is exactly the o
 design avoids. What is checked is that everything downstream of the decision depends on it. -/
 def checkpoint (id : String) (goal : String)
     (fields : List String := [])
-    (inputs : List Port := []) : PlanM (Ref Approval granted) := do
+    (inputs : List Port := [])
+    (group : String := "") : PlanM (Ref Approval granted) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
-        id, kind := "checkpoint", goal, harness := "human", criteria := [], fields, inputs,
+        id, kind := "checkpoint", goal, harness := "human", group, criteria := [], fields,
+        inputs,
         produces := some {
           label := "approval"
           source := id

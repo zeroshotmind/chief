@@ -56,6 +56,11 @@ end Json
 
 open Json
 
+/-- Whitespace-only, including empty. Spelled out rather than via `trim`, which now yields a
+slice and would drag a conversion into every call. -/
+private def isBlank (s : String) : Bool :=
+  s.all fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r'
+
 def Port.toJson (p : Port) : String :=
   obj [("label", str p.label), ("source", str p.source),
        ("artifact_type", str p.artifactType), ("contract", str p.contract),
@@ -64,6 +69,7 @@ def Port.toJson (p : Port) : String :=
 def Node.toJson (n : Node) : String :=
   obj [("id", str n.id), ("type", str n.kind), ("goal", str n.goal),
        ("harness", str n.harness),
+       ("group", if isBlank n.group then "null" else str n.group),
        ("criteria", arr (n.criteria.map str)),
        ("fields", arr (n.fields.map str)),
        ("depends_on", arr ((n.inputs.map (·.source)).eraseDups.map str)),
@@ -71,11 +77,6 @@ def Node.toJson (n : Node) : String :=
        ("produces", match n.produces with
                     | none => "null"
                     | some p => Port.toJson p)]
-
-/-- Whitespace-only, including empty. Spelled out rather than via `trim`, which now yields a
-slice and would drag a conversion into every call. -/
-private def isBlank (s : String) : Bool :=
-  s.all fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
 /-- Ids that appear more than once, in first-seen order. -/
 private def duplicateIds (ids : List String) : List String :=

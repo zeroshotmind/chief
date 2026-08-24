@@ -61,6 +61,7 @@ def _step_for(node: PlanNode) -> WorkflowStep:
         "goal": node.goal,
         "harness": node.harness,
         "depends_on": list(node.depends_on),
+        "group": node.group,
         "inputs": _inputs_for(node),
     }
     if node.type == "checkpoint":
