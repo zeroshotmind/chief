@@ -66,6 +66,14 @@ def Port.toJson (p : Port) : String :=
        ("artifact_type", str p.artifactType), ("contract", str p.contract),
        ("refined", bool p.refined)]
 
+def Alg.AlgLine.toJson (l : Alg.AlgLine) : String :=
+  obj [("indent", num l.indent), ("text", str l.text)]
+
+def Alg.AlgRecord.toJson (a : Alg.AlgRecord) : String :=
+  obj [("lines", arr (a.lines.map Alg.AlgLine.toJson)),
+       ("externals", arr (a.externals.map fun (tag, fn) =>
+          obj [("tag", str tag), ("fn", str fn)]))]
+
 def Node.toJson (n : Node) : String :=
   obj [("id", str n.id), ("type", str n.kind), ("goal", str n.goal),
        ("harness", str n.harness),
@@ -76,7 +84,10 @@ def Node.toJson (n : Node) : String :=
        ("inputs", arr (n.inputs.map Port.toJson)),
        ("produces", match n.produces with
                     | none => "null"
-                    | some p => Port.toJson p)]
+                    | some p => Port.toJson p),
+       ("algorithm", match n.algorithm with
+                     | none => "null"
+                     | some a => a.toJson)]
 
 /-- Ids that appear more than once, in first-seen order. -/
 private def duplicateIds (ids : List String) : List String :=
@@ -100,7 +111,11 @@ def problems (nodes : List Node) : List String :=
   let selfDep := nodes.flatMap fun n =>
     n.inputs.filterMap fun p =>
       if p.source == n.id then some s!"step '{n.id}' depends on itself" else none
-  dups ++ blank ++ dangling ++ selfDep
+  let algProblems := nodes.flatMap fun n =>
+    match n.algorithm with
+    | none => []
+    | some a => a.problems.map fun p => s!"step '{n.id}' algorithm: {p}"
+  dups ++ blank ++ dangling ++ selfDep ++ algProblems
 
 /-- How much this plan actually claims.
 
@@ -112,7 +127,8 @@ def stats (nodes : List Node) : String :=
        ("edges", num (nodes.flatMap (·.inputs)).length),
        ("contracts_total", num ports.length),
        ("contracts_refined", num (ports.filter (·.refined)).length),
-       ("contracts_any", num (ports.filter (!·.refined)).length)]
+       ("contracts_any", num (ports.filter (!·.refined)).length),
+       ("algorithms", num (nodes.filter (·.algorithm.isSome)).length)]
 
 def planJson (title : String) (nodes : List Node) : String :=
   obj [("schema", str "chief.plan/v1"),

@@ -1,4 +1,5 @@
 import ChiefPlan.Contract
+import ChiefPlan.Alg
 
 /-!
 # The plan as a graph
@@ -54,6 +55,10 @@ structure Node where
   fields : List String
   inputs : List Port
   produces : Option Port
+  /-- The step's algorithm, already run to lines and a legend, if the plan gives one. Its
+  problems surface with the graph's — a step whose pseudocode names a variable nothing
+  bound must fail the plan, not decorate it. -/
+  algorithm : Option Alg.AlgRecord
 deriving Repr, Inhabited
 
 /-- What a plan accumulates as it is run. -/
@@ -89,7 +94,8 @@ def task {β : Type} [ArtifactType β] (id : String) (goal : String)
     (criteria : List String := [])
     (inputs : List Port := [])
     (produces : String := "out")
-    (group : String := "") : PlanM (Ref β out) := do
+    (group : String := "")
+    (algorithm : Option (Alg.AlgM Unit) := none) : PlanM (Ref β out) := do
   modify fun s =>
     { s with nodes := s.nodes ++ [{
         id, kind := "task", goal, harness, group, criteria, fields := [], inputs,
@@ -98,7 +104,8 @@ def task {β : Type} [ArtifactType β] (id : String) (goal : String)
           source := id
           artifactType := typeName β
           contract := out.shown
-          refined := out.refined } }] }
+          refined := out.refined }
+        algorithm := algorithm.map (·.record) }] }
   return ⟨id⟩
 
 /-- What a person hands back when they clear a checkpoint. -/
@@ -135,7 +142,8 @@ def checkpoint (id : String) (goal : String)
           source := id
           artifactType := "Approval"
           contract := granted.shown
-          refined := granted.refined } }] }
+          refined := granted.refined }
+        algorithm := none }] }
   return ⟨id⟩
 
 /-- Run a plan and hand back the nodes it recorded, in the order they were written. -/

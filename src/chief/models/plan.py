@@ -69,6 +69,40 @@ class PlanPort(BaseModel):
     refined: bool
 
 
+class PlanAlgLine(BaseModel):
+    """One rendered line of a step's algorithm."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    indent: int = 0
+    text: str
+
+
+class PlanExternal(BaseModel):
+    """One external dependency an algorithm reaches for — an LLM call, a search API, a
+    database query, a library routine. Collected off the checked term, not declared."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tag: str
+    fn: str
+
+
+class PlanAlgorithm(BaseModel):
+    """A step's algorithm as pseudocode, rendered from the term Lean elaborated.
+
+    What this carries was checked for scope and shape only — an algorithm whose variables
+    do not hold together never gets this far, because its problems fail the plan. Nothing
+    here is a claim about what the mathematics means, and the UI must not present it as
+    one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[PlanAlgLine] = Field(default_factory=list)
+    externals: list[PlanExternal] = Field(default_factory=list)
+
+
 class PlanNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -83,6 +117,8 @@ class PlanNode(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     inputs: list[PlanPort] = Field(default_factory=list)
     produces: PlanPort | None = None
+    #: The step's algorithm, if the plan gives one.
+    algorithm: PlanAlgorithm | None = None
 
 
 class PlanStats(BaseModel):
@@ -100,6 +136,8 @@ class PlanStats(BaseModel):
     contracts_total: int = 0
     contracts_refined: int = 0
     contracts_any: int = 0
+    #: How many steps carry an algorithm. Absent from graphs an older prelude printed.
+    algorithms: int = 0
 
     @property
     def vacuous(self) -> bool:

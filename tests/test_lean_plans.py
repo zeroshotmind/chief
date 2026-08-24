@@ -100,6 +100,8 @@ def test_the_worked_example_verifies() -> None:
     assert result.graph.stats.contracts_any == 0
     assert result.graph.stats.contracts_refined == result.graph.stats.contracts_total
     assert not result.graph.stats.vacuous
+    # `fit_model` carries its algorithm; the graph counts it.
+    assert result.graph.stats.algorithms == 1
     assert result.toolchain
 
 
@@ -510,3 +512,78 @@ def test_a_graph_this_server_cannot_read_is_not_a_plan_that_failed(monkeypatch) 
         verify_source(example_source())
 
     assert "out of step" in str(raised.value)
+
+
+# ---------------------------------------------------------------------------- algorithms
+
+
+# The worked example's `fit_model` carries an algorithm; the assertions on it live with the
+# example tests above the fold, so these focus on the guarantees: an algorithm's variables
+# must hold together, its externals are derived rather than declared, and a checkpoint never
+# carries one.
+ALG_STEP = """
+    (algorithm := some do
+      let m ← assign "m" (call1 "algo" "count_words" (x!(d) : Term (Ty.coll Ty.text))
+        : Term Ty.scalar)
+      let ok ← assign "ok" (Term.ge m (Term.param "θ"))
+      ret ok)"""
+
+
+def with_algorithm(body: str = ALG_STEP) -> str:
+    source = minimal().replace("open ChiefPlan", "open ChiefPlan Alg")
+    return source.replace(
+        'task "revise" "Revise the thing." weak (inputs := [input "draft" d])',
+        'task "revise" "Revise the thing." weak (inputs := [input "draft" d])' + body,
+    )
+
+
+@needs_lean
+def test_a_step_algorithm_is_rendered_and_its_externals_derived() -> None:
+    result = verify_source(with_algorithm())
+
+    assert result.status == "verified", errors(result)
+    assert result.graph is not None
+    node = result.graph.node("revise")
+    assert node is not None and node.algorithm is not None
+    texts = [line.text for line in node.algorithm.lines]
+    assert texts == [
+        "m ← count_words(write)",
+        "ok ← m ≥ θ",
+        "return ok",
+    ]
+    # The external call was collected off the term, not declared beside it.
+    assert [(e.tag, e.fn) for e in node.algorithm.externals] == [("algo", "count_words")]
+    assert result.graph.stats.algorithms == 1
+    # Steps without one say so rather than carrying something empty.
+    write = result.graph.node("write")
+    assert write is not None and write.algorithm is None
+
+
+@needs_lean
+def test_an_algorithm_variable_nothing_bound_fails_the_plan() -> None:
+    leaky = """
+    (algorithm := some do
+      foreach "w" (x!(d) : Term (Ty.coll Ty.text)) fun _ => do
+        let _ ← assign "n" (Term.lit "1")
+        pure ()
+      ret (Term.bound (t := Ty.scalar) "n"))"""
+
+    result = verify_source(with_algorithm(leaky))
+
+    assert result.status == "failed"
+    assert any(
+        "algorithm" in message and "'n'" in message for message in errors(result)
+    ), errors(result)
+
+
+@needs_lean
+def test_an_algorithm_cannot_reach_an_artifact_the_step_does_not_hold() -> None:
+    """The bridge is the claim: x! needs the Ref, and the Ref is a parameter the step was
+    given. An algorithm on `revise` naming a handle that is not among its parameters is not
+    a lint — it does not elaborate."""
+    grabby = ALG_STEP.replace("x!(d)", "x!(nothere)")
+
+    result = verify_source(with_algorithm(grabby))
+
+    assert result.status == "failed"
+    assert any("nothere" in message for message in errors(result)), errors(result)

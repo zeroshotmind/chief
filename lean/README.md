@@ -45,9 +45,10 @@ graph back — and `chief.lean.compile_plan` lowers the result into a `WorkflowC
 | --- | --- |
 | `ChiefPlan.lean` | The whole vocabulary, listed. Start here. |
 | `ChiefPlan/Contract.lean` | Artifact types, contracts, handles, and the entailment tactic. |
+| `ChiefPlan/Alg.lean` | Step algorithms: expressions, statements, and the artifact bridge. |
 | `ChiefPlan/Graph.lean` | `task`, `checkpoint`, `input`, and how the graph is recorded. |
 | `ChiefPlan/Emit.lean` | Extraction, the structural checks, and the statistics block. |
-| `Examples/Pipeline.lean` | A complete five-step plan. Read this second. |
+| `Examples/Pipeline.lean` | A complete five-step plan, one step carrying its algorithm. |
 
 ## What is actually guaranteed
 
@@ -66,6 +67,17 @@ time, as a criterion, against the one concrete value. Whether the text beside a 
 describes it correctly: the kernel reads the predicate and never the label, so a mislabelled
 contract still constrains exactly what its predicate says, but it will display the wrong
 thing.
+
+**Checked, but weaker than proven: a step's algorithm.** A task may carry its algorithm as
+pseudocode rendered from a term Lean elaborated. What that buys is scope and shape — every
+variable is a field of an artifact the step holds or a name an earlier line bound, vector
+widths agree, collections bind properly, and text becomes a number only through a named
+external call, all of which are collected into a legend so a reader sees where the outside
+world enters. What it does not buy is semantics: `Σ` and `log` are constructors, and nobody
+proved the mean lies in `[0,1]`. An algorithm whose variables do not hold together fails the
+plan rather than rendering; one whose mathematics is wrong renders faithfully, which is the
+point — it is there to be reviewed, and the UI deliberately draws it as a listing rather
+than in the colour the proven contracts wear.
 
 **Deliberately outside the fragment.** Anything a plan-time check cannot settle — whether a
 document reads well, whether a review was thorough, whether the right people were consulted.

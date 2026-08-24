@@ -24,7 +24,7 @@ Change `fitModel` to promise `auc ≥ 70` and the file stops compiling, pointing
 That is the whole feature in one edit.
 -/
 
-open ChiefPlan
+open ChiefPlan Alg
 
 /-! ## Artifacts -/
 
@@ -100,10 +100,20 @@ def buildDataset (e : Ref RawEvents usable) : PlanM (Ref Dataset trainable) :=
                   "every row carries a fraud label"])
     (inputs := [input "events" e])
 
+/-- `fit_model` also carries its algorithm — pseudocode rendered from a checked term, with
+the training routine and the scorer showing up as the external calls they are. See
+`ChiefPlan/Alg.lean` for what is and is not established by this. -/
 def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
   task "fit_model" "Train the gradient-boosted classifier and record held-out AUC." accurate
     (criteria := ["held-out AUC recorded", "training config saved beside the model"])
     (inputs := [input "dataset" d])
+    (algorithm := some do
+      let M ← assign "M"
+        (call2 "algo" "xgboost" (x!(d) : Term (Ty.coll Ty.text))
+          (Term.param (t := Ty.scalar) "λ") : Term Ty.text)
+      let auc ← assign "auc" (call2 "algo" "auc_heldout" M (x!(d) : Term (Ty.coll Ty.text)))
+      whenever (Term.ge auc (Term.param "τ")) do
+        ret M)
 
 def review (m : Ref Model reviewable) : PlanM (Ref Approval granted) :=
   checkpoint "review" "Decide whether this model is fit to serve live traffic."

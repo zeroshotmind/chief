@@ -1,4 +1,5 @@
 import ChiefPlan.Contract
+import ChiefPlan.Alg
 import ChiefPlan.Graph
 import ChiefPlan.Emit
 
@@ -86,6 +87,44 @@ the wrong type.
 * `Approval` and `granted` — the artifact a checkpoint returns and the contract saying it was
   cleared. A step taking `Ref Approval granted` cannot be written without it, which is what
   makes a gate structural rather than merely an ordering.
+
+**Step algorithms** (`ChiefPlan.Alg`) — optional, and needing `open ChiefPlan Alg`
+
+A task may carry its algorithm: numbered pseudocode rendered from a term Lean checked.
+What is checked is scope and shape — every variable is a field of an artifact the step
+holds or a name an earlier line bound, and an algorithm that mentions one nothing bound
+fails the whole plan. What is *not* checked is the mathematics itself: `Σ` and `log` are
+constructors, not claims. External dependencies (LLM calls, search, databases, library
+routines) are named oracle terms, collected into a legend, so a reader sees exactly where
+the outside world enters.
+
+```lean
+def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
+  task "fit_model" "Train the classifier." accurate
+    (inputs := [input "dataset" d])
+    (algorithm := some do
+      let M ← assign "M" (call2 "algo" "xgboost" (x!(d) : Term (Ty.coll Ty.text))
+        (Term.param (t := Ty.scalar) "λ") : Term Ty.text)
+      let auc ← assign "auc" (call2 "algo" "auc_heldout" M (x!(d) : Term (Ty.coll Ty.text)))
+      whenever (Term.ge auc (Term.param "τ")) do
+        ret M)
+```
+
+* `x!(r, field)` — that field of the artifact `r` refers to; the field must exist, and its
+  Lean type fixes the shape (`Nat → scalar`, `String → text`, `List β → coll _`).
+  `x!(r)` — the artifact itself, opaque, at whatever shape the use site needs. These are
+  the only ways to bring data in; `Term.param "τ"` names a knob, never data.
+* `assign`, `gather`, `foreach`, `whenever`, `note`, `ret` — the statement layer. `let m ←
+  assign "m" e` binds a variable (same name in string and binder); `gather "R" "g" G fun g
+  => e` builds a collection from per-element results, which is how a loop's work becomes a
+  value; `foreach` is a loop whose body is lines, whose binder dies with it; `ret` what
+  `assign`/`gather` handed you.
+* `Σ x ∈ c, body`, `argmax x ∈ c, body`, `filter x ∈ c, cond` — binders over collections.
+  Arithmetic on scalars is `+ − * /`, plus `Term.log`, `Term.card`, `Term.cos`,
+  `Term.embed`, and comparisons `Term.ge/le/eq/ne`.
+* `call1`/`call2`/`call3` — external calls, by arity: tag first (`"llm"`, `"search"`,
+  `"db"`, `"algo"`), then the call's name, then arguments. Annotate the result shape
+  (`: Term Ty.text`) whenever it feeds something polymorphic — when in doubt, annotate.
 
 **Extraction** (`ChiefPlan.Emit`)
 
