@@ -46,6 +46,10 @@ open Ty
 type; `List` lifts pointwise. -/
 class Reifies (β : Type) where
   ty : Ty
+/- Reducible, so a bridged field can meet the arithmetic instances directly: without this,
+`x!(t, count) / 100` fails to find `Div` on `Term (Reifies.ty Nat)` even though that *is*
+`Term Ty.scalar`, and the author is pushed into an ascription that says nothing. -/
+attribute [reducible] Reifies.ty
 instance : Reifies Nat := ⟨scalar⟩
 instance : Reifies Bool := ⟨Ty.bool⟩
 instance : Reifies String := ⟨text⟩
@@ -70,6 +74,7 @@ inductive Term : Ty → Type where
   | mul : Term scalar → Term scalar → Term scalar
   | div : Term scalar → Term scalar → Term scalar
   | log : Term scalar → Term scalar
+  | exp : Term scalar → Term scalar
   | card {t} : Term (coll t) → Term scalar
   | sum {t} (bind : String) (over : Term (coll t)) (body : String → Term scalar) :
       Term scalar
@@ -199,6 +204,7 @@ partial def render : {t : Ty} → Term t → String
   | _, .mul a b => s!"{render a}·{render b}"
   | _, .div a b => s!"{render a}/{render b}"
   | _, .log a => s!"log {render a}"
+  | _, .exp a => s!"exp({render a})"
   | _, .card s => s!"|{render s}|"
   | _, .sum x s f => s!"Σ_({x} ∈ {render s}) {render (f x)}"
   | _, .argmax x s f => s!"argmax_({x} ∈ {render s}) {render (f x)}"
@@ -239,6 +245,7 @@ partial def scan : {t : Ty} → Term t → (List String × List (String × Strin
       let (v₂, o₂) := scan b
       (v₁ ++ v₂, o₁ ++ o₂)
   | _, .log a => scan a
+  | _, .exp a => scan a
   | _, .card s => scan s
   | _, .sum x s f | _, .argmax x s f =>
       let (v₁, o₁) := scan s

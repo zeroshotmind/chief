@@ -120,8 +120,8 @@ def fitModel (d : Ref Dataset enoughToFit) : PlanM (Ref Model accurate) :=
   value; `foreach` is a loop whose body is lines, whose binder dies with it; `ret` what
   `assign`/`gather` handed you.
 * `Σ x ∈ c, body`, `argmax x ∈ c, body`, `filter x ∈ c, cond` — binders over collections.
-  Arithmetic on scalars is `+ − * /`, plus `Term.log`, `Term.card`, `Term.cos`,
-  `Term.embed`, and comparisons `Term.ge/le/eq/ne`.
+  Arithmetic on scalars is `+ − * /`, plus `Term.log`, `Term.exp`, `Term.card`,
+  `Term.cos`, `Term.embed`, and comparisons `Term.ge/le/eq/ne`.
 * `call1`/`call2`/`call3` — external calls, by arity: tag first (`"llm"`, `"search"`,
   `"db"`, `"algo"`), then the call's name, then arguments. Annotate the result shape
   (`: Term Ty.text`) whenever it feeds something polymorphic — when in doubt, annotate.
