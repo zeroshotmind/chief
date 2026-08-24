@@ -619,3 +619,43 @@ def test_a_group_description_travels_and_a_dangling_one_is_refused() -> None:
     )
     assert dangling.status == "failed"
     assert any("Ghost" in message for message in errors(dangling)), errors(dangling)
+
+
+@needs_lean
+def test_a_derived_schema_travels_on_both_ends_of_an_edge() -> None:
+    """`artifact_schema` reads the structure by reflection, so the emitted fields are the
+    structure's own — and they appear on the input side and the output side alike, since
+    both name the same type."""
+    result = verify_source(example_source())
+
+    assert result.status == "verified", errors(result)
+    assert result.graph is not None
+    fit = result.graph.node("fit_model")
+    assert fit is not None
+    assert [(f.name, f.type) for f in fit.inputs[0].schema_] == [
+        ("rows", "Nat"),
+        ("labelled", "Bool"),
+    ]
+    assert fit.produces is not None
+    assert [(f.name, f.type) for f in fit.produces.schema_] == [("auc", "Nat")]
+    # A plan that derives no schema shows none — undeclared, not field-free.
+    bare = verify_source(minimal())
+    assert bare.status == "verified", errors(bare)
+    assert bare.graph is not None
+    write = bare.graph.node("write")
+    assert write is not None and write.produces is not None
+    assert write.produces.schema_ == []
+
+
+def test_compile_restates_a_schema_as_a_validation_criterion() -> None:
+    from chief.models import PlanField
+
+    node = graph().nodes[0]
+    node.produces.schema_ = [PlanField(name="rows", type="Nat")]
+    compiled = compile_plan(graph(nodes=[node]))
+
+    step = compiled.steps[0]
+    texts = [c.text for c in step.criteria]
+    assert any("document with fields: rows (Nat)" in t for t in texts), texts
+    (output,) = step.outputs.values()
+    assert output["schema"] == {"rows": "Nat"}

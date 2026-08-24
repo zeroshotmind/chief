@@ -33,6 +33,7 @@ structure RawEvents where
 deriving Repr
 
 instance : ArtifactType RawEvents := ⟨"RawEvents"⟩
+artifact_schema RawEvents
 
 structure Dataset where
   rows : Nat
@@ -40,18 +41,21 @@ structure Dataset where
 deriving Repr
 
 instance : ArtifactType Dataset := ⟨"Dataset"⟩
+artifact_schema Dataset
 
 structure Model where
   auc : Nat
 deriving Repr
 
 instance : ArtifactType Model := ⟨"Model"⟩
+artifact_schema Model
 
 structure Deployment where
   live : Bool
 deriving Repr
 
 instance : ArtifactType Deployment := ⟨"Deployment"⟩
+artifact_schema Deployment
 
 /-! ## Contracts
 

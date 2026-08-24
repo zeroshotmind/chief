@@ -46,6 +46,7 @@ graph back — and `chief.lean.compile_plan` lowers the result into a `WorkflowC
 | `ChiefPlan.lean` | The whole vocabulary, listed. Start here. |
 | `ChiefPlan/Contract.lean` | Artifact types, contracts, handles, and the entailment tactic. |
 | `ChiefPlan/Alg.lean` | Step algorithms: expressions, statements, and the artifact bridge. |
+| `ChiefPlan/Schema.lean` | Artifact schemas, derived from the structures by reflection. |
 | `ChiefPlan/Graph.lean` | `task`, `checkpoint`, `input`, and how the graph is recorded. |
 | `ChiefPlan/Emit.lean` | Extraction, the structural checks, and the statistics block. |
 | `Examples/Pipeline.lean` | A complete five-step plan, one step carrying its algorithm. |

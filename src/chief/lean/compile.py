@@ -26,6 +26,14 @@ from ..models import PlanGraph, PlanNode, WorkflowCreate, WorkflowStep
 #: check rather than as a promise because that is what a criterion is read as at report time.
 _PRODUCES = "the {artifact} this step produces satisfies: {contract}"
 
+#: A derived schema, restated the same way: the produced document must actually carry the
+#: fields the plan's structure declares, and the harness validates that at report time.
+_SCHEMA = "the {artifact} this step produces is a document with fields: {fields}"
+
+
+def _schema_of(port) -> dict[str, str]:
+    return {field.name: field.type for field in port.schema_}
+
 
 def _inputs_for(node: PlanNode) -> dict[str, object]:
     """What the plan knows about each artifact this step reads.
@@ -41,6 +49,7 @@ def _inputs_for(node: PlanNode) -> dict[str, object]:
             "contract": port.contract,
             "from_step": port.source,
             "proven": port.refined,
+            **({"schema": _schema_of(port)} if port.schema_ else {}),
         }
         for port in node.inputs
     }
@@ -61,6 +70,7 @@ def _outputs_for(node: PlanNode) -> dict[str, object]:
             "artifact_type": port.artifact_type,
             "contract": port.contract,
             "proven": port.refined,
+            **({"schema": _schema_of(port)} if port.schema_ else {}),
         }
     }
 
@@ -71,6 +81,13 @@ def _step_for(node: PlanNode) -> WorkflowStep:
         criteria.append(
             _PRODUCES.format(
                 artifact=node.produces.artifact_type, contract=node.produces.contract
+            )
+        )
+    if node.type == "task" and node.produces is not None and node.produces.schema_:
+        criteria.append(
+            _SCHEMA.format(
+                artifact=node.produces.artifact_type,
+                fields=", ".join(f"{f.name} ({f.type})" for f in node.produces.schema_),
             )
         )
 

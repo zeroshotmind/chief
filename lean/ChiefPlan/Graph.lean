@@ -1,5 +1,6 @@
 import ChiefPlan.Contract
 import ChiefPlan.Alg
+import ChiefPlan.Schema
 
 /-!
 # The plan as a graph
@@ -37,6 +38,9 @@ structure Port where
   artifactType : String
   contract : String
   refined : Bool
+  /-- The artifact type's fields, where `artifact_schema` derived them. Empty means
+  undeclared, not field-free. -/
+  schema : List (String × String) := []
 deriving Repr, Inhabited
 
 /-- A step, in the shape Chief will receive it. -/
@@ -78,19 +82,21 @@ abbrev PlanM := StateM PlanState
 
 The label is what the edge is called on the consuming side (`"dataset"`, `"approval"`), and
 becomes the key under which Chief records the input. -/
-def input {α : Type} [ArtifactType α] {c : Contract α} (label : String) (r : Ref α c) : Port :=
+def input {α : Type} [ArtifactType α] [ArtifactSchema α] {c : Contract α}
+    (label : String) (r : Ref α c) : Port :=
   { label
     source := r.source
     artifactType := typeName α
     contract := c.shown
-    refined := c.refined }
+    refined := c.refined
+    schema := ArtifactSchema.fields (α := α) }
 
 /-- Record a step and return a handle to what it produces.
 
 `out` is the contract the step *promises*. It is an explicit argument rather than an inferred
 one because it appears in the result type — `PlanM (Ref β out)` — so writing it is how the
 author states the promise, and every later consumer is checked against it. -/
-def task {β : Type} [ArtifactType β] (id : String) (goal : String)
+def task {β : Type} [ArtifactType β] [ArtifactSchema β] (id : String) (goal : String)
     (out : Contract β)
     (harness : String := "claude")
     (criteria : List String := [])
@@ -106,7 +112,8 @@ def task {β : Type} [ArtifactType β] (id : String) (goal : String)
           source := id
           artifactType := typeName β
           contract := out.shown
-          refined := out.refined }
+          refined := out.refined
+          schema := ArtifactSchema.fields (α := β) }
         algorithm := algorithm.map (·.record) }] }
   return ⟨id⟩
 
@@ -116,6 +123,7 @@ structure Approval where
 deriving Repr, Inhabited
 
 instance : ArtifactType Approval := ⟨"Approval"⟩
+artifact_schema Approval
 
 /-- A checkpoint that was actually cleared, as opposed to merely reached.
 
@@ -144,7 +152,8 @@ def checkpoint (id : String) (goal : String)
           source := id
           artifactType := "Approval"
           contract := granted.shown
-          refined := granted.refined }
+          refined := granted.refined
+          schema := ArtifactSchema.fields (α := Approval) }
         algorithm := none }] }
   return ⟨id⟩
 

@@ -492,11 +492,13 @@ def test_both_transports_spell_a_plan_graph_the_same_way(client):
     """REQ-4 at the level of a field name, which is where it is easiest to break.
 
     ``PlanGraph`` names its version marker ``schema_`` and aliases it back to ``schema``,
-    because a bare ``schema`` would shadow a BaseModel attribute. FastAPI serialises response
-    models by alias and pydantic's own ``model_dump`` does not, so a transport that reached
-    for the latter would emit ``schema_`` where REST emits ``schema`` — the same document
-    spelled two ways depending on how you asked for it. It is the only alias in these models,
-    so this is the whole exposure, and it is worth a test rather than a memory.
+    because a bare ``schema`` would shadow a BaseModel attribute; ``PlanPort`` does the same
+    for an artifact's field schema. FastAPI serialises response models by alias and
+    pydantic's own ``model_dump`` does not, so a transport that reached for the latter would
+    emit ``schema_`` where REST emits ``schema`` — the same document spelled two ways
+    depending on how you asked for it. These two are the only aliases in the models, and the
+    node-level equality below covers the port-level one, so this is the whole exposure and
+    it is worth a test rather than a memory.
     """
     call = open_mcp_session(client)
     source = (chief_lean.package_dir() / "Examples" / "Pipeline.lean").read_text(encoding="utf-8")

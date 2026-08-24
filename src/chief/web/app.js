@@ -1651,6 +1651,14 @@ function contractCard(label, port) {
       weakened && el("span", { class: "contract-arrow", text: "needs" }),
       el("code", { class: "contract-pred", text: port.contract }),
     ),
+    // The artifact's field layout, where the plan derived one. Derived from the structure
+    // both ends of the edge name, so what is shown here is also what the runtime document
+    // is validated against. Absent means undeclared, never field-free.
+    (port.schema || []).length > 0 &&
+      el("code", {
+        class: "contract-schema",
+        text: `{ ${port.schema.map((f) => `${f.name}: ${f.type}`).join(", ")} }`,
+      }),
     port.from_step &&
       el("span", { class: "contract-from text-muted", text: `from ${port.from_step}` }),
   );
@@ -4894,6 +4902,7 @@ function defFromPlan(plan) {
             contract: port.contract,
             from_step: port.source,
             proven: port.refined,
+            schema: port.schema || [],
           },
         ]),
       ),
@@ -4903,6 +4912,7 @@ function defFromPlan(plan) {
               artifact_type: n.produces.artifact_type,
               contract: n.produces.contract,
               proven: n.produces.refined,
+              schema: n.produces.schema || [],
             },
           }
         : {},

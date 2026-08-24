@@ -64,7 +64,9 @@ private def isBlank (s : String) : Bool :=
 def Port.toJson (p : Port) : String :=
   obj [("label", str p.label), ("source", str p.source),
        ("artifact_type", str p.artifactType), ("contract", str p.contract),
-       ("refined", bool p.refined)]
+       ("refined", bool p.refined),
+       ("schema", arr (p.schema.map fun (n, t) =>
+          obj [("name", str n), ("type", str t)]))]
 
 def Alg.AlgLine.toJson (l : Alg.AlgLine) : String :=
   obj [("indent", num l.indent), ("text", str l.text)]

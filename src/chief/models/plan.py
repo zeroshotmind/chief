@@ -47,6 +47,15 @@ class Diagnostic(BaseModel):
     step_id: str | None = None
 
 
+class PlanField(BaseModel):
+    """One field of an artifact's schema: name and pretty-printed Lean type."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: str
+
+
 class PlanPort(BaseModel):
     """One artifact crossing one edge.
 
@@ -56,7 +65,9 @@ class PlanPort(BaseModel):
     just the fact that a claim was made.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # ``schema`` shadows a BaseModel attribute, same as on PlanGraph, and is aliased the
+    # same way for the same reason.
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     label: str
     #: The step that produces this artifact. What turns a value dependency into a graph edge.
@@ -67,6 +78,9 @@ class PlanPort(BaseModel):
     #: because a plan of nine real contracts and one empty one on the edge that matters must
     #: be able to say *which* edge.
     refined: bool
+    #: The artifact type's fields, where the plan derived them with ``artifact_schema``.
+    #: Empty means undeclared, never field-free — the UI must not read it as "no fields".
+    schema_: list[PlanField] = Field(default_factory=list, alias="schema")
 
 
 class PlanAlgLine(BaseModel):

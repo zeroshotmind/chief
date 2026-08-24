@@ -251,8 +251,17 @@ const PLAN_GRAPH = {
     {
       id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude", group: "Data/Modelling",
       criteria: ["AUC recorded"], fields: [], depends_on: ["harvest"],
-      inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
-      produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
+      inputs: [{
+        label: "events", source: "harvest", artifact_type: "RawEvents",
+        contract: "count ≥ 10000", refined: true,
+        // The artifact's derived field layout, shown under the condition on both ends.
+        schema: [{ name: "count", type: "Nat" }],
+      }],
+      produces: {
+        label: "out", source: "fit_model", artifact_type: "Model",
+        contract: "auc ≥ 80", refined: true,
+        schema: [{ name: "auc", type: "Nat" }],
+      },
       // The step's algorithm: rendered lines with indentation, and the external calls the
       // term reached for — pseudocode a reviewer reads, never something presented as proven.
       algorithm: {
@@ -1291,6 +1300,12 @@ const notInJsonDrawer = !stepText.includes("Other inputs");
 // two sides of an edge differ, the promise sits above the demand — that difference is the
 // thing the checking established.
 const promisesShown = stepText.includes("Produces") && stepText.includes("auc ≥ 80");
+// The derived schema renders under the condition, on the input and the output alike; a
+// port without one shows nothing rather than an empty pair of braces.
+const schemaShown =
+  stepText.includes("{ count: Nat }") &&
+  stepText.includes("{ auc: Nat }") &&
+  !stepText.includes("{  }");
 const givenAndNeeds = countClass(mainNode(), "contract-given");
 const weakeningVisible = stepText.includes("count ≥ 50000") && stepText.includes("count ≥ 10000");
 // The step's algorithm renders between the demands and the promise: numbered lines with the
@@ -1374,7 +1389,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
-console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}`);
+console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown}`);
 console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
@@ -1585,6 +1600,7 @@ const ok =
   promisesShown &&
   givenAndNeeds === 2 &&
   weakeningVisible &&
+  schemaShown &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
   algIndented === 1 &&

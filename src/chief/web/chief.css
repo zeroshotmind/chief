@@ -751,6 +751,12 @@ details[open] > .meta-summary::before { content: "▾ "; }
   overflow-wrap: anywhere;
 }
 .contract-from { font-size: 10px; }
+/* The artifact's field layout, quieter than the condition beside it: the contract is what
+   was proven, the schema is what the document must look like. */
+.contract-schema {
+  font-family: var(--font-mono); font-size: 10px; color: var(--color-neutral-500);
+  overflow-wrap: anywhere;
+}
 /* Promise above demand, aligned on a one-word gutter, so the eye reads down the pair rather
    than across it — the difference between the two lines is the thing that was proven. */
 .contract-given { display: flex; gap: var(--space-2); align-items: baseline; }
