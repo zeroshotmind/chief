@@ -253,6 +253,16 @@ const PLAN_GRAPH = {
       criteria: ["AUC recorded"], fields: [], depends_on: ["harvest"],
       inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
       produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
+      // The step's algorithm: rendered lines with indentation, and the external calls the
+      // term reached for — pseudocode a reviewer reads, never something presented as proven.
+      algorithm: {
+        lines: [
+          { indent: 0, text: "M ← xgboost(harvest, λ)" },
+          { indent: 0, text: "if auc ≥ τ:" },
+          { indent: 1, text: "return M" },
+        ],
+        externals: [{ tag: "algo", fn: "xgboost" }],
+      },
     },
     {
       id: "publish", type: "task", goal: "Publish it.", harness: "claude",
@@ -1281,6 +1291,16 @@ const notInJsonDrawer = !stepText.includes("Other inputs");
 const promisesShown = stepText.includes("Produces") && stepText.includes("auc ≥ 80");
 const givenAndNeeds = countClass(mainNode(), "contract-given");
 const weakeningVisible = stepText.includes("count ≥ 50000") && stepText.includes("count ≥ 10000");
+// The step's algorithm renders between the demands and the promise: numbered lines with the
+// indentation the term carried, and the external calls printed once as a legend rather than
+// tagged inline. It reads as a listing, not a proof — no accent colouring is asserted here
+// because none is applied.
+const algLines = countClass(mainNode(), "alg-line");
+const algShown =
+  algLines === 3 &&
+  stepText.includes("xgboost(harvest, λ)") &&
+  stepText.includes("return M") &&
+  stepText.includes("xgboost ⟨algo⟩");
 
 // Graph and source are two views of one plan, so they sit behind a toggle rather than
 // stacked. The graph is what a verified plan opens on.
@@ -1317,6 +1337,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
+console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
@@ -1526,6 +1547,8 @@ const ok =
   promisesShown &&
   givenAndNeeds === 2 &&
   weakeningVisible &&
+  // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
+  algShown &&
   notInJsonDrawer &&
   claimsShown &&
   !!verified &&

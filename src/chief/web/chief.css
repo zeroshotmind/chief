@@ -713,232 +713,6 @@ details[open] > .meta-summary::before { content: "▾ "; }
 .op-now { color: var(--color-accent-700); }
 .op-note { color: var(--color-neutral-500); font-size: 11px; }
 
-/* — contracts, diagnostics, plan source —
-   A contract is what a checked plan proved about an artifact that does not exist yet, so it
-   is deliberately quieter than an artifact card: no icon, no affordance, nothing to open. The
-   condition itself is the content, and it is the one part set in mono. */
-.contract {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.contract:last-of-type { border-bottom: 0; }
-.contract-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.contract-label { font-size: 12px; color: var(--color-text); }
-.contract-type { font-size: 10px; color: var(--color-neutral-500); }
-.contract-pred {
-  font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700);
-  overflow-wrap: anywhere;
-}
-.contract-from { font-size: 10px; }
-
-/* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
-   meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
-   panel it sits in. */
-.diagnostic {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.diagnostic:last-of-type { border-bottom: 0; }
-.diagnostic-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.diagnostic-body, .plan-source {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-  color: var(--color-text); background: var(--color-surface);
-  border-radius: var(--radius-sm); padding: var(--space-2);
-  margin: 0; white-space: pre; overflow-x: auto;
-}
-.plan-source { max-height: 460px; overflow-y: auto; color: var(--color-neutral-700); }
-
-/* — contracts, diagnostics, plan source —
-   A contract is what a checked plan proved about an artifact that does not exist yet, so it
-   is deliberately quieter than an artifact card: no icon, no affordance, nothing to open. The
-   condition itself is the content, and it is the one part set in mono. */
-.contract {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.contract:last-of-type { border-bottom: 0; }
-.contract-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.contract-label { font-size: 12px; color: var(--color-text); }
-.contract-type { font-size: 10px; color: var(--color-neutral-500); }
-.contract-pred {
-  font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700);
-  overflow-wrap: anywhere;
-}
-.contract-from { font-size: 10px; }
-
-/* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
-   meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
-   panel it sits in. */
-.diagnostic {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.diagnostic:last-of-type { border-bottom: 0; }
-.diagnostic-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.diagnostic-body {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-  color: var(--color-text); background: var(--color-surface);
-  border-radius: var(--radius-sm); padding: var(--space-2);
-  margin: 0; white-space: pre; overflow-x: auto;
-}
-
-/* The source is a row per line rather than one `pre`, because a diagnostic reports a line
-   number and there has to be something for it to point at. */
-.plan-source {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
-  background: var(--color-surface); border-radius: var(--radius-sm);
-  padding: var(--space-2) 0; margin: 0; max-height: 70vh; overflow: auto;
-}
-.src-line { display: flex; gap: var(--space-3); padding: 0 var(--space-3); white-space: pre; }
-/* Stays put when a long line scrolls the file sideways — a line number that scrolls away is
-   a line number you cannot use. */
-.src-no {
-  position: sticky; left: 0; flex: none; width: 4ch; text-align: right;
-  color: var(--color-neutral-400); background: var(--color-surface); user-select: none;
-}
-.src-text { color: var(--color-neutral-700); }
-.src-line.on { background: var(--color-accent-200); }
-.src-line.on .src-no { color: var(--color-accent-700); background: var(--color-accent-200); }
-
-/* — group boundaries —
-   A phase is a label a person put on the work; the graph cannot recover it, and nothing on
-   the server derives anything from it. So it is drawn as quietly as a thing can be drawn and
-   still be seen: a hairline, a fill barely off the page, and the label in the same muted mono
-   as every other section label. No colour, because colour in this graph means status. */
-.group-box {
-  fill: var(--color-surface); fill-opacity: 0.6;
-  stroke: var(--color-divider-strong); stroke-width: 1;
-}
-.group-label {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
-  text-transform: uppercase; fill: var(--color-neutral-500);
-}
-
-/* — contracts, diagnostics, plan source —
-   A contract is what a checked plan proved about an artifact that does not exist yet, so it
-   is deliberately quieter than an artifact card: no icon, no affordance, nothing to open. The
-   condition itself is the content, and it is the one part set in mono. */
-.contract {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.contract:last-of-type { border-bottom: 0; }
-.contract-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.contract-label { font-size: 12px; color: var(--color-text); }
-.contract-type { font-size: 10px; color: var(--color-neutral-500); }
-.contract-pred {
-  font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700);
-  overflow-wrap: anywhere;
-}
-.contract-from { font-size: 10px; }
-
-/* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
-   meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
-   panel it sits in. */
-.diagnostic {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.diagnostic:last-of-type { border-bottom: 0; }
-.diagnostic-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.diagnostic-body {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-  color: var(--color-text); background: var(--color-surface);
-  border-radius: var(--radius-sm); padding: var(--space-2);
-  margin: 0; white-space: pre; overflow-x: auto;
-}
-
-/* The source is a row per line rather than one `pre`, because a diagnostic reports a line
-   number and there has to be something for it to point at. */
-.plan-source {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
-  background: var(--color-surface); border-radius: var(--radius-sm);
-  padding: var(--space-2) 0; margin: 0; max-height: 70vh; overflow: auto;
-}
-.src-line { display: flex; gap: var(--space-3); padding: 0 var(--space-3); white-space: pre; }
-/* Stays put when a long line scrolls the file sideways — a line number that scrolls away is
-   a line number you cannot use. */
-.src-no {
-  position: sticky; left: 0; flex: none; width: 4ch; text-align: right;
-  color: var(--color-neutral-400); background: var(--color-surface); user-select: none;
-}
-.src-text { color: var(--color-neutral-700); }
-.src-line.on { background: var(--color-accent-200); }
-.src-line.on .src-no { color: var(--color-accent-700); background: var(--color-accent-200); }
-
-/* — group boundaries —
-   A phase is a label a person put on the work; the graph cannot recover it, and nothing on
-   the server derives anything from it. So it is drawn as quietly as a thing can be drawn and
-   still be seen: a hairline, a fill barely off the page, and the label in the same muted mono
-   as every other section label. No colour, because colour in this graph means status. */
-.group-box {
-  fill: var(--color-surface); fill-opacity: 0.6;
-  stroke: var(--color-divider-strong); stroke-width: 1;
-}
-.group-label {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
-  text-transform: uppercase; fill: var(--color-neutral-500);
-}
-
-/* — contracts, diagnostics, plan source —
-   A contract is what a checked plan proved about an artifact that does not exist yet, so it
-   is deliberately quieter than an artifact card: no icon, no affordance, nothing to open. The
-   condition itself is the content, and it is the one part set in mono. */
-.contract {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.contract:last-of-type { border-bottom: 0; }
-.contract-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.contract-label { font-size: 12px; color: var(--color-text); }
-.contract-type { font-size: 10px; color: var(--color-neutral-500); }
-.contract-pred {
-  font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700);
-  overflow-wrap: anywhere;
-}
-.contract-from { font-size: 10px; }
-/* Promise above demand, aligned on a one-word gutter, so the eye reads down the pair rather
-   than across it — the difference between the two lines is the thing that was proven. */
-.contract-given { display: flex; gap: var(--space-2); align-items: baseline; }
-.contract-arrow {
-  flex: none; width: 5ch; font-family: var(--font-mono); font-size: 10px;
-  color: var(--color-neutral-400);
-}
-
-/* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
-   meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
-   panel it sits in. */
-.diagnostic {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
-}
-.diagnostic:last-of-type { border-bottom: 0; }
-.diagnostic-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.diagnostic-body {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-  color: var(--color-text); background: var(--color-surface);
-  border-radius: var(--radius-sm); padding: var(--space-2);
-  margin: 0; white-space: pre; overflow-x: auto;
-}
-
-/* The source is a row per line rather than one `pre`, because a diagnostic reports a line
-   number and there has to be something for it to point at. */
-.plan-source {
-  font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
-  background: var(--color-surface); border-radius: var(--radius-sm);
-  padding: var(--space-2) 0; margin: 0; max-height: 70vh; overflow: auto;
-}
-.src-line { display: flex; gap: var(--space-3); padding: 0 var(--space-3); white-space: pre; }
-/* Stays put when a long line scrolls the file sideways — a line number that scrolls away is
-   a line number you cannot use. */
-.src-no {
-  position: sticky; left: 0; flex: none; width: 4ch; text-align: right;
-  color: var(--color-neutral-400); background: var(--color-surface); user-select: none;
-}
-.src-text { color: var(--color-neutral-700); }
-.src-line.on { background: var(--color-accent-200); }
-.src-line.on .src-no { color: var(--color-accent-700); background: var(--color-accent-200); }
-
 /* — group boundaries —
    A phase is a label a person put on the work; the graph cannot recover it, and nothing on
    the server derives anything from it. So it is drawn as quietly as a thing can be drawn and
@@ -980,6 +754,23 @@ details[open] > .meta-summary::before { content: "▾ "; }
   flex: none; width: 5ch; font-family: var(--font-mono); font-size: 10px;
   color: var(--color-neutral-400);
 }
+
+/* A step's algorithm reads like a listing in a paper: numbered, monospaced, indentation
+   carried. Deliberately in neutral ink rather than the accent the contracts wear — the
+   contracts were proven and this was rendered, and the colour keeps that distinction. */
+.alg { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) 0; }
+.alg-lines { display: flex; flex-direction: column; overflow-x: auto; }
+.alg-line { display: flex; gap: var(--space-2); align-items: baseline; }
+.alg-no {
+  flex: none; min-width: 2ch; text-align: right; font-family: var(--font-mono);
+  font-size: 10px; color: var(--color-neutral-400); user-select: none;
+}
+.alg-text {
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-text);
+  white-space: pre; line-height: 1.6;
+}
+.alg-ext { font-size: 10px; }
+.alg-ext .mono { font-size: 10px; }
 
 /* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
    meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
@@ -1282,6 +1073,7 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   margin-left: calc(6px + var(--space-2)); padding-left: var(--space-2);
   border-left: 1px solid var(--color-neutral-200);
 }
+
 
 @media (max-width: 900px) {
   /* No room for a side panel over a phone-width page: it takes the screen, and the page

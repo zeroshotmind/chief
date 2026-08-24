@@ -1656,6 +1656,43 @@ function contractCard(label, port) {
   );
 }
 
+/** A step's algorithm: numbered pseudocode rendered from the term Lean elaborated, and the
+    external calls it makes, printed once as a legend. What was checked is scope and shape —
+    the maths itself was not — so this deliberately reads as a listing to review, not as
+    something proven: no green, no badge. */
+function algBlock(alg) {
+  const externals = alg.externals || [];
+  return el(
+    "div",
+    { class: "alg" },
+    el(
+      "div",
+      { class: "alg-lines" },
+      (alg.lines || []).map((line, i) =>
+        el(
+          "span",
+          { class: "alg-line" },
+          el("span", { class: "alg-no", text: String(i + 1) }),
+          el("span", {
+            class: "alg-text",
+            style: line.indent ? { paddingLeft: `${line.indent * 16}px` } : null,
+            text: line.text,
+          }),
+        ),
+      ),
+    ),
+    externals.length > 0 &&
+      el(
+        "span",
+        { class: "alg-ext text-muted" },
+        el("span", { text: "External: " }),
+        externals.map((e, i) =>
+          el("span", { class: "mono", text: `${i ? " · " : ""}${e.fn} ⟨${e.tag}⟩` }),
+        ),
+      ),
+  );
+}
+
 // ── amendment diff (REQ-40, rendered client-side from the stored operations) ──────────────
 
 const quote = (s) => `“${s}”`;
@@ -3135,6 +3172,8 @@ function stepPanel(step, stepState, def) {
     outputsLabel: outputContracts.length ? "Produces" : null,
     outputContracts,
     outputMeta,
+    // The how, between the two halves of the signature. Only plan-derived steps carry one.
+    algorithm: step.algorithm || null,
   };
 }
 
@@ -3229,6 +3268,11 @@ function inspector(panel) {
       (panel.inputArts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
       (panel.inputContracts || []).map(({ label, port }) => contractCard(label, port)),
       metadataBlock(panel.inputMeta, "full", "Other inputs"),
+      // Between the demands and the promise, where a paper would put it: Require, body,
+      // Ensure.
+      panel.algorithm &&
+        el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: "Algorithm" }),
+      panel.algorithm && algBlock(panel.algorithm),
       panel.outputsLabel &&
         el("span", {
           class: "section-label", style: { marginTop: "var(--space-1)" },
@@ -4766,6 +4810,7 @@ function defFromPlan(plan) {
         : {},
       fields: n.type === "checkpoint" ? (n.fields || []).map((name) => ({ name })) : null,
       body: null,
+      algorithm: n.algorithm || null,
     })),
   };
 }
