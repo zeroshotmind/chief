@@ -2500,10 +2500,11 @@ function checkpointCard({ run, path, stepId, step, state: stepState }) {
     "section",
     { class: "card" },
     el("span", { class: "card-kicker", text: `${titleOf(run)} · checkpoint${inst}` }),
-    el("p", {
-      style: { margin: "0", fontSize: "14px", whiteSpace: "pre-line" },
-      text: step ? step.goal : `Waiting on a decision at ${stepId}.`,
-    }),
+    el(
+      "p",
+      { style: { margin: "0", fontSize: "14px", whiteSpace: "pre-line" } },
+      inline(step ? step.goal : `Waiting on a decision at ${stepId}.`),
+    ),
     el("span", {
       class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" },
       text: `${stepId} · ${run.run_id}` + (stepState.started_at ? ` · ${relAgo(stepState.started_at)}` : ""),
@@ -2887,13 +2888,16 @@ function inspector(panel) {
         panel.close &&
           el("button", { class: "close-x", text: "✕", title: "Close", onClick: panel.close }),
       ),
-      // `pre-line`, not the default: a goal is written as up to a few lines (see the field's
-      // own guidance), and the text still carries whatever newlines the harness put in it —
-      // the browser's default `white-space: normal` was the only thing collapsing them away.
-      el("p", {
-        style: { margin: "0", fontSize: "13px", lineHeight: "1.45", whiteSpace: "pre-line" },
-        text: panel.title,
-      }),
+      // `inline()`, not plain text: a goal is short prose ("state the work"), not markup,
+      // but the same bold/code/math a summary or a comment may use reads just as well here
+      // — and inline() alone does not turn a literal newline into a visible one, hence
+      // `pre-line` staying on top of it. Block markup (headings, lists) stays out on
+      // purpose: a goal is one to three lines, not a document.
+      el(
+        "p",
+        { style: { margin: "0", fontSize: "13px", lineHeight: "1.45", whiteSpace: "pre-line" } },
+        inline(panel.title),
+      ),
       el("span", {
         class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" },
         text: panel.metaLine,
