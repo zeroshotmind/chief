@@ -1574,6 +1574,27 @@ const runArtifacts = (def, stepStates) =>
     return state ? stepArtifacts(state, `${step.id} · `) : [];
   });
 
+/** A step's `inputs` (REQ-26-style open bag, fixed in the plan rather than reported at
+    runtime) split into what can be drawn as an artifact and what is just data.
+
+    An entry counts as an artifact when it has the shape one already needs — `type` plus a
+    `ref` or `data` — so a harness that wants a fixed input shown as richly as a produced
+    output only has to shape it that way, not declare it twice. No `artifact_id`: it did not
+    come from a run, so `artifactCard` falls back to always-open and to a plain editor/copy
+    link rather than the in-page viewer, which needs one to fetch content by. */
+function splitInputs(inputs) {
+  const arts = [];
+  const meta = {};
+  for (const [key, value] of Object.entries(inputs || {})) {
+    if (value && typeof value === "object" && typeof value.type === "string" && (value.ref || value.data != null)) {
+      arts.push({ artifact: value, label: value.description || key });
+    } else {
+      meta[key] = value;
+    }
+  }
+  return { arts, meta };
+}
+
 // ── amendment diff (REQ-40, rendered client-side from the stored operations) ──────────────
 
 const quote = (s) => `“${s}”`;
@@ -2726,6 +2747,7 @@ function edgeDefs() {
 
 function stepPanel(step, stepState, def) {
   const arts = stepArtifacts(stepState);
+  const { arts: inputArts, meta: inputMeta } = splitInputs(step.inputs);
   const instances = stepState.instances || [];
   const body = bodyStepsOf(step, def);
   const meta =
@@ -2824,6 +2846,12 @@ function stepPanel(step, stepState, def) {
     body: asks.length ? asks : said.length ? said : body,
     artsLabel: arts.length ? `Artifacts (${arts.length})` : null,
     arts,
+    // Fixed in the plan rather than produced at runtime — readable before the first run
+    // exists, which is when a person is deciding whether to approve it (same reasoning as
+    // exitLabel/paramsLabel above).
+    inputsLabel: inputArts.length ? `Inputs (${inputArts.length})` : null,
+    inputArts,
+    inputMeta,
   };
 }
 
@@ -2910,6 +2938,13 @@ function inspector(panel) {
           inline(panel.summary),
         ),
       criteriaBlock(panel.criteria, panel.criteriaMet),
+      // Fixed in the plan, so readable before the first run exists — same reasoning as the
+      // body/params sections below, which is why this sits beside them rather than under
+      // the outputs section further down.
+      panel.inputsLabel &&
+        el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.inputsLabel }),
+      (panel.inputArts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
+      metadataBlock(panel.inputMeta, "full", "Other inputs"),
       panel.opsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.opsLabel }),
       (panel.ops || []).map(opRow),

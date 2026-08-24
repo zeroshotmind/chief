@@ -116,8 +116,15 @@ const STEPS = [
   { id: "b", type: "loop", goal: "each thing", harness: "claude-code", depends_on: ["a"], body: ["c", "d"], exit_when: "the check passes",
     instance_params: [{ name: "paper", description: "which paper this iteration reads", required: true }] },
   { id: "c", type: "task", goal: "read {{ paper }} end to end", harness: "claude-code", depends_on: [] },
+  // Fixed in the plan rather than reported at runtime, so it has to be readable on a draft
+  // — the "checklist" entry is shaped like an ArtifactRef and should draw as one; "threshold"
+  // is not, and falls back to plain metadata beside it.
   { id: "d", type: "task", goal: "then check it", harness: "claude-code", depends_on: ["c"],
-    criteria: [{ id: "c1", text: "the check is green" }] },
+    criteria: [{ id: "c1", text: "the check is green" }],
+    inputs: {
+      checklist: { type: "file", ref: "notes/checklist.md", description: "Checklist to verify against" },
+      threshold: 0.9,
+    } },
   // The step the run stops on. A person decides it, and is asked one thing in writing.
   { id: "e", type: "checkpoint", goal: "ship it?", harness: "human", depends_on: ["a"],
     fields: [{ name: "budget", label: "How much may it spend?", hint: "$", required: true }] },
@@ -791,6 +798,14 @@ const outRows = findByClass(mainNode(), "criterion");
 const critOutstanding = outRows.length === 1 &&
                         !JSON.stringify(outRows[0]).includes("criterion met") &&
                         JSON.stringify(mainNode()).includes("Done when (0/1)");
+// A fixed input, readable on a step that has never run — no run and no artifact_id behind
+// it, so this exercises the degraded (editor-link, no in-page viewer) path through the same
+// artifact card an output gets.
+const inputArtShown = JSON.stringify(mainNode()).includes("Checklist to verify against") &&
+                      JSON.stringify(mainNode()).includes("notes/checklist.md") &&
+                      JSON.stringify(mainNode()).includes("Inputs (1)");
+const inputMetaShown = findByClass(mainNode(), "meta-json")
+  .some((n) => JSON.stringify(n).includes("threshold"));
 clickByText("did it");
 await new Promise((r) => setTimeout(r, 30));
 const stepMetaShown = JSON.stringify(mainNode()).includes("41200") &&
@@ -1096,6 +1111,7 @@ console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${
 console.log(`             ${JSON.stringify(hrefs)}`);
 console.log(`instances:   labelled=${instLabelled}, declared=${paramDeclared}, body-filled=${paramsFilled}`);
 console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOutstanding}`);
+console.log(`inputs:      artifact-shown=${inputArtShown}, plain-shown=${inputMetaShown}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, mermaid=${viewerMermaid}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
@@ -1131,6 +1147,8 @@ const ok =
   paramsFilled &&
   critShown &&
   critOutstanding &&
+  inputArtShown &&
+  inputMetaShown &&
   stepMetaShown &&
   stepMetaFolds &&
   artFactsInline &&
