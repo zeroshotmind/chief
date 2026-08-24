@@ -1300,20 +1300,32 @@ function commentBlock(artifact) {
       ? el(
           "div",
           { class: "cmt-compose" },
-          el("input", {
-            class: "field-search", type: "text", id: inputId, value: draft.body,
+          // A textarea, not a one-line input — same reasoning as a review note (see
+          // note-compose above): "the numbers in here are stale, rerun with last week's
+          // data" is a sentence, not eleven visible characters. The body is the element's
+          // text rather than a `value` attribute, which a textarea ignores; safe because
+          // every render builds a fresh node and the draft itself lives in state.
+          el("textarea", {
+            class: "note-input", id: inputId, rows: "3", text: draft.body,
             placeholder: "What should whoever picks this up know?",
             onInput: (e) => setCmtDraft(artifactId, { body: e.target.value, error: null }),
-            onKeyDown: (e) => e.key === "Enter" && addComment(runId, artifactId),
+            // Enter is a newline here, so sending needs the modifier — same key as every
+            // other multi-line box a person types a message into.
+            onKeyDown: (e) =>
+              e.key === "Enter" && (e.metaKey || e.ctrlKey) && addComment(runId, artifactId),
           }),
-          el("button", {
-            class: "btn btn-primary btn-sm", text: "Add",
-            onClick: () => addComment(runId, artifactId),
-          }),
-          el("button", {
-            class: "btn btn-secondary btn-sm", text: "Cancel",
-            onClick: () => setCmtDraft(artifactId, { open: false, body: "", error: null }),
-          }),
+          el(
+            "div",
+            { class: "cmt-compose-actions" },
+            el("button", {
+              class: "btn btn-primary btn-sm", text: "Add",
+              onClick: () => addComment(runId, artifactId),
+            }),
+            el("button", {
+              class: "btn btn-secondary btn-sm", text: "Cancel",
+              onClick: () => setCmtDraft(artifactId, { open: false, body: "", error: null }),
+            }),
+          ),
         )
       : el("button", {
           class: "cmt-add",

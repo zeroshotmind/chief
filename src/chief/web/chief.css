@@ -901,8 +901,8 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
 }
 .cmt-body { font-size: 12px; line-height: 1.45; color: var(--color-neutral-700); }
 .cmt-meta { font-size: 10px; color: var(--color-neutral-500); }
-.cmt-compose { display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-1); }
-.cmt-compose .field-search { flex: 1; min-width: 0; }
+.cmt-compose { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.cmt-compose-actions { display: flex; gap: var(--space-1); }
 .cmt-add {
   align-self: flex-start; margin-top: var(--space-1); padding: 0;
   border: none; background: none; cursor: pointer;
