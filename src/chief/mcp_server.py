@@ -88,6 +88,17 @@ deciding whether to approve it, each on a step or on the plan as a whole. get_wo
 revise_draft, address every note with `resolved: false`, and say in the revision's reason
 which note each change answers. Marking one resolved is theirs, not yours — there is no tool
 for it, and there is none for writing a note either.
+
+A plan whose steps have real preconditions between them — conditions an earlier artifact
+must satisfy, expensive to find broken halfway through — can be written as a proof graph
+first: a Lean file against the ProofGraph prelude (documented in the server repo's lean/
+directory) where each step declares what it demands and what it promises, and the server
+checks that every promise meets the demand it feeds before anyone approves anything.
+create_proof_graph -> verify_proof_graph -> read the diagnostics, revise_proof_graph, verify
+again until it holds -> compile_proof_graph, which yields an ordinary draft workflow with
+the proven conditions as its steps' inputs and criteria. A short errand does not need this.
+A proof graph carries review_notes exactly as a workflow draft does: get_proof_graph returns
+them, and revising the source is how you answer them.
 """
 
 # Coverage under MCP-SURFACE.md 1 is asserted against this list: a tool exists for every

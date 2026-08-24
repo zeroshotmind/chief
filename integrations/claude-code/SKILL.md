@@ -1,6 +1,6 @@
 ---
 name: chief
-description: "multi-step work → workflow graph (from a template, or new) → tracked execution in Chief, with amendments when the plan stops fitting"
+description: "multi-step work → workflow graph (from a template, new, or a machine-checked proof graph) → tracked execution in Chief, with amendments when the plan stops fitting"
 trigger: /chief
 ---
 
@@ -86,6 +86,46 @@ the work does not belong to anything in particular. `origin_dir` is a record of 
 stood, not a path anything resolves against, so give it as you see it.
 
 The workflow comes back as a **draft**. It cannot take a run until it is approved.
+
+## Or prove the plan first
+
+When the steps have real preconditions between them — each one depending on conditions an
+earlier artifact must satisfy, wrong expensively and discovered halfway through — write the
+plan as a **proof graph** instead: a Lean file where each step declares what it demands of
+its inputs and what it promises about its output, and the server checks that every promise
+actually satisfies the demand it feeds, for every possible value, before anyone is asked to
+approve anything. A short errand does not need this.
+
+The flow: `create_proof_graph` with the whole file as `lean_source` (it takes `project` and
+`origin_dir` like `create_workflow`) → `verify_proof_graph` → read
+`verification.diagnostics` — they name the exact condition that does not follow, with both
+sides in view — → `revise_proof_graph` → verify again until it holds → `compile_proof_graph`.
+What comes out is an ordinary draft workflow: it still needs approval and a run, and the
+proven conditions travel with it as the steps' inputs and criteria. When a verification
+fails, fix whichever side is untrue of the work — strengthen the upstream promise or weaken
+the downstream demand — never whichever makes the message go away.
+
+The vocabulary lives in the server repo's `lean/` directory: `ProofGraph.lean` documents all
+of it and `Examples/Pipeline.lean` is a complete worked graph — read them before writing
+your first one. The rules that cost the most to learn from diagnostics alone:
+
+- Write each step as a `def` whose parameters are the handles it consumes, and put `use` at
+  the call site in `graph` — never inline in the step's own `inputs` list. Inline, the proof
+  goal is stated against a metavariable, and the error names neither `use` nor the fix.
+- The graph must be named `graph`, have type `GraphM Unit`, and end with `pure ()`; the file
+  must end with `#eval emitGraph "<title>" graph`.
+- Bind contracts with `abbrev`, never `def`.
+- A graph whose contracts are all `Contract.any` verifies and claims nothing. The stats
+  count how many conditions actually constrain something, and a reviewer reads that number —
+  refine the conditions that matter rather than shipping a green badge on empty claims.
+- Inputs fixed before anything runs — a config, a spec, a URL — are `given` fixed artifacts
+  on the step, not steps of their own. Groups (`group :=`, `describeGroup`), derived
+  artifact schemas (`artifact_schema`), and per-step `algorithm` pseudocode are all
+  optional: reach for them when the plan is big enough to be hard to read without them.
+
+A reviewer leaves `review_notes` on a proof graph exactly as on a workflow draft:
+`get_proof_graph` returns them, addressing them is `revise_proof_graph` with the `reason`
+saying which note each change answers, and marking one resolved is theirs, not yours.
 
 ## Fixing a draft
 
