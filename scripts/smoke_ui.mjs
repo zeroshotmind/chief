@@ -29,6 +29,7 @@ function node(tag) {
       else handlers.push({ node: this, type, fn });
     },
     querySelector() { return null; },
+    querySelectorAll() { return []; },
     replaceWith() {},
     // A real anchor has these; the download path uses both.
     click() { self.clicked = true; },
@@ -66,6 +67,9 @@ globalThis.document = {
   createElement: node,
   createElementNS: (_ns, tag) => node(tag),
   getElementById: (id) => roots[id] || node("div"),
+  head: node("head"),
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
   addEventListener() {},
   createTextNode: (t) => ({ text: t }),
 };
@@ -202,7 +206,10 @@ const PNG = Uint8Array.from(atob(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 ), (c) => c.charCodeAt(0));
 const FILE_BODIES = {
-  art_1: { text: "# From the file\n\nWith $x^2$ in it.\n", type: "text/markdown", name: "personas.md" },
+  art_1: {
+    text: "# From the file\n\nWith $x^2$ in it.\n\n```mermaid\ngraph TD; a-->b;\n```\n",
+    type: "text/markdown", name: "personas.md",
+  },
   art_3: {
     text: JSON.stringify({
       run: "sweep-3", steps: 4000, ok: true, note: null,
@@ -842,6 +849,10 @@ const viewerOpened = !!drawer;
 // Markdown from a file goes through the same renderer as an inline body.
 const viewerRendered = drawer && countClass(drawer, "md-p") > 0 && countTag(drawer, "math") === 1;
 const viewerTitle = drawer && JSON.stringify(drawer).includes("personas.md");
+// A ```mermaid fence is left as a `.mermaid` block for the runtime to draw — this stub DOM
+// never loads that runtime, so what is checked here is only that the fence reached the page
+// as that block rather than as a plain, unlabelled code dump.
+const viewerMermaid = drawer && countClass(drawer, "mermaid") === 1;
 // A URL artifact is framed, not fetched: the page renders itself, with the components the
 // project that owns them actually builds. Nothing is read off the disk and nothing is
 // evaluated by Chief.
@@ -1086,7 +1097,7 @@ console.log(`             ${JSON.stringify(hrefs)}`);
 console.log(`instances:   labelled=${instLabelled}, declared=${paramDeclared}, body-filled=${paramsFilled}`);
 console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOutstanding}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
-console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
+console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, mermaid=${viewerMermaid}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
 console.log(`frame:        framed=${framed}, not fetched=${frameNotFetched}, page inset=${pageInset}, sandbox="${frame && frame.sandbox}"`);
 console.log(`mdx run:      compiled=${mdxCompiled}, sandbox="${mdxIframe && mdxIframe.sandbox}", self-contained=${mdxSelfContained}, fetches modules=${mdxModuleFetches} runtime=${runtimeFetches}`);
@@ -1189,6 +1200,7 @@ const ok =
   viewButtons === 5 &&
   viewerOpened &&
   viewerRendered &&
+  viewerMermaid &&
   viewerTitle &&
   viewerClosed &&
   // One fetch per open, and a reload is an open: the file is read once, not on every poll.

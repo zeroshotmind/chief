@@ -686,6 +686,46 @@ const MDX_FRAME_CSS = `
   .mdx-error { white-space: pre-wrap; color: #b4443a; background: rgba(180,68,58,.1); padding: 10px; border-radius: 4px }
 `;
 
+/** Mermaid, loaded once and only if a document turns out to need it — vendored rather than
+    fetched from a CDN (REQ-21 applies to the browser side too), and lazy because it is 3+MB
+    and most artifacts never use it. A classic script, not a module: the upstream build sets
+    `window.mermaid` itself rather than exporting anything import() could take. */
+let mermaidReady = null;
+function loadMermaid() {
+  if (mermaidReady) return mermaidReady;
+  mermaidReady = new Promise((resolve, reject) => {
+    if (window.mermaid) return resolve(window.mermaid);
+    const script = document.createElement("script");
+    script.src = new URL("vendor/mermaid.min.js", import.meta.url);
+    script.onload = () => {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        // No JS side theme toggle exists yet to react to a change mid-session — matching
+        // the CSS-only dark mode this page otherwise has, evaluated once, is the same
+        // freshness every other themed thing here already settles for.
+        theme: window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "default",
+      });
+      resolve(window.mermaid);
+    };
+    script.onerror = () => reject(new Error("mermaid failed to load"));
+    document.head.appendChild(script);
+  });
+  return mermaidReady;
+}
+
+/** Draw every `<pre class="mermaid">` block markdown() left as source text inside `root`,
+    once. A no-op — and no fetch of the runtime — when there is nothing to draw, which is
+    the common case. Errors are left as Mermaid's own inline message rather than caught:
+    that message names the line the diagram broke on, which a caught-and-hidden failure
+    would throw away. */
+async function renderMermaid(root) {
+  const nodes = root.querySelectorAll(".mermaid");
+  if (!nodes.length) return;
+  const mermaid = await loadMermaid();
+  await mermaid.run({ nodes });
+}
+
 /** The compiled sources this page holds, so the frame can be built without a second fetch. */
 let runtimeSources = null;
 
@@ -814,7 +854,9 @@ function viewerBody(viewer) {
       // JSX out of an artifact is a build step this has not got and an execution surface it
       // does not want. See CONTRACT-NOTES.md #35.
       const mdx = file.mediaType === "text/mdx";
-      return keep(el("div", { class: "viewer-doc md-block" }, markdown(text, { mdx })));
+      const doc = el("div", { class: "viewer-doc md-block" }, markdown(text, { mdx }));
+      renderMermaid(doc);
+      return keep(doc);
     }
     if (file.mediaType === "application/json") {
       try {

@@ -813,6 +813,23 @@ details[open] > .meta-summary::before { content: "▾ "; }
 .md-link { color: var(--color-accent-700); text-decoration: underline; }
 .md-inline { display: block; }
 
+/* — diagrams —
+   Same box as a code fence while the source is still just text (there is a beat between
+   the page appearing and Mermaid's runtime loading), so a diagram never reads as broken
+   markup in the meantime — it reads as a code block still settling. Once Mermaid replaces
+   the block's content with an <svg data-processed>, the box empties out to let the drawing
+   set its own size, and just centers and scrolls it. */
+pre.mermaid {
+  margin: 0 0 var(--space-2); padding: var(--space-2);
+  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-text) 5%, transparent);
+  font-family: var(--font-mono); font-size: 11px; white-space: pre; overflow-x: auto;
+}
+pre.mermaid[data-processed] {
+  padding: var(--space-2) 0; background: none;
+  display: flex; justify-content: center; white-space: normal;
+}
+pre.mermaid svg { max-width: 100%; height: auto; }
+
 /* — maths —
    MathML is laid out by the browser; all that is needed here is size and centring. */
 math { font-size: 1.05em; }

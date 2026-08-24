@@ -729,9 +729,18 @@ export function markdown(text, options = {}) {
         i += 1;
       }
       i += 1; // the closing fence, or the end of the text
+      const lang = fence[2].trim();
+      if (lang === "mermaid") {
+        // The class Mermaid's own `run()` looks for by default. Left as source text — the
+        // diagram is drawn by whoever hosts this markdown calling `mermaid.run()`
+        // afterward, which is a page concern (loading the runtime, doing it once, in this
+        // page's theme), not a parsing one.
+        blocks.push(h("pre", "mermaid", body.join("\n")));
+        continue;
+      }
       const pre = h("pre", "md-pre");
       const code = h("code", null, body.join("\n"));
-      if (fence[2].trim()) code.setAttribute("data-lang", fence[2].trim());
+      if (lang) code.setAttribute("data-lang", lang);
       blocks.push(add(pre, [code]));
       continue;
     }
