@@ -254,9 +254,13 @@ const PLAN_GRAPH = {
       inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
       produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
     },
+    {
+      id: "publish", type: "task", goal: "Publish it.", harness: "claude",
+      criteria: [], fields: [], depends_on: ["fit_model"], inputs: [], produces: null,
+    },
   ],
   problems: [],
-  stats: { nodes: 2, edges: 1, contracts_total: 3, contracts_refined: 3, contracts_any: 0 },
+  stats: { nodes: 3, edges: 1, contracts_total: 3, contracts_refined: 3, contracts_any: 0 },
 };
 const PLANS = [
   {
@@ -1239,6 +1243,11 @@ const inside = (b, n) =>
 // Two leaf boxes hold one node each; the box round both holds two. No box holds a stray.
 const held = drawn.boxes.map((b) => drawn.nodes.filter((n) => inside(b, n)).length).sort();
 const containment = JSON.stringify(held) === JSON.stringify([1, 1, 2]);
+// The step that declares no group is drawn like any other and belongs to nothing: three
+// nodes, three boxes, and the ungrouped one inside none of them. Grouping is per step, so a
+// plan may group some of its work and leave the rest plain.
+const ungroupedNode = drawn.nodes.filter((n) => !drawn.boxes.some((b) => inside(b, n)));
+const optionalPerStep = drawn.nodes.length === 3 && ungroupedNode.length === 1;
 
 // Selecting the step that reads something shows what was proven about what it reads. The
 // condition is drawn as a condition — not through artifactCard, which would offer to open a
@@ -1291,7 +1300,8 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
-console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}, ungrouped=${ungroupedBoxes}`);
+console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
+console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 
@@ -1486,12 +1496,13 @@ const ok =
   // condition, and the failed one showing the goal that did not follow.
   planRows === 2 &&
   toolchainShown &&
-  planNodes === 2 &&
+  planNodes === 3 &&
   // One lane per declared group, labelled; and a plan that declares none is laid out exactly
   // as it was, with nothing drawn round it.
   groupBoxes === 3 &&
   groupsNamed &&
   containment &&
+  optionalPerStep &&
   ungroupedBoxes === 0 &&
   contractCards === 2 &&
   contractShown &&
