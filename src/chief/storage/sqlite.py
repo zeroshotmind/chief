@@ -28,6 +28,7 @@ from ..ids import now
 from ..models import (
     Amendment,
     ApprovalPolicy,
+    Plan,
     ReviewNote,
     RunState,
     WorkflowDefinition,
@@ -106,6 +107,19 @@ CREATE TABLE IF NOT EXISTS review_notes (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS notes_by_workflow ON review_notes (workflow_id, seq);
+
+-- A candidate plan, written so its logic can be checked before anyone approves it. The Lean
+-- source and the verdict on it both live in the document; ``status`` and ``project`` are
+-- lifted out because listing filters on them.
+CREATE TABLE IF NOT EXISTS plans (
+    plan_id    TEXT PRIMARY KEY,
+    status     TEXT NOT NULL,
+    project    TEXT,
+    document   TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plans_by_project ON plans (project);
 
 CREATE TABLE IF NOT EXISTS config (
     key      TEXT PRIMARY KEY,
@@ -577,6 +591,62 @@ class Store:
         else:
             rows = self._all("SELECT document FROM templates ORDER BY created_at, template_id", ())
         return [WorkflowTemplate.model_validate_json(r["document"]) for r in rows]
+
+    # --- plans --------------------------------------------------------------------------
+
+    def create_plan(self, conn: sqlite3.Connection, plan: Plan) -> None:
+        conn.execute(
+            "INSERT INTO plans (plan_id, status, project, document, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                plan.plan_id,
+                plan.status,
+                plan.project,
+                plan.model_dump_json(),
+                plan.created_at,
+                plan.updated_at,
+            ),
+        )
+
+    def save_plan(self, conn: sqlite3.Connection, plan: Plan) -> None:
+        conn.execute(
+            "UPDATE plans SET status = ?, project = ?, document = ?, updated_at = ? "
+            "WHERE plan_id = ?",
+            (
+                plan.status,
+                plan.project,
+                plan.model_dump_json(),
+                plan.updated_at,
+                plan.plan_id,
+            ),
+        )
+
+    def plan_exists(self, plan_id: str) -> bool:
+        return self._one("SELECT 1 FROM plans WHERE plan_id = ?", (plan_id,)) is not None
+
+    def get_plan(self, plan_id: str) -> Plan:
+        row = self._one("SELECT document FROM plans WHERE plan_id = ?", (plan_id,))
+        if row is None:
+            raise NotFound(f"plan '{plan_id}' not found")
+        return Plan.model_validate_json(row["document"])
+
+    def list_plans(self, *, status: str | None = None, project: str | None = None) -> list[Plan]:
+        where: list[str] = []
+        params: list[Any] = []
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if project:
+            where.append("project = ?")
+            params.append(project)
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        rows = self._all(
+            f"SELECT document FROM plans{clause} ORDER BY created_at DESC, plan_id", tuple(params)
+        )
+        return [Plan.model_validate_json(row["document"]) for row in rows]
+
+    def delete_plan(self, conn: sqlite3.Connection, plan_id: str) -> None:
+        conn.execute("DELETE FROM plans WHERE plan_id = ?", (plan_id,))
 
     # --- audit --------------------------------------------------------------------------
 

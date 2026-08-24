@@ -20,17 +20,11 @@ approves, runs, amends and archives like any other workflow.
 
 from __future__ import annotations
 
-import re
-
-from ..models import WorkflowCreate, WorkflowStep
-from .verify import Diagnostic, PlanGraph, PlanNode
+from ..models import PlanGraph, PlanNode, WorkflowCreate, WorkflowStep
 
 #: A produced contract, restated as the condition the harness must answer for. Worded as a
 #: check rather than as a promise because that is what a criterion is read as at report time.
 _PRODUCES = "the {artifact} this step produces satisfies: {contract}"
-
-_DEF = re.compile(r"^\s*def\s+(?P<name>[A-Za-z_][A-Za-z0-9_'!?]*)", re.MULTILINE)
-_STEP_CALL = re.compile(r"\b(?:task|checkpoint)\s+\"(?P<id>[^\"]+)\"")
 
 
 def _inputs_for(node: PlanNode) -> dict[str, object]:
@@ -101,68 +95,3 @@ def compile_plan(
         origin_dir=origin_dir,
         steps=[_step_for(node) for node in graph.nodes],
     )
-
-
-def attribute_diagnostics(
-    source: str, graph: PlanGraph | None, diagnostics: list[Diagnostic]
-) -> list[Diagnostic]:
-    """Best-effort: point each diagnostic at the step it is about.
-
-    A failing entailment is reported where the edge is written, which is in the plan's ``do``
-    block — a line naming the consuming *function*, not the step id. So the mapping goes
-    through the source: each ``def`` is scanned for the ``task``/``checkpoint`` call inside it,
-    which gives function name to step id, and a diagnostic is attributed to the definition it
-    falls inside, or failing that to whichever known function is named on its own line.
-
-    Heuristic, and labelled as such. It decides which node a failure is drawn on in the UI, and
-    nothing else — the message stays exactly as Lean wrote it, and a diagnostic that cannot be
-    placed simply has no ``step_id``.
-
-    The step ids come from the source rather than from ``graph``, because the case this exists
-    for is the case where there is no graph: a plan that failed to compile printed nothing, and
-    that is precisely when a reader needs to know which node broke.
-    """
-    lines = source.splitlines()
-    known = (
-        {node.id for node in graph.nodes}
-        if graph is not None
-        else {m.group("id") for m in _STEP_CALL.finditer(source)}
-    )
-
-    spans: list[tuple[int, str]] = [
-        (source.count("\n", 0, m.start()) + 1, m.group("name")) for m in _DEF.finditer(source)
-    ]
-    owner: dict[str, str] = {}
-    for index, (start, name) in enumerate(spans):
-        end = spans[index + 1][0] if index + 1 < len(spans) else len(lines) + 1
-        body = "\n".join(lines[start - 1 : end - 1])
-        call = _STEP_CALL.search(body)
-        if call and call.group("id") in known:
-            owner[name] = call.group("id")
-
-    def enclosing(line: int) -> str | None:
-        found = None
-        for start, name in spans:
-            if start <= line:
-                found = name
-            else:
-                break
-        return found
-
-    out: list[Diagnostic] = []
-    for diagnostic in diagnostics:
-        step_id = None
-        if diagnostic.line is not None:
-            name = enclosing(diagnostic.line)
-            if name is not None and name in owner:
-                step_id = owner[name]
-            elif 1 <= diagnostic.line <= len(lines):
-                text = lines[diagnostic.line - 1]
-                for candidate, mapped in owner.items():
-                    if re.search(rf"\b{re.escape(candidate)}\b", text):
-                        step_id = mapped
-                        break
-        out.append(diagnostic if step_id is None else diagnostic.model_copy(
-            update={"step_id": step_id}
-        ))
-    return out

@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from chief.lean import available, compile_plan, verify_source
-from chief.lean.compile import attribute_diagnostics
-from chief.lean.verify import PlanGraph, lint_source, package_dir, parse_output
+from chief.lean import attribute_diagnostics, available, compile_plan, verify_source
+from chief.lean.verify import lint_source, package_dir, parse_output
+from chief.models import PlanGraph
 
 needs_lean = pytest.mark.skipif(not available(), reason="no Lean toolchain on this machine")
 

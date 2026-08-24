@@ -17,9 +17,9 @@ from __future__ import annotations
 from .compile import compile_plan
 from .verify import (
     LeanUnavailable,
-    PlanGraph,
-    VerifyResult,
+    attribute_diagnostics,
     available,
+    lint_source,
     package_dir,
     toolchain_version,
     verify_source,
@@ -27,10 +27,10 @@ from .verify import (
 
 __all__ = [
     "LeanUnavailable",
-    "PlanGraph",
-    "VerifyResult",
+    "attribute_diagnostics",
     "available",
     "compile_plan",
+    "lint_source",
     "package_dir",
     "toolchain_version",
     "verify_source",

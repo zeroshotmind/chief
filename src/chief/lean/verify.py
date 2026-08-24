@@ -33,18 +33,13 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from ..models import Diagnostic, PlanGraph, VerifyResult
+from ..models.plan import SOUND_AXIOMS
 
 BEGIN_MARKER = "--CHIEF-PLAN-BEGIN--"
 END_MARKER = "--CHIEF-PLAN-END--"
-
-#: The three axioms of Lean's standard logic. Every ordinary proof may depend on these, and a
-#: plan depending on nothing else is a plan whose proofs are real. Anything outside this set
-#: is either a hole (``sorryAx``) or a claim discharged by running compiled code rather than
-#: by the kernel (``Lean.ofReduceBool``, from ``native_decide``).
-SOUND_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 
 #: The name a plan file must bind its plan to, and the symbol the axiom check is run against.
 ENTRY_POINT = "plan"
@@ -87,104 +82,6 @@ class LeanUnavailable(RuntimeError):
     and collapsing the two would let a machine without ``lake`` quietly mark every plan
     unsound.
     """
-
-
-class Diagnostic(BaseModel):
-    """One thing Lean said, positioned in the plan's own source."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    severity: Literal["error", "warning", "info"]
-    line: int | None = None
-    column: int | None = None
-    message: str
-    #: Filled in by :func:`~chief.lean.compile.attribute_diagnostics` where a line can be
-    #: traced to a step, so the UI can show a failure on the node that caused it.
-    step_id: str | None = None
-
-
-class PlanPort(BaseModel):
-    """One artifact crossing one edge."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    label: str
-    source: str
-    artifact_type: str
-    contract: str
-    refined: bool
-
-
-class PlanNode(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    type: Literal["task", "checkpoint"]
-    goal: str
-    harness: str
-    criteria: list[str] = Field(default_factory=list)
-    fields: list[str] = Field(default_factory=list)
-    depends_on: list[str] = Field(default_factory=list)
-    inputs: list[PlanPort] = Field(default_factory=list)
-    produces: PlanPort | None = None
-
-
-class PlanStats(BaseModel):
-    """How much the plan actually claims.
-
-    ``contracts_any`` against ``contracts_refined`` is the measure that matters. A plan whose
-    contracts are all ``any`` type-checks, extracts cleanly, and has been verified to say
-    nothing — it must never present the way one full of real refinements does, and these
-    counts are what let a reader tell them apart.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    nodes: int = 0
-    edges: int = 0
-    contracts_total: int = 0
-    contracts_refined: int = 0
-    contracts_any: int = 0
-
-    @property
-    def vacuous(self) -> bool:
-        """True when nothing in this plan constrains anything."""
-        return self.contracts_total > 0 and self.contracts_refined == 0
-
-
-class PlanGraph(BaseModel):
-    # ``schema`` would shadow a BaseModel attribute, so the field is named around it and
-    # aliased back; populating by either name keeps callers from having to know that.
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    schema_: str = Field(alias="schema")
-    title: str
-    nodes: list[PlanNode] = Field(default_factory=list)
-    problems: list[str] = Field(default_factory=list)
-    stats: PlanStats = Field(default_factory=PlanStats)
-
-
-class VerifyResult(BaseModel):
-    """What one verification run concluded."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["verified", "failed"]
-    diagnostics: list[Diagnostic] = Field(default_factory=list)
-    graph: PlanGraph | None = None
-    #: Which Lean built this verdict. Stored beside a plan because "verified" is a claim about
-    #: a toolchain as much as about a file, and a plan verified two toolchains ago has not
-    #: been verified by the one running now.
-    toolchain: str | None = None
-    axioms: list[str] = Field(default_factory=list)
-
-    @property
-    def ok(self) -> bool:
-        return self.status == "verified"
-
-    @property
-    def errors(self) -> list[Diagnostic]:
-        return [d for d in self.diagnostics if d.severity == "error"]
 
 
 def package_dir() -> Path | None:
@@ -346,6 +243,75 @@ def parse_output(
     return diagnostics, ("\n".join(payload).strip() or None), axioms
 
 
+_DEF = re.compile(r"^\s*def\s+(?P<name>[A-Za-z_][A-Za-z0-9_'!?]*)", re.MULTILINE)
+_STEP_CALL = re.compile(r"\b(?:task|checkpoint)\s+\"(?P<id>[^\"]+)\"")
+
+
+def attribute_diagnostics(
+    source: str, graph: PlanGraph | None, diagnostics: list[Diagnostic]
+) -> list[Diagnostic]:
+    """Best-effort: point each diagnostic at the step it is about.
+
+    A failing entailment is reported where the edge is written, which is in the plan's ``do``
+    block — a line naming the consuming *function*, not the step id. So the mapping goes
+    through the source: each ``def`` is scanned for the ``task``/``checkpoint`` call inside it,
+    which gives function name to step id, and a diagnostic is attributed to the definition it
+    falls inside, or failing that to whichever known function is named on its own line.
+
+    Heuristic, and labelled as such. It decides which node a failure is drawn on in the UI, and
+    nothing else — the message stays exactly as Lean wrote it, and a diagnostic that cannot be
+    placed simply has no ``step_id``.
+
+    The step ids come from the source rather than from ``graph``, because the case this exists
+    for is the case where there is no graph: a plan that failed to compile printed nothing, and
+    that is precisely when a reader needs to know which node broke.
+    """
+    lines = source.splitlines()
+    known = (
+        {node.id for node in graph.nodes}
+        if graph is not None
+        else {m.group("id") for m in _STEP_CALL.finditer(source)}
+    )
+
+    spans: list[tuple[int, str]] = [
+        (source.count("\n", 0, m.start()) + 1, m.group("name")) for m in _DEF.finditer(source)
+    ]
+    owner: dict[str, str] = {}
+    for index, (start, name) in enumerate(spans):
+        end = spans[index + 1][0] if index + 1 < len(spans) else len(lines) + 1
+        body = "\n".join(lines[start - 1 : end - 1])
+        call = _STEP_CALL.search(body)
+        if call and call.group("id") in known:
+            owner[name] = call.group("id")
+
+    def enclosing(line: int) -> str | None:
+        found = None
+        for start, name in spans:
+            if start <= line:
+                found = name
+            else:
+                break
+        return found
+
+    out: list[Diagnostic] = []
+    for diagnostic in diagnostics:
+        step_id = None
+        if diagnostic.line is not None:
+            name = enclosing(diagnostic.line)
+            if name is not None and name in owner:
+                step_id = owner[name]
+            elif 1 <= diagnostic.line <= len(lines):
+                text = lines[diagnostic.line - 1]
+                for candidate, mapped in owner.items():
+                    if re.search(rf"\b{re.escape(candidate)}\b", text):
+                        step_id = mapped
+                        break
+        out.append(
+            diagnostic if step_id is None else diagnostic.model_copy(update={"step_id": step_id})
+        )
+    return out
+
+
 #: Lean refuses to run `#eval` in a file that already failed to elaborate, and says so in
 #: terms of the `sorry` axiom — because an errored term becomes one. On a plan whose author
 #: wrote no `sorry` that message is a consequence of the real error and reads as a second,
@@ -454,7 +420,10 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
                 )
             )
 
-    diagnostics = _drop_cascades(diagnostics)
+    # Placed here rather than left to the caller: a stored result whose diagnostics were never
+    # attributed shows every failure on nothing, and the endpoint that stores it has no reason
+    # to know it had to ask.
+    diagnostics = attribute_diagnostics(source, graph, _drop_cascades(diagnostics))
 
     failed = completed.returncode != 0 or graph is None
     failed = failed or any(d.severity == "error" for d in diagnostics)

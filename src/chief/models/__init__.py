@@ -14,6 +14,7 @@ from .definition import (
     Criterion,
     InstanceFailurePolicy,
     InstanceParam,
+    PlanOrigin,
     StepType,
     TemplateOrigin,
     WorkflowCreate,
@@ -23,6 +24,20 @@ from .definition import (
     WorkflowSource,
     WorkflowStatus,
     WorkflowStep,
+)
+from .plan import (
+    SOUND_AXIOMS,
+    Diagnostic,
+    Plan,
+    PlanCompile,
+    PlanCreate,
+    PlanGraph,
+    PlanNode,
+    PlanPort,
+    PlanRevise,
+    PlanStats,
+    PlanStatus,
+    VerifyResult,
 )
 from .policy import ApprovalPolicy, ApprovalRule
 from .review import ReviewNote, ReviewNoteCreate, ReviewNoteDecision
@@ -59,6 +74,7 @@ from .updates import (
 
 __all__ = [
     "HISTORY_LOCKED",
+    "SOUND_AXIOMS",
     "MUTATING_OPS",
     "STEP_REQUIRED_OPS",
     "TERMINAL_OK",
@@ -81,8 +97,20 @@ __all__ = [
     "InstanceCreate",
     "InstanceFailurePolicy",
     "InstanceUpdate",
+    "Diagnostic",
     "PatchOp",
     "PatchOperation",
+    "Plan",
+    "PlanCompile",
+    "PlanCreate",
+    "PlanGraph",
+    "PlanNode",
+    "PlanOrigin",
+    "PlanPort",
+    "PlanRevise",
+    "PlanStats",
+    "PlanStatus",
+    "VerifyResult",
     "ReviewNote",
     "ReviewNoteCreate",
     "ReviewNoteDecision",

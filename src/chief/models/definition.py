@@ -273,6 +273,8 @@ class WorkflowDefinition(BaseModel):
     origin_dir: str | None = None
     # Set only when this workflow was instantiated from a template (extension).
     from_template: TemplateOrigin | None = None
+    # Set only when this workflow was compiled from a checked plan (extension).
+    from_plan: PlanOrigin | None = None
     # When the plan was first submitted and when it was last written. These are facts about
     # the record rather than parts of the plan, so they are kept in the store's own columns
     # and filled in on the way out — not carried in the stored document, where a stale copy
@@ -298,6 +300,33 @@ class WorkflowDefinition(BaseModel):
 
     def steps_by_id(self) -> dict[str, WorkflowStep]:
         return {s.id: s for s in self.steps}
+
+
+class PlanOrigin(BaseModel):
+    """Where a workflow came from, when it was compiled from a checked plan.
+
+    Lineage rather than a live link, for the same reason as ``TemplateOrigin``: the plan may be
+    revised or re-checked afterwards, and this has to keep saying what *this* workflow was made
+    from. ``toolchain`` is part of that record — "verified" names the thing that did the
+    verifying, and a verdict without it cannot be re-examined later.
+
+    Nothing on the server reads this to decide anything. A compiled workflow is approved, run
+    and amended by exactly the rules that govern a hand-written one; the version counter
+    already says whether it has been amended since, so a plan's badge needs no help to stop
+    meaning "and it still matches".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str
+    #: What the plan's own statistics said at the moment it was compiled — how many contracts
+    #: it carried and how many of them constrained anything. Copied rather than looked up so
+    #: that a workflow can be read without the plan, and so a later revision of the plan cannot
+    #: quietly restate what this workflow was built on.
+    contracts_refined: int = 0
+    contracts_any: int = 0
+    toolchain: str | None = None
+    verified_at: str | None = None
 
 
 class TemplateOrigin(BaseModel):

@@ -56,3 +56,15 @@ class InvariantViolation(ChiefError):
 class Conflict(ChiefError):
     status_code = 409
     code = "conflict"
+
+
+class NotAvailable(ChiefError):
+    """The operation needs something this instance does not have.
+
+    Distinct from a validation failure on purpose: a plan that could not be checked because
+    there is no Lean toolchain here has not been found unsound, and answering 422 would say it
+    had. 503 says the same thing to a client that only reads status codes.
+    """
+
+    status_code = 503
+    code = "not_available"

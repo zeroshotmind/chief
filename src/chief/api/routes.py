@@ -31,6 +31,10 @@ from ..models import (
     CommentCreate,
     InstanceCreate,
     InstanceUpdate,
+    Plan,
+    PlanCompile,
+    PlanCreate,
+    PlanRevise,
     ReviewNote,
     ReviewNoteCreate,
     ReviewNoteDecision,
@@ -169,6 +173,77 @@ def decide_review_note(
 ) -> ReviewNote:
     """Mark a note resolved, or put a resolved one back."""
     return service.decide_review_note(workflow_id, note_id, body)
+
+
+# --- extension: plans ---------------------------------------------------------------------
+#
+# A plan is a candidate whose logic can be machine-checked before anyone approves it. It is
+# not a workflow and never becomes one in place: verifying settles whether it hangs together,
+# and compiling produces an ordinary draft workflow that is then approved and run by exactly
+# the rules everything else follows.
+
+
+@router.get("/plans/toolchain")
+def plan_toolchain(service: Service) -> dict[str, Any]:
+    """Whether this instance can check a plan at all.
+
+    Its own route because a client needs to know before offering the button, and because
+    "cannot be checked here" must never be discovered as a failed verification.
+    """
+    return service.lean_available()
+
+
+@router.post("/plans", response_model=Plan, status_code=status.HTTP_201_CREATED)
+def create_plan(body: PlanCreate, service: Service) -> Plan:
+    return service.create_plan(body)
+
+
+@router.get("/plans", response_model=list[Plan])
+def list_plans(
+    service: Service,
+    status_: str | None = Query(None, alias="status"),
+    project: str | None = Query(None),
+) -> Any:
+    return service.list_plans(status=status_, project=project)
+
+
+@router.get("/plans/{plan_id}", response_model=Plan)
+def get_plan(plan_id: str, service: Service) -> Plan:
+    return service.get_plan(plan_id)
+
+
+@router.put("/plans/{plan_id}", response_model=Plan)
+def revise_plan(plan_id: str, body: PlanRevise, service: Service) -> Plan:
+    """Replace the source. The verdict does not survive the edit."""
+    return service.revise_plan(plan_id, body)
+
+
+@router.post("/plans/{plan_id}/verification", response_model=Plan)
+def verify_plan(plan_id: str, service: Service) -> Plan:
+    """Check the plan and record what came back.
+
+    A plan that does not hold up is a 200 carrying ``status: failed`` and the diagnostics,
+    not an error: the check ran and reached a verdict, which is the request succeeding.
+    """
+    return service.verify_plan(plan_id)
+
+
+@router.post(
+    "/plans/{plan_id}/workflows",
+    response_model=WorkflowDefinition,
+    status_code=status.HTTP_201_CREATED,
+)
+def compile_plan(
+    plan_id: str,
+    service: Service,
+    body: PlanCompile = Body(default_factory=PlanCompile),
+) -> WorkflowDefinition:
+    return service.compile_plan(plan_id, body)
+
+
+@router.delete("/plans/{plan_id}")
+def delete_plan(plan_id: str, service: Service) -> dict[str, Any]:
+    return service.delete_plan(plan_id)
 
 
 # --- extension: templates -----------------------------------------------------------------

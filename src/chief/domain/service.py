@@ -10,13 +10,21 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from ..errors import InvalidTransition, InvariantViolation, NotFound, ValidationFailed
+from .. import lean
+from ..errors import (
+    InvalidTransition,
+    InvariantViolation,
+    NotAvailable,
+    NotFound,
+    ValidationFailed,
+)
 from ..ids import amendment_id as new_amendment_id
 from ..ids import artifact_id as new_artifact_id
 from ..ids import comment_id as new_comment_id
 from ..ids import instance_id as format_instance_id
 from ..ids import note_id as new_note_id
 from ..ids import now
+from ..ids import plan_id as new_plan_id
 from ..ids import run_id as new_run_id
 from ..ids import template_id as new_template_id
 from ..ids import workflow_id as new_workflow_id
@@ -34,6 +42,11 @@ from ..models import (
     InstanceCreate,
     InstanceUpdate,
     PatchOperation,
+    Plan,
+    PlanCompile,
+    PlanCreate,
+    PlanOrigin,
+    PlanRevise,
     ReviewNote,
     ReviewNoteCreate,
     ReviewNoteDecision,
@@ -72,13 +85,17 @@ class Chief:
     # --- workflows ----------------------------------------------------------------------
 
     def create_workflow(
-        self, body: WorkflowCreate, origin: TemplateOrigin | None = None
+        self,
+        body: WorkflowCreate,
+        origin: TemplateOrigin | None = None,
+        plan_origin: PlanOrigin | None = None,
     ) -> WorkflowDefinition:
         workflow_id = body.workflow_id or new_workflow_id()
         if self.store.workflow_exists(workflow_id):
             raise InvalidTransition(f"workflow '{workflow_id}' already exists")
         defn = WorkflowDefinition(
             from_template=origin,
+            from_plan=plan_origin,
             workflow_id=workflow_id,
             title=body.title,
             source=body.source,
@@ -531,6 +548,174 @@ class Chief:
             self.store.put_workflow_approval_policy(conn, policy)
             self.store.audit(conn, "config.updated", detail={"key": "workflow_approval_policy"})
         return policy
+
+    # --- plans ------------------------------------------------------------------------
+
+    @staticmethod
+    def _freshen(plan: Plan) -> Plan:
+        """Say whether the stored verdict was reached by the toolchain that is installed now.
+
+        Recomputed on the way out of the store rather than written into the document, for the
+        same reason a workflow's timestamps live in columns: a copy inside the document could
+        disagree with the world and would go on asserting whatever it said when it was written.
+        A plan checked under one toolchain and read under another is not verified — saying so
+        is the whole difference between a fact and a badge.
+        """
+        stored = plan.verification.toolchain if plan.verification else None
+        plan.stale = bool(stored and stored != lean.toolchain_version())
+        return plan
+
+    def create_plan(self, body: PlanCreate) -> Plan:
+        plan_id = body.plan_id or new_plan_id()
+        if self.store.plan_exists(plan_id):
+            raise InvalidTransition(f"plan '{plan_id}' already exists")
+        stamp = now()
+        plan = Plan(
+            plan_id=plan_id,
+            title=body.title,
+            lean_source=body.lean_source,
+            project=body.project,
+            origin_dir=body.origin_dir,
+            generated_by=body.generated_by,
+            created_at=stamp,
+            updated_at=stamp,
+        )
+        with self.store.transaction() as conn:
+            self.store.create_plan(conn, plan)
+            self.store.audit(conn, "plan.created", detail={"plan_id": plan_id})
+        return plan
+
+    def get_plan(self, plan_id: str) -> Plan:
+        return self._freshen(self.store.get_plan(plan_id))
+
+    def list_plans(self, *, status: str | None = None, project: str | None = None) -> list[Plan]:
+        return [self._freshen(p) for p in self.store.list_plans(status=status, project=project)]
+
+    def revise_plan(self, plan_id: str, body: PlanRevise) -> Plan:
+        """Replace the source. The verdict does not survive it.
+
+        A plan is not versioned the way a workflow is, because there is nothing to protect:
+        nobody has approved it and nothing has executed from it. What must not survive an edit
+        is the verdict — it belongs to the text that was checked, and carrying it across would
+        let changed source wear a badge earned by source that no longer exists.
+        """
+        plan = self.store.get_plan(plan_id)
+        plan.title = body.title or plan.title
+        plan.lean_source = body.lean_source
+        plan.status = "draft"
+        plan.verification = None
+        plan.verified_at = None
+        plan.updated_at = now()
+        with self.store.transaction() as conn:
+            self.store.save_plan(conn, plan)
+            self.store.audit(
+                conn, "plan.revised", detail={"plan_id": plan_id, "reason": body.reason}
+            )
+        return self._freshen(plan)
+
+    def verify_plan(self, plan_id: str) -> Plan:
+        """Check the plan's logic and record what came back.
+
+        The server does the checking rather than trusting a client's word for it, which is what
+        makes the verdict worth storing: a green plan means this process ran the kernel over
+        that source, not that something told it so.
+        """
+        plan = self.store.get_plan(plan_id)
+        try:
+            result = lean.verify_source(plan.lean_source)
+        except lean.LeanUnavailable as exc:
+            raise NotAvailable(str(exc)) from exc
+
+        plan.verification = result
+        plan.status = result.status
+        plan.verified_at = now()
+        plan.updated_at = plan.verified_at
+        with self.store.transaction() as conn:
+            self.store.save_plan(conn, plan)
+            self.store.audit(
+                conn,
+                "plan.verified",
+                detail={
+                    "plan_id": plan_id,
+                    "status": result.status,
+                    "toolchain": result.toolchain,
+                    "errors": len(result.errors),
+                },
+            )
+        return self._freshen(plan)
+
+    def compile_plan(self, plan_id: str, body: PlanCompile) -> WorkflowDefinition:
+        """Lower a checked plan into a draft workflow.
+
+        Refused unless the plan is verified *by the toolchain that is installed now* — a plan
+        whose verdict predates a toolchain change has to be checked again before it can become
+        something a person is asked to approve.
+        """
+        plan = self._freshen(self.store.get_plan(plan_id))
+        if plan.status != "verified":
+            raise InvalidTransition(
+                f"plan '{plan_id}' is {plan.status}; only a verified plan can be compiled"
+            )
+        if plan.stale:
+            raise InvalidTransition(
+                f"plan '{plan_id}' was verified by {plan.verification.toolchain} and this "
+                f"instance runs {lean.toolchain_version()}; verify it again before compiling"
+            )
+        graph = plan.graph
+        if graph is None:  # pragma: no cover - a verified plan always carries its graph
+            raise InvariantViolation(f"plan '{plan_id}' is verified but carries no graph")
+
+        create = lean.compile_plan(
+            graph,
+            title=body.title or plan.title,
+            project=body.project or plan.project,
+            origin_dir=body.origin_dir or plan.origin_dir,
+            generated_by=plan.generated_by or f"plan:{plan_id}",
+        )
+        create.workflow_id = body.workflow_id
+        defn = self.create_workflow(
+            create,
+            plan_origin=PlanOrigin(
+                plan_id=plan_id,
+                contracts_refined=graph.stats.contracts_refined,
+                contracts_any=graph.stats.contracts_any,
+                toolchain=plan.verification.toolchain if plan.verification else None,
+                verified_at=plan.verified_at,
+            ),
+        )
+
+        plan.compiled_to = [*plan.compiled_to, defn.workflow_id]
+        plan.updated_at = now()
+        with self.store.transaction() as conn:
+            self.store.save_plan(conn, plan)
+            self.store.audit(
+                conn,
+                "plan.compiled",
+                workflow_id=defn.workflow_id,
+                detail={"plan_id": plan_id},
+            )
+        return defn
+
+    def delete_plan(self, plan_id: str) -> dict[str, Any]:
+        """Remove a plan. The workflows compiled from it are untouched.
+
+        A compiled workflow is a plan in its own right from the moment it exists — it carries
+        its own steps and its own lineage record — so deleting what it was made from does not
+        take anything it needs with it.
+        """
+        plan = self.store.get_plan(plan_id)
+        with self.store.transaction() as conn:
+            self.store.delete_plan(conn, plan_id)
+            self.store.audit(
+                conn,
+                "plan.deleted",
+                detail={"plan_id": plan_id, "compiled_to": plan.compiled_to},
+            )
+        return {"plan_id": plan_id, "deleted": True, "compiled_to": plan.compiled_to}
+
+    def lean_available(self) -> dict[str, Any]:
+        """Whether this instance can check a plan, and with what."""
+        return {"available": lean.available(), "toolchain": lean.toolchain_version()}
 
     def _validate_template_graph(self, steps, template_id: str) -> None:
         """Validate the plan's shape by borrowing the workflow validator.

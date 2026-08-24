@@ -1,11 +1,12 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Twenty-four tools against 47 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Thirty tools against 55 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
-and the approval-policy config, the audit query, artifact comments and draft review notes
-are deliberately REST-only — a session that can edit the policy governing its own approvals
-can approve its own work, no session behaviour is driven by reading the audit log, and both
-comment channels run one way: they are what a person says *to* a harness, which a harness
+and the approval-policy config, the audit query, artifact comments, draft review notes and
+both destructive deletes are deliberately REST-only — a session that can edit the policy
+governing its own approvals can approve its own work, no session behaviour is driven by
+reading the audit log, erasing a record is not a session's to initiate, and both comment
+channels run one way: they are what a person says *to* a harness, which a harness
 writing or closing its own would make meaningless. Both are readable here, and neither
 needs a call of its own: comments ride on the artifacts in the state ``get_run`` returns,
 review notes on the plan ``get_workflow`` returns.
@@ -41,6 +42,10 @@ from .models import (
     CheckpointResolution,
     InstanceCreate,
     InstanceUpdate,
+    Plan,
+    PlanCompile,
+    PlanCreate,
+    PlanRevise,
     RunCreate,
     RunState,
     StepInstance,
@@ -113,6 +118,12 @@ HARNESS_OPERATIONS = [
     "create_template",
     "create_template_from_workflow",
     "create_workflow_from_template",
+    "create_plan",
+    "list_plans",
+    "get_plan",
+    "revise_plan",
+    "verify_plan",
+    "compile_plan",
 ]
 
 
@@ -291,6 +302,76 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         to the literal it replaced, so the template reproduces the original by default.
         """
         return service.create_template_from_workflow(workflow_id, body or TemplateFromWorkflow())
+
+    # --- plans ----------------------------------------------------------------------------
+    #
+    # `delete_plan` is deliberately absent, for the same reason `delete_workflow` is: erasing
+    # a record is not something a session needs to do on its own initiative.
+
+    @tool()
+    @_guard
+    def create_plan(body: PlanCreate) -> Plan:
+        """Write a plan whose logic can be checked before anyone is asked to approve it.
+
+        `lean_source` is a whole Lean file written against the ChiefPlan prelude, where each
+        step declares what it needs from the ones before it. Checking it establishes that
+        every one of those demands is met by what feeds it. Nothing is checked yet — this
+        stores the plan as a draft; call `verify_plan` next.
+
+        Reach for this when the work has real preconditions between steps that would be
+        expensive to discover halfway through. A short errand does not need it.
+        """
+        return service.create_plan(body)
+
+    @tool()
+    @_guard
+    def list_plans(status: str | None = None, project: str | None = None) -> list[Plan]:
+        """Plans on this server, newest first. Filter by status or project."""
+        return service.list_plans(status=status, project=project)
+
+    @tool()
+    @_guard
+    def get_plan(plan_id: str) -> Plan:
+        """Read a plan: its source, the verdict on it, and the graph that was checked."""
+        return service.get_plan(plan_id)
+
+    @tool()
+    @_guard
+    def revise_plan(plan_id: str, body: PlanRevise) -> Plan:
+        """Replace a plan's source, usually to fix what verification reported.
+
+        The verdict does not survive the edit — the plan goes back to draft and must be
+        verified again. That is the point: a verdict belongs to the text that earned it.
+        """
+        return service.revise_plan(plan_id, body)
+
+    @tool()
+    @_guard
+    def verify_plan(plan_id: str) -> Plan:
+        """Check the plan and record what came back.
+
+        A plan that does not hold up is not an error — it comes back with `status: failed`
+        and `verification.diagnostics` saying what failed and where. Read those, fix the
+        source with `revise_plan`, and verify again. The diagnostics name the exact condition
+        that does not follow, with both sides in view, so they are worth reading closely
+        rather than guessing from.
+
+        The usual failure is a step demanding more than the step feeding it promised. Either
+        strengthen the upstream promise or weaken the downstream demand — whichever is true
+        of the work, not whichever makes the message go away.
+        """
+        return service.verify_plan(plan_id)
+
+    @tool()
+    @_guard
+    def compile_plan(plan_id: str, body: PlanCompile | None = None) -> WorkflowDefinition:
+        """Turn a verified plan into a draft workflow.
+
+        Refused unless the plan is verified. The result is a draft like any other: it still
+        needs `approve_workflow` and a run, and the conditions the plan proved travel with it
+        as the steps' inputs and criteria.
+        """
+        return service.compile_plan(plan_id, body or PlanCompile())
 
     # --- runs -----------------------------------------------------------------------------
 
