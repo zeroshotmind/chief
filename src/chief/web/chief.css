@@ -713,6 +713,41 @@ details[open] > .meta-summary::before { content: "▾ "; }
 .op-now { color: var(--color-accent-700); }
 .op-note { color: var(--color-neutral-500); font-size: 11px; }
 
+/* — contracts, diagnostics, plan source —
+   A contract is what a checked plan proved about an artifact that does not exist yet, so it
+   is deliberately quieter than an artifact card: no icon, no affordance, nothing to open. The
+   condition itself is the content, and it is the one part set in mono. */
+.contract {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
+}
+.contract:last-of-type { border-bottom: 0; }
+.contract-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.contract-label { font-size: 12px; color: var(--color-text); }
+.contract-type { font-size: 10px; color: var(--color-neutral-500); }
+.contract-pred {
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-accent-700);
+  overflow-wrap: anywhere;
+}
+.contract-from { font-size: 10px; }
+
+/* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
+   meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
+   panel it sits in. */
+.diagnostic {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-divider);
+}
+.diagnostic:last-of-type { border-bottom: 0; }
+.diagnostic-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.diagnostic-body, .plan-source {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  color: var(--color-text); background: var(--color-surface);
+  border-radius: var(--radius-sm); padding: var(--space-2);
+  margin: 0; white-space: pre; overflow-x: auto;
+}
+.plan-source { max-height: 460px; overflow-y: auto; color: var(--color-neutral-700); }
+
 /* — artifacts — */
 .art-head { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .art-icon { flex: none; font-size: 12px; color: var(--color-accent); }

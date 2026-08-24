@@ -35,6 +35,7 @@ import {
   decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addReviewNote, artifactContent, artifactModules, commentOnArtifact, decideReviewNote, labelWorkflow, listAmendments,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
+  compilePlan, deletePlan, getPlan, listPlans, planToolchain, revisePlan, verifyPlan,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
 
@@ -1582,17 +1583,54 @@ const runArtifacts = (def, stepStates) =>
     output only has to shape it that way, not declare it twice. No `artifact_id`: it did not
     come from a run, so `artifactCard` falls back to always-open and to a plain editor/copy
     link rather than the in-page viewer, which needs one to fetch content by. */
+/** A condition a checked plan proved about an input, as opposed to an artifact.
+
+    Told apart from an `ArtifactRef` by what it lacks: there is no `type`/`ref`/`data`, because
+    nothing has been produced yet. Rendering one through `artifactCard` would offer an editor
+    link and a copy-path for a file nobody has written. */
+const isContract = (v) =>
+  !!v && typeof v === "object" &&
+  typeof v.artifact_type === "string" && typeof v.contract === "string";
+
 function splitInputs(inputs) {
   const arts = [];
+  const contracts = [];
   const meta = {};
   for (const [key, value] of Object.entries(inputs || {})) {
     if (value && typeof value === "object" && typeof value.type === "string" && (value.ref || value.data != null)) {
       arts.push({ artifact: value, label: value.description || key });
+    } else if (isContract(value)) {
+      contracts.push({ label: key, port: value });
     } else {
       meta[key] = value;
     }
   }
-  return { arts, meta };
+  return { arts, contracts, meta };
+}
+
+/** What was proven about one artifact this step reads, before it exists.
+
+    The condition is shown verbatim because it is the whole point — a reader deciding whether
+    to approve a plan wants to see what each step is entitled to assume, not merely that
+    something was checked. An input with nothing claimed about it is called out rather than
+    left to look the same as the rest: a plan whose contracts are real except on the edge that
+    matters is exactly the one worth noticing. */
+function contractCard(label, port) {
+  return el(
+    "div",
+    { class: "contract" },
+    el(
+      "div",
+      { class: "contract-head" },
+      el("span", { class: "contract-label", text: label }),
+      el("span", { class: "contract-type mono", text: port.artifact_type }),
+      port.proven === false &&
+        el("span", { class: "tag", style: { color: "var(--warn)" }, text: "unconstrained" }),
+    ),
+    el("code", { class: "contract-pred", text: port.contract }),
+    port.from_step &&
+      el("span", { class: "contract-from text-muted", text: `from ${port.from_step}` }),
+  );
 }
 
 // ── amendment diff (REQ-40, rendered client-side from the stored operations) ──────────────
@@ -1698,6 +1736,20 @@ const state = {
   templateId: null,
   templates: undefined, // undefined = not loaded yet, null = server has no templates
 
+  // Checked plans. Same three-way convention as templates: undefined until the first load,
+  // null when this Chief has no /plans endpoint at all. Not to be confused with
+  // `plansByRun`, which is a run's effective *workflow definition* and predates this.
+  planId: null,
+  plans: undefined,
+  // {available, toolchain} — whether this instance can check anything. Fetched once beside
+  // the list, because a UI that offers Verify on a server that cannot verify is worse than
+  // one that says why the button is not there.
+  toolchain: null,
+  // plan_id currently being verified or compiled, so the button can say so and not be
+  // pressed twice. One at a time is enough: these are deliberate, one-off acts.
+  planBusy: null,
+  planError: null,
+
   workflowAudit: null, // { workflowId, entries }
   // Review notes for the workflow on screen: { workflowId, notes }. Fetched per screen and
   // cleared on the way out, like workflowAudit — a poll landing mid-navigation must not
@@ -1777,9 +1829,13 @@ function setState(patch) {
 // you are* is in the hash: selection, dialogs and fetched documents are session state, and
 // putting them in the URL would make every click a history entry.
 
-const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1 };
-const ROUTED = { workflow: "workflowId", detail: "runId", template: "templateId" };
-const ROUTE_KIND = { workflow: "workflow", detail: "run", template: "template" };
+const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1, plans: 1 };
+const ROUTED = {
+  workflow: "workflowId", detail: "runId", template: "templateId", plan: "planId",
+};
+const ROUTE_KIND = {
+  workflow: "workflow", detail: "run", template: "template", plan: "plan",
+};
 
 function hashFor(s) {
   const key = ROUTED[s.view];
@@ -1811,7 +1867,7 @@ function stateFromHash() {
   const [kind, raw, rawArtifact] = location.hash.replace(/^#\/?/, "").split("/");
   const id = raw && decodeURIComponent(raw);
   const blank = {
-    runId: null, workflowId: null, templateId: null,
+    runId: null, workflowId: null, templateId: null, planId: null, planError: null,
     selected: null, detail: null, dialog: null, workflowAudit: null, workflowNotes: null,
     viewer: null, viewerPending: null,
   };
@@ -1885,13 +1941,19 @@ async function loadRuns() {
   // not take the whole UI down with it: the workflows screen has no need of templates, and
   // leaving every screen on "Loading…" because of an unrelated 404 is the worst of both —
   // nothing works and nothing says why.
-  const [runs, workflows, templates] = await Promise.all([
+  // Plans are a later extension than templates and get the same treatment: a Chief without
+  // the endpoint reports null, and the rest of the UI carries on. The toolchain probe rides
+  // along because it answers a question every plan screen asks.
+  const missingIsNull = (err) => {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  };
+  const [runs, workflows, templates, planList, toolchain] = await Promise.all([
     listRuns(),
     listWorkflows(),
-    listTemplates().catch((err) => {
-      if (err instanceof ApiError && err.status === 404) return null;
-      throw err;
-    }),
+    listTemplates().catch(missingIsNull),
+    listPlans().catch(missingIsNull),
+    planToolchain().catch(() => null),
   ]);
   for (const wf of workflows) titles[wf.workflow_id] = wf.title;
   // Amendments are one small request per run and drive the nav badge on every screen.
@@ -1911,7 +1973,11 @@ async function loadRuns() {
   const plans = await Promise.all(waiting.map((r) => getRunDefinition(r.run_id).catch(() => null)));
   const plansByRun = { ...state.plansByRun };
   waiting.forEach((run, i) => (plansByRun[run.run_id] = plans[i]));
-  return { runs, workflows, templates, amendmentsByRun, plansByRun };
+  return {
+    runs, workflows, templates, toolchain, amendmentsByRun, plansByRun,
+    // Named apart from the local `plans` below, which is a run's effective definition.
+    plans: planList,
+  };
 }
 
 async function refresh() {
@@ -2190,6 +2256,18 @@ function navBar() {
     ),
     state.templates !== null &&
       link("Templates", "templates", state.view === "templates" || state.view === "template"),
+    // Absent entirely on a Chief without the endpoint, like Templates. A plan that has been
+    // checked and not yet compiled is the one waiting on you, so that is what the badge
+    // counts — a draft plan is still being written and a failed one is the author's problem.
+    state.plans !== null &&
+      link(
+        "Plans", "plans", state.view === "plans" || state.view === "plan",
+        readyPlans().length > 0 &&
+          el("span", {
+            class: "tag tag-accent", style: { padding: "0 7px" },
+            text: String(readyPlans().length),
+          }),
+      ),
     link(
       "Approvals", "approvals", state.view === "approvals",
       pending > 0 &&
@@ -2747,7 +2825,7 @@ function edgeDefs() {
 
 function stepPanel(step, stepState, def) {
   const arts = stepArtifacts(stepState);
-  const { arts: inputArts, meta: inputMeta } = splitInputs(step.inputs);
+  const { arts: inputArts, contracts: inputContracts, meta: inputMeta } = splitInputs(step.inputs);
   const instances = stepState.instances || [];
   const body = bodyStepsOf(step, def);
   const meta =
@@ -2849,8 +2927,12 @@ function stepPanel(step, stepState, def) {
     // Fixed in the plan rather than produced at runtime — readable before the first run
     // exists, which is when a person is deciding whether to approve it (same reasoning as
     // exitLabel/paramsLabel above).
-    inputsLabel: inputArts.length ? `Inputs (${inputArts.length})` : null,
+    inputsLabel:
+      inputArts.length + inputContracts.length
+        ? `Inputs (${inputArts.length + inputContracts.length})`
+        : null,
     inputArts,
+    inputContracts,
     inputMeta,
   };
 }
@@ -2944,6 +3026,7 @@ function inspector(panel) {
       panel.inputsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.inputsLabel }),
       (panel.inputArts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
+      (panel.inputContracts || []).map(({ label, port }) => contractCard(label, port)),
       metadataBlock(panel.inputMeta, "full", "Other inputs"),
       panel.opsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.opsLabel }),
@@ -4268,9 +4351,380 @@ function dialogNode() {
   );
 }
 
+// ── plans (extension: a plan whose logic was checked before anyone approved it) ───────────
+//
+// A plan is not a workflow and never becomes one in place. Checking settles whether it hangs
+// together; compiling produces an ordinary draft workflow, and from there it is approved and
+// run by the rules everything else follows. So these screens do two things and stop: show
+// what was checked, and hand the result over.
+
+const planErrors = (plan) =>
+  ((plan.verification && plan.verification.diagnostics) || []).filter(
+    (d) => d.severity === "error",
+  );
+
+const planGraphOf = (plan) => (plan.verification && plan.verification.graph) || null;
+const planStats = (plan) => (planGraphOf(plan) || {}).stats || null;
+
+/** Checked, still checked by the toolchain running now, and not yet turned into a workflow.
+    That is the plan waiting on a person: a draft is still being written and a failed one is
+    the author's to fix. */
+function readyPlans() {
+  return (state.plans || []).filter(
+    (p) => p.status === "verified" && !p.stale && (p.compiled_to || []).length === 0,
+  );
+}
+
+/** Four states, and the third is the one worth a colour of its own: a plan can be `verified`
+    and still not count, because the toolchain that said so is not the one installed now. */
+function planMeta(plan) {
+  if (plan.status === "failed") return { color: BAD, label: "does not hold up" };
+  if (plan.status === "draft") return { color: "var(--color-neutral-400)", label: "not checked" };
+  if (plan.stale) return { color: WARN, label: "checked by an older toolchain" };
+  if ((plan.compiled_to || []).length) return { color: ACC, label: "compiled" };
+  return { color: OK, label: "verified" };
+}
+
+function openPlan(planId) {
+  setState({ view: "plan", planId, selected: null, dialog: null, planError: null });
+}
+
+const withPlan = (plan) =>
+  (state.plans || []).map((p) => (p.plan_id === plan.plan_id ? plan : p));
+
+async function doVerify(planId) {
+  setState({ planBusy: planId, planError: null });
+  try {
+    // A plan that does not hold up comes back 200 with its diagnostics — the check reaching a
+    // verdict is the request succeeding, so this is not a catch.
+    setState({ planBusy: null, plans: withPlan(await verifyPlan(planId)) });
+  } catch (err) {
+    setState({ planBusy: null, planError: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+async function doCompile(planId) {
+  setState({ planBusy: planId, planError: null });
+  try {
+    const workflow = await compilePlan(planId, {});
+    setState({ planBusy: null, plans: withPlan(await getPlan(planId)) });
+    // Straight to the draft it produced: compiling is a handover, and leaving someone on the
+    // plan screen to go and find the workflow is the handover not happening.
+    openWorkflow(workflow.workflow_id);
+    refresh();
+  } catch (err) {
+    setState({ planBusy: null, planError: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+function planRow(plan) {
+  const meta = planMeta(plan);
+  const stats = planStats(plan);
+  return el(
+    "button",
+    { class: "run-row", onClick: () => openPlan(plan.plan_id) },
+    dot(meta.color, false),
+    el(
+      "span",
+      { class: "title" },
+      el("span", { text: plan.title }),
+      el("span", { class: "id text-muted", text: plan.plan_id }),
+    ),
+    el("span", { class: "status text-muted", text: meta.label }),
+    el("span", {
+      class: "when",
+      text: stats ? `${stats.nodes} steps · ${stats.contracts_refined} conditions` : "—",
+    }),
+  );
+}
+
+function plansScreen() {
+  const plans = state.plans;
+  if (plans === undefined)
+    return el("main", { class: "narrow" }, el("p", { class: "text-muted", text: "Loading…" }));
+  if (plans === null) {
+    return el(
+      "main",
+      { class: "narrow", "data-screen-label": "Plans" },
+      el("header", { class: "screen-head" }, el("h4", { text: "Plans" })),
+      el("p", {
+        class: "text-muted", style: { fontSize: "13px", margin: "0" },
+        text:
+          "This Chief has no /plans endpoint — it is running a build from before checked " +
+          "plans existed. Restart it to pick them up.",
+      }),
+    );
+  }
+  const tc = state.toolchain;
+  return el(
+    "main",
+    { class: "narrow", "data-screen-label": "Plans" },
+    el(
+      "header",
+      { class: "screen-head" },
+      el("h4", { text: "Plans" }),
+      el("span", {
+        class: "text-muted", style: { fontSize: "12px" },
+        text: `${readyPlans().length} ready to compile`,
+      }),
+    ),
+    // Said once, here, rather than discovered as a failed verification on a plan screen: an
+    // instance without a toolchain has not found anything unsound, it simply cannot look.
+    tc && !tc.available &&
+      el("p", {
+        class: "accent-note", style: { fontSize: "13px" },
+        text:
+          "This Chief has no Lean toolchain, so plans cannot be checked here. Nothing already " +
+          "compiled is affected.",
+      }),
+    plans.length === 0 &&
+      el("p", {
+        class: "text-muted", style: { fontSize: "13px", margin: "0" },
+        text:
+          "No plans yet. A plan is a workflow written so its steps declare what they need " +
+          "from each other, which is then machine-checked before anyone approves it. " +
+          "See lean/README.md, or POST /plans.",
+      }),
+    el("div", { style: { display: "flex", flexDirection: "column" } }, plans.map(planRow)),
+    tc && tc.available &&
+      el("p", {
+        class: "text-muted mono",
+        style: { fontSize: "11px", marginTop: "var(--space-3)" },
+        text: tc.toolchain,
+      }),
+  );
+}
+
+/** The checked graph, in the shape the ordinary plan renderer takes.
+
+    A plan's nodes are workflow steps in all but name, so they draw through the same renderer
+    as a workflow or a template rather than a second one that could disagree with it. The
+    contracts ride in as `inputs`, which is where `contractCard` picks them up. */
+function defFromPlan(plan) {
+  const graph = planGraphOf(plan);
+  if (!graph) return null;
+  return {
+    workflow_id: plan.plan_id,
+    title: graph.title,
+    steps: graph.nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      goal: n.goal,
+      harness: n.harness,
+      criteria: (n.criteria || []).map((text, i) => ({ id: `c${i + 1}`, text })),
+      depends_on: n.depends_on || [],
+      inputs: Object.fromEntries(
+        (n.inputs || []).map((port) => [
+          port.label,
+          {
+            artifact_type: port.artifact_type,
+            contract: port.contract,
+            from_step: port.source,
+            proven: port.refined,
+          },
+        ]),
+      ),
+      fields: n.type === "checkpoint" ? (n.fields || []).map((name) => ({ name })) : null,
+      body: null,
+    })),
+  };
+}
+
+/** What the panel says before a step is selected: what the check actually established.
+
+    Deliberately the counts rather than the word "verified" on its own. A plan can pass with
+    every condition claiming nothing, and a reader who is about to approve the workflow this
+    compiles into is entitled to see the difference at the point of use. */
+function planOverviewPanel(plan, graph, topSteps) {
+  const stats = graph.stats || {};
+  const meta = planMeta(plan);
+  return {
+    kicker: "What was checked",
+    title: plan.title,
+    metaLine:
+      `${topSteps.length} steps · ${stats.edges || 0} edges · ` +
+      `${meta.label}` +
+      (plan.verification && plan.verification.toolchain
+        ? ` · ${plan.verification.toolchain}`
+        : ""),
+    summary:
+      stats.contracts_any > 0
+        ? `${stats.contracts_refined} of ${stats.contracts_total} conditions constrain ` +
+          `something; ${stats.contracts_any} claim nothing. Select a step to read what it ` +
+          "demands and what it promises."
+        : `Every one of the ${stats.contracts_total} conditions constrains something. ` +
+          "Select a step to read what it demands and what it promises.",
+    summaryColor: "var(--color-neutral-500)",
+    instances: [],
+  };
+}
+
+/** One thing the checker said. The message is shown verbatim in a `pre`: it is a proof goal,
+    its line breaks and alignment carry the meaning, and reflowing it would destroy the very
+    thing a reader is trying to read. */
+function diagnosticCard(d) {
+  const color = d.severity === "error" ? BAD : d.severity === "warning" ? WARN : DIM;
+  return el(
+    "div",
+    { class: "diagnostic" },
+    el(
+      "div",
+      { class: "diagnostic-head" },
+      dot(color, false),
+      el("span", { class: "mono", style: { fontSize: "11px", color }, text: d.severity }),
+      d.step_id && el("span", { class: "tag", text: d.step_id }),
+      d.line && el("span", { class: "text-muted mono", style: { fontSize: "11px" }, text: `line ${d.line}` }),
+    ),
+    el("pre", { class: "diagnostic-body", text: d.message }),
+  );
+}
+
+function planDetailScreen() {
+  const plan = (state.plans || []).find((p) => p.plan_id === state.planId);
+  if (!plan) {
+    return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading…" }));
+  }
+  const meta = planMeta(plan);
+  const stats = planStats(plan);
+  const def = defFromPlan(plan);
+  const drawn = def ? planGraph({ def }) : null;
+  const busy = state.planBusy === plan.plan_id;
+  const canCheck = !state.toolchain || state.toolchain.available;
+  const errs = planErrors(plan);
+  const warnings = ((plan.verification && plan.verification.diagnostics) || []).filter(
+    (d) => d.severity !== "error",
+  );
+
+  const side = el(
+    "div",
+    {},
+    el("button", {
+      class: "btn btn-ghost",
+      style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" },
+      text: "← Plans", onClick: () => go("plans"),
+    }),
+    el(
+      "div",
+      { class: "screen-head", style: { marginTop: "var(--space-3)" } },
+      el("h4", { text: plan.title }),
+      el("span", { style: { fontSize: "13px", color: meta.color }, text: meta.label }),
+    ),
+    el("p", {
+      class: "text-muted mono",
+      style: { fontSize: "11px", margin: "var(--space-2) 0 0" },
+      text:
+        `${plan.plan_id}` +
+        (plan.verification && plan.verification.toolchain
+          ? ` · ${plan.verification.toolchain}`
+          : "") +
+        (plan.verified_at ? ` · checked ${rel(plan.verified_at)}` : ""),
+    }),
+    // What the plan actually claims. A plan can be verified and say almost nothing, so the
+    // count of conditions that constrain something is shown beside the count that do not —
+    // "checked" without this is a badge rather than a fact.
+    stats &&
+      el(
+        "div",
+        { style: { marginTop: "var(--space-3)" } },
+        el("span", { class: "section-label", text: "What was checked" }),
+        el("p", {
+          style: { fontSize: "13px", margin: "var(--space-1) 0 0" },
+          text:
+            `${stats.nodes} steps, ${stats.edges} edges between them. ` +
+            `${stats.contracts_refined} of ${stats.contracts_total} conditions constrain ` +
+            `something.`,
+        }),
+        stats.contracts_any > 0 &&
+          el("p", {
+            class: "text-muted", style: { fontSize: "12px", margin: "var(--space-1) 0 0" },
+            text:
+              `${stats.contracts_any} claim nothing about the artifact they sit on. Checking ` +
+              "established nothing there — look at those edges before trusting the shape.",
+          }),
+      ),
+    plan.stale &&
+      el("p", {
+        class: "accent-note", style: { fontSize: "13px", marginTop: "var(--space-3)" },
+        text:
+          "This was checked by a Lean that is no longer the one installed, so the verdict no " +
+          "longer stands. Check it again before compiling.",
+      }),
+    state.planError &&
+      el("p", { class: "accent-note", style: { fontSize: "13px", marginTop: "var(--space-3)" }, text: state.planError }),
+    el(
+      "div",
+      { style: { display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)", flexWrap: "wrap" } },
+      canCheck &&
+        el("button", {
+          class: "btn btn-sm", disabled: busy || null,
+          text: busy ? "Checking…" : plan.status === "draft" ? "Check it" : "Check again",
+          onClick: () => doVerify(plan.plan_id),
+        }),
+      plan.status === "verified" && !plan.stale &&
+        el("button", {
+          class: "btn btn-primary btn-sm", disabled: busy || null,
+          text: "Compile to a workflow",
+          onClick: () => doCompile(plan.plan_id),
+        }),
+    ),
+    (plan.compiled_to || []).length > 0 &&
+      el(
+        "div",
+        { style: { marginTop: "var(--space-3)" } },
+        el("span", { class: "section-label", text: "Compiled into" }),
+        el(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+          plan.compiled_to.map((id) =>
+            el("button", {
+              class: "btn btn-ghost mono",
+              style: { fontSize: "12px", justifyContent: "flex-start", padding: "2px 0" },
+              text: titles[id] ? `${titles[id]} · ${id}` : id,
+              onClick: () => openWorkflow(id),
+            }),
+          ),
+        ),
+      ),
+    errs.length > 0 &&
+      el(
+        "div",
+        { style: { marginTop: "var(--space-3)" } },
+        el("span", { class: "section-label", text: `Why it does not hold up (${errs.length})` }),
+        ...errs.map(diagnosticCard),
+      ),
+    warnings.length > 0 &&
+      el(
+        "div",
+        { style: { marginTop: "var(--space-3)" } },
+        el("span", { class: "section-label", text: `Also worth fixing (${warnings.length})` }),
+        ...warnings.map(diagnosticCard),
+      ),
+    el(
+      "div",
+      { style: { marginTop: "var(--space-4)" } },
+      el("span", { class: "section-label", text: "Source" }),
+      el("pre", { class: "plan-source", text: plan.lean_source }),
+    ),
+  );
+
+  // No graph until it has been checked: the nodes are read out of the plan by running it, so
+  // before that there is nothing to draw and a placeholder is more honest than an empty frame.
+  if (!drawn) {
+    return el("main", { class: "narrow", "data-screen-label": "Plan detail" }, side);
+  }
+  return el(
+    "main",
+    { class: "wide graph", "data-screen-label": "Plan detail" },
+    side,
+    splitView(drawn.viewport, drawn.panel || planOverviewPanel(plan, planGraphOf(plan), drawn.topSteps)),
+  );
+}
+
 // ── render ───────────────────────────────────────────────────────────────────────────────
 
 const SCREENS = {
+  plans: plansScreen,
+  plan: planDetailScreen,
   approvals: approvalsScreen,
   templates: templatesScreen,
   template: templateDetailScreen,

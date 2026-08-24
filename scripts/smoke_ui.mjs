@@ -235,6 +235,54 @@ const FILE_BODIES = {
     type: "text/mdx", name: "post.mdx",
   },
 };
+// Two checked plans: one that holds up and one that does not, which is what the plans
+// screens are for. The verified one carries the graph the server read back out of it, with a
+// contract on the edge — a condition proven about an artifact nothing has produced yet.
+const TOOLCHAIN = { available: true, toolchain: "leanprover/lean4:v4.33.1" };
+const PLAN_GRAPH = {
+  schema: "chief.plan/v1",
+  title: "Fraud model refresh",
+  nodes: [
+    {
+      id: "harvest", type: "task", goal: "Pull the events.", harness: "claude",
+      criteria: ["count recorded"], fields: [], depends_on: [], inputs: [],
+      produces: { label: "out", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 50000", refined: true },
+    },
+    {
+      id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude",
+      criteria: ["AUC recorded"], fields: [], depends_on: ["harvest"],
+      inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
+      produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
+    },
+  ],
+  problems: [],
+  stats: { nodes: 2, edges: 1, contracts_total: 3, contracts_refined: 3, contracts_any: 0 },
+};
+const PLANS = [
+  {
+    plan_id: "pln_ok", title: "Fraud model refresh", lean_source: "import ChiefPlan\n-- …\n",
+    status: "verified", project: "chief", origin_dir: null, generated_by: null,
+    verification: { status: "verified", diagnostics: [], graph: PLAN_GRAPH, toolchain: TOOLCHAIN.toolchain, axioms: ["propext"] },
+    verified_at: "2026-08-24T09:00:00.000Z", compiled_to: [], stale: false,
+    created_at: "2026-08-24T08:00:00.000Z", updated_at: "2026-08-24T09:00:00.000Z",
+  },
+  {
+    plan_id: "pln_bad", title: "Docs index refresh", lean_source: "import ChiefPlan\n-- …\n",
+    status: "failed", project: "chief", origin_dir: null, generated_by: null,
+    verification: {
+      status: "failed",
+      diagnostics: [
+        { severity: "error", line: 71, column: 21, step_id: "evaluate",
+          message: "unsolved goals\nhx : x.vectors ≥ 1000\n⊢ x.vectors ≥ 5000" },
+        { severity: "warning", line: 24, column: 0, step_id: null,
+          message: "contract 'crawled' is bound with `def`; use `abbrev`" },
+      ],
+      graph: null, toolchain: TOOLCHAIN.toolchain, axioms: [],
+    },
+    verified_at: "2026-08-24T09:01:00.000Z", compiled_to: [], stale: false,
+    created_at: "2026-08-24T08:00:00.000Z", updated_at: "2026-08-24T09:01:00.000Z",
+  },
+];
 let fileRequests = 0;
 let moduleFetches = 0;
 let runtimeFetches = 0;
@@ -289,7 +337,11 @@ globalThis.fetch = async (url, options) => {
     return { ok: false, status: 404, json: async () => ({ error: { code: "not_found" } }) };
   }
   const body =
-    url.includes("/notes") ? NOTES
+    url.endsWith("/plans/toolchain") ? TOOLCHAIN
+    : url.endsWith("/plans") ? PLANS
+    : /\/plans\/[^/]+$/.test(url) ? PLANS[0]
+    : url.includes("/plans/") ? { ...PLANS[0], compiled_to: ["wf_ok"] }
+    : url.includes("/notes") ? NOTES
     : url.includes("/audit") ? AUDIT
     : url.endsWith("/templates") ? TEMPLATES
     : url.endsWith("/workflows") ? WORKFLOWS
@@ -1137,6 +1189,50 @@ const expected = [
   "Approvals inbox", "Templates", "Template detail", "Workflow detail",
 ];
 const actual = screens.map((s) => s.split(" -> ")[1]);
+// Plans: the checked-before-approval screens. The list separates a plan that holds up from
+// one that does not; the verified one draws its graph through the same renderer everything
+// else uses, with the proven condition on the edge shown as a condition rather than dumped
+// into a JSON drawer; and the failed one shows the goal that did not follow, verbatim.
+clickByText("Plans");
+await new Promise((r) => setTimeout(r, 30));
+record("nav Plans");
+const planRows = countClass(mainNode(), "run-row");
+const toolchainShown = JSON.stringify(mainNode()).includes("leanprover/lean4:v4.33.1");
+
+clickByText("Fraud model refresh");
+await new Promise((r) => setTimeout(r, 30));
+record("nav Plan detail");
+const planNodes = countClass(mainNode(), "node");
+const claimsShown = JSON.stringify(mainNode()).includes("3 of 3 conditions constrain");
+
+// Selecting the step that reads something shows what was proven about what it reads. The
+// condition is drawn as a condition — not through artifactCard, which would offer to open a
+// file nothing has written, and not swept into the "Other inputs" JSON drawer.
+clickByText("Fit the classifier.");
+await new Promise((r) => setTimeout(r, 30));
+const stepText = JSON.stringify(mainNode());
+const contractCards = countClass(mainNode(), "contract");
+const contractShown = stepText.includes("count ≥ 10000");
+const notInJsonDrawer = !stepText.includes("Other inputs");
+
+clickByText("Check again");
+await new Promise((r) => setTimeout(r, 40));
+const verified = posts.find((x) => x.url.includes("/verification"));
+
+clickByText("← Plans");
+await new Promise((r) => setTimeout(r, 30));
+clickByText("Docs index refresh");
+await new Promise((r) => setTimeout(r, 40));
+record("nav Plan detail (failed)");
+const failedText = JSON.stringify(mainNode());
+const diagnostics = countClass(mainNode(), "diagnostic");
+const goalShown = failedText.includes("x.vectors ≥ 5000");
+const blamedStep = failedText.includes("evaluate");
+
+console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
+console.log(`             contracts=${contractCards} shown=${contractShown}, not-json=${notInJsonDrawer}, verified-post=${verified && verified.url}`);
+console.log(`             diagnostics=${diagnostics}, goal-verbatim=${goalShown}, blamed=${blamedStep}`);
+
 const ok =
   dialogOpened &&
   // Metadata, in the four places it can be attached. These were computed and printed and
@@ -1323,6 +1419,20 @@ const ok =
   decision.url.endsWith("/resolutions/e") &&
   decision.body.decision === "approved" &&
   decision.body.response.budget === "$400" &&
-  decision.body.note === "go ahead";
+  decision.body.note === "go ahead" &&
+  // Plans: both rows listed, the verified one drawn, its proven condition shown as a
+  // condition, and the failed one showing the goal that did not follow.
+  planRows === 2 &&
+  toolchainShown &&
+  planNodes === 2 &&
+  contractCards === 1 &&
+  contractShown &&
+  notInJsonDrawer &&
+  claimsShown &&
+  !!verified &&
+  verified.url.endsWith("/plans/pln_ok/verification") &&
+  diagnostics === 2 &&
+  goalShown &&
+  blamedStep;
 console.log(ok ? "PASS" : `FAIL: expected ${expected.join(", ")}`);
 process.exit(ok ? 0 : 1);
