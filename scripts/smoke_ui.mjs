@@ -1225,7 +1225,12 @@ const groupsNamed = ["Data", "Collection", "Modelling"].every((n) => groupLabels
 function boxesAndNodes(root, boxes = [], nodes = []) {
   const cls = (root.class || "").split(" ");
   if (cls.includes("group-box")) {
-    boxes.push({ x: +root.x, y: +root.y, w: +root.width, h: +root.height });
+    // The boundary is a rectilinear outline, not a rectangle, so it is read back as the
+    // polygon it is — a bounding box would pass a test the real shape has to earn.
+    const nums = (root.d.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    const ring = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) ring.push([nums[i], nums[i + 1]]);
+    boxes.push(ring);
   }
   if (cls.includes("node") && root.style && root.style.left) {
     nodes.push({
@@ -1238,8 +1243,20 @@ function boxesAndNodes(root, boxes = [], nodes = []) {
   return { boxes, nodes };
 }
 const drawn = boxesAndNodes(mainNode());
-const inside = (b, n) =>
-  n.x >= b.x && n.y >= b.y && n.x + n.w <= b.x + b.w && n.y + n.h <= b.y + b.h;
+// Ray casting, so containment is judged against the outline rather than against a rectangle
+// drawn round it. A node counts as inside only if its whole footprint is.
+function pointIn(ring, x, y) {
+  let hit = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+const inside = (ring, n) =>
+  [[n.x, n.y], [n.x + n.w, n.y], [n.x, n.y + n.h], [n.x + n.w, n.y + n.h]]
+    .every(([x, y]) => pointIn(ring, x, y));
 // Two leaf boxes hold one node each; the box round both holds two. No box holds a stray.
 const held = drawn.boxes.map((b) => drawn.nodes.filter((n) => inside(b, n)).length).sort();
 const containment = JSON.stringify(held) === JSON.stringify([1, 1, 2]);

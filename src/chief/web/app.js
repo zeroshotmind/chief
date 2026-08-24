@@ -2752,32 +2752,33 @@ function approvalsScreen() {
 
 /** Lay the plan's top-level steps out in dependency layers, including the ghost steps a
     pending amendment proposes to insert. */
-/** Columns, when the steps say which part of the work they belong to.
+/** Grouping, when the steps say which part of the work they belong to.
 
-    A group is only worth a boundary if the boundary can be trusted, and in a layered graph it
-    cannot be drawn after the fact: depth is fixed by the longest path, and functional phases
-    interleave across depths — in the benchmark plan collection and taxonomy both occupy layer
-    1. A box around either would enclose a node from the other, which is worse than no box.
+    A group is a logical name over a subgraph, not a sequence and not a column. Its members can
+    be a chain, a fan-out, a diamond, or anything else the dependencies happen to make — so the
+    layout must not reshape the plan to suit the boundary. An earlier version gave each group a
+    lane of its own and cost the benchmark plan seven columns for a graph that needs two, which
+    is a plan spread out to fit its annotations rather than annotated as it is.
 
-    So grouping is a layout constraint. Each innermost group gets a lane — a run of columns
-    held across every layer it spans, as wide as its busiest layer — and lanes are laid out in
-    tree order, so a parent's lanes are always adjacent. That makes every rectangle exact, and
-    makes overlap impossible at any depth.
+    The only constraint kept is the weakest one that makes a boundary trustworthy: **within a
+    layer, order the steps by group**, which changes no depth and no width, since a layer holds
+    the same steps either way. That makes a group's members contiguous in every layer they
+    appear in, so its region is a stack of per-layer runs containing its own nodes and nothing
+    else — whatever shape those runs happen to form.
 
-    Groups nest by path: `Encoder/Training` sits inside `Encoder`. A group may hold steps of
-    its own as well as sub-groups; its own steps take the first lane under it.
+    Groups nest by path: `Encoder/Model` sits inside `Encoder`. Ordering by the whole path
+    keeps a parent's descendants adjacent too, so the same guarantee holds at every depth.
 
-    Returns null when nothing declares a group, and then the layout is exactly what it was —
-    this must not move a single plan that never asked for it. */
+    Returns null when nothing declares a group, and then not even the ordering changes. */
 const GROUP_SEP = "/";
 
 const groupPath = (step) =>
   (step.group || "").split(GROUP_SEP).map((s) => s.trim()).filter(Boolean);
 
-function lanesFor(all, layers) {
+function groupingFor(all) {
   if (!all.some((step) => groupPath(step).length)) return null;
 
-  // A trie of path segments in first-appearance order, so lanes come out in the order the
+  // A trie of path segments in first-appearance order, so groups come out in the order the
   // plan was written rather than alphabetically.
   const root = { order: [], children: new Map(), members: false };
   for (const step of all) {
@@ -2792,38 +2793,52 @@ function lanesFor(all, layers) {
     node.members = true;
   }
 
-  // Depth-first: a group's own steps take the lane immediately under it, then its sub-groups.
-  const keys = [];
+  // Depth-first: a group's own steps sort before its sub-groups, and every descendant of a
+  // group sorts adjacent to it.
+  const rank = new Map();
   const boxes = [];
   const walk = (node, path) => {
-    const first = keys.length;
-    if (node.members) keys.push(path.join(GROUP_SEP));
+    const key = path.join(GROUP_SEP);
+    if (node.members) rank.set(key, rank.size);
     for (const segment of node.order) walk(node.children.get(segment), [...path, segment]);
-    if (path.length) {
-      boxes.push({ label: path[path.length - 1], depth: path.length - 1, first, last: keys.length - 1 });
-    }
+    if (path.length) boxes.push({ label: path[path.length - 1], path: key, depth: path.length - 1 });
   };
   walk(root, []);
 
-  const laneOf = (step) => groupPath(step).join(GROUP_SEP);
-  const wide = new Map(keys.map((key) => [key, 1]));
-  for (const layer of layers) {
-    const count = new Map();
-    for (const step of layer || []) {
-      const key = laneOf(step);
-      count.set(key, (count.get(key) || 0) + 1);
-    }
-    for (const [key, n] of count) wide.set(key, Math.max(wide.get(key) || 1, n));
-  }
-
-  const offset = new Map();
-  let column = 0;
-  for (const key of keys) {
-    offset.set(key, column);
-    column += wide.get(key);
-  }
+  const keyOf = (step) => groupPath(step).join(GROUP_SEP);
+  const rankOf = (step) => {
+    const key = keyOf(step);
+    return rank.has(key) ? rank.get(key) : rank.size;
+  };
+  // A step is in a box if the box's path is its path or a prefix of it.
+  const within = (step, path) => {
+    const key = keyOf(step);
+    return key === path || key.startsWith(path + GROUP_SEP);
+  };
   const depth = Math.max(0, ...boxes.map((b) => b.depth));
-  return { keys, wide, offset, columns: column, laneOf, boxes, depth };
+  return { rankOf, within, boxes, depth };
+}
+
+/** The outline of a stack of per-layer runs, as one rectilinear path.
+
+    Down the right-hand edges, jogging sideways at each seam, then back up the left. A group
+    whose runs change width layer to layer comes out as a staircase, which is the honest shape:
+    squaring it off to a rectangle is exactly how a box starts enclosing somebody else's node.
+*/
+function outlinePath(bands) {
+  const d = [`M ${bands[0].x0} ${bands[0].y0}`, `L ${bands[0].x1} ${bands[0].y0}`];
+  for (let i = 0; i < bands.length; i += 1) {
+    d.push(`L ${bands[i].x1} ${bands[i].y1}`);
+    if (i + 1 < bands.length) d.push(`L ${bands[i + 1].x1} ${bands[i].y1}`);
+  }
+  const last = bands[bands.length - 1];
+  d.push(`L ${last.x0} ${last.y1}`);
+  for (let i = bands.length - 1; i >= 0; i -= 1) {
+    d.push(`L ${bands[i].x0} ${bands[i].y0}`);
+    if (i - 1 >= 0) d.push(`L ${bands[i - 1].x0} ${bands[i].y0}`);
+  }
+  d.push("Z");
+  return d.join(" ");
 }
 
 function layout(topSteps, ghosts, rewires, width, heightFor) {
@@ -2863,8 +2878,15 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   const layers = [];
   for (const step of all) (layers[depth[step.id]] ||= []).push(step);
 
-  const lanes = lanesFor(all, layers);
-  const widest = lanes ? lanes.columns : Math.max(1, ...layers.map((l) => l.length));
+  const grouping = groupingFor(all);
+  // Ordering only. A layer holds the same steps either way, so neither the width nor the
+  // depth of the plan changes — the members of a group simply end up next to each other.
+  if (grouping) {
+    for (const layer of layers) {
+      if (layer) layer.sort((a, b) => grouping.rankOf(a) - grouping.rankOf(b));
+    }
+  }
+  const widest = Math.max(1, ...layers.map((l) => l.length));
   // 170 is the floor at which a node still reads. Past that the plan does not get narrower,
   // it gets wider than the window — twelve steps side by side need 2400px however big the
   // window is — so the layout reports what it actually needed and the viewport scrolls.
@@ -2879,32 +2901,27 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   const pos = {};
   let y = 14;
   let bottom = 0;
-  const columnX = (slot) => 16 + slot * (nodeW + GAP);
+  // A boundary needs room above its members for a label, and room below the layer before it,
+  // or two stacked groups sharing a column would touch. Paid only when there are groups.
+  const outerPad = GROUP_PAD + (grouping ? grouping.depth * GROUP_NEST : 0);
+  const drop = DROP + (grouping ? Math.max(0, 2 * outerPad + GROUP_LABEL_H - DROP) : 0);
+
+  const bands = [];
   for (const layer of layers) {
     let tallest = NODE_H;
-    // Within a lane, a layer holding fewer than the lane's width sits centred in it.
-    const used = new Map();
     layer.forEach((step, i) => {
       const h = heightFor(step);
       tallest = Math.max(tallest, h);
-      let slot = i;
-      if (lanes) {
-        const key = lanes.laneOf(step);
-        const taken = used.get(key) || 0;
-        used.set(key, taken + 1);
-        const room = lanes.wide.get(key);
-        const here = layer.filter((s) => lanes.laneOf(s) === key).length;
-        slot = lanes.offset.get(key) + Math.floor((room - here) / 2) + taken;
-      }
-      pos[step.id] = { x: columnX(slot), y, h };
+      pos[step.id] = { x: 16 + i * (nodeW + GAP), y, h };
     });
+    bands.push({ top: y, bottom: y + tallest });
     bottom = y + tallest;
-    y += tallest + DROP;
+    y += tallest + drop;
   }
-  // A lone node in a layer centres under its dependencies (or over its dependents). Skipped
-  // entirely under lanes: drifting toward a dependency is exactly how a node leaves its lane,
-  // and a node outside its own group's box is the one thing this must never produce.
-  for (const layer of lanes ? [] : layers) {
+  // A lone node in a layer centres under its dependencies (or over its dependents). Kept under
+  // grouping: a layer holding one node is trivially a contiguous run wherever it sits, so the
+  // boundary follows it rather than being broken by it.
+  for (const layer of layers) {
     if (layer.length !== 1) continue;
     const step = layer[0];
     const deps = (step.depends_on || []).filter((id) => pos[id]);
@@ -2919,34 +2936,54 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
     pos[step.id].x = Math.max(16, Math.min(pos[step.id].x, planeW - nodeW - 16));
   }
 
-  // The rectangles, in lane coordinates rather than from where the members happened to land:
-  // a lane's full width is the box's width even where one layer holds a single node, so the
-  // shape stays a rectangle rather than a staircase.
-  // One rectangle per group at every depth, in lane coordinates rather than from where the
-  // members happened to land: a lane's full width is the box's width even where one layer
-  // holds a single node, so the shape stays a rectangle rather than a staircase. An enclosing
-  // group is padded further out than the ones inside it, by enough to clear their labels.
+  // One outline per group at every depth, built from the run it occupies in each layer. A
+  // group absent from a layer in the middle of its span is drawn as two shapes rather than
+  // one: bridging the gap would enclose whatever is in that layer, which is somebody else's.
   const groups = [];
-  if (lanes) {
-    for (const box of lanes.boxes) {
-      const mine = lanes.keys.slice(box.first, box.last + 1);
-      const members = all.filter((s) => mine.includes(lanes.laneOf(s)) && pos[s.id]);
-      if (!members.length) continue;
-      const pad = GROUP_PAD + (lanes.depth - box.depth) * GROUP_NEST;
-      const top = Math.min(...members.map((s) => pos[s.id].y)) - pad - GROUP_LABEL_H;
-      const base = Math.max(...members.map((s) => pos[s.id].y + (pos[s.id].h ?? NODE_H))) + pad;
-      const firstCol = lanes.offset.get(mine[0]);
-      const lastCol = lanes.offset.get(mine[mine.length - 1]) + lanes.wide.get(mine[mine.length - 1]) - 1;
-      groups.push({
-        label: box.label,
-        depth: box.depth,
-        x: columnX(firstCol) - pad,
-        y: top,
-        w: columnX(lastCol) + nodeW + pad - (columnX(firstCol) - pad),
-        h: base - top,
+  if (grouping) {
+    for (const box of grouping.boxes) {
+      const pad = GROUP_PAD + (grouping.depth - box.depth) * GROUP_NEST;
+      const runs = [];
+      layers.forEach((layer, index) => {
+        const mine = (layer || []).filter((s) => grouping.within(s, box.path) && pos[s.id]);
+        if (!mine.length) return;
+        runs.push({
+          index,
+          x0: Math.min(...mine.map((s) => pos[s.id].x)) - pad,
+          x1: Math.max(...mine.map((s) => pos[s.id].x)) + nodeW + pad,
+        });
       });
+      if (!runs.length) continue;
+
+      let piece = [runs[0]];
+      const pieces = [piece];
+      for (const run of runs.slice(1)) {
+        if (run.index === piece[piece.length - 1].index + 1) piece.push(run);
+        else pieces.push((piece = [run]));
+      }
+      for (const shape of pieces) {
+        const banded = shape.map((run, i) => ({
+          x0: run.x0,
+          x1: run.x1,
+          // The first band carries the label, so it opens further up. Consecutive bands meet
+          // halfway between the layers, which is what makes the pieces read as one shape.
+          y0: i === 0
+            ? bands[run.index].top - pad - GROUP_LABEL_H
+            : (bands[shape[i - 1].index].bottom + bands[run.index].top) / 2,
+          y1: i === shape.length - 1
+            ? bands[run.index].bottom + pad
+            : (bands[run.index].bottom + bands[shape[i + 1].index].top) / 2,
+        }));
+        groups.push({
+          label: box.label,
+          depth: box.depth,
+          d: outlinePath(banded),
+          labelX: banded[0].x0 + 10,
+          labelY: banded[0].y0 + 13,
+        });
+      }
     }
-    // Outer first, so a nested box paints over the one holding it.
+    // Outer first, so a nested shape paints over the one holding it.
     groups.sort((a, b) => a.depth - b.depth);
   }
 
@@ -3790,12 +3827,9 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           svgEl(
             "g",
             { class: "group" },
-            svgEl("rect", {
-              class: "group-box", x: String(g.x), y: String(g.y),
-              width: String(g.w), height: String(g.h), rx: "10",
-            }),
+            svgEl("path", { class: "group-box", d: g.d }),
             svgEl("text", {
-              class: "group-label", x: String(g.x + 10), y: String(g.y + 13),
+              class: "group-label", x: String(g.labelX), y: String(g.labelY),
             }, g.label),
           ),
         ),
