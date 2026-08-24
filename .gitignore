@@ -17,3 +17,6 @@ htmlcov/
 
 # Output from exercising Chief against real work. Yours, not the tool's.
 human-test/
+
+# Lean build output. The package itself is committed; what lake compiles from it is not.
+lean/.lake/
