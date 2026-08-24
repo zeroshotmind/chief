@@ -56,9 +56,12 @@ END_MARKER = "--CHIEF-PLAN-END--"
 #: The name a plan file must bind its plan to, and the symbol the axiom check is run against.
 ENTRY_POINT = "plan"
 
+# The severity may carry a category — `error(lean.unknownIdentifier):` — and a parser that
+# only knows the bare form drops exactly the errors that name the offending identifier,
+# leaving the cascade tail as the whole story.
 _DIAGNOSTIC = re.compile(
     r"^(?P<file>[^\s].*?):(?P<line>\d+):(?P<col>\d+): "
-    r"(?P<severity>error|warning|info|information): (?P<message>.*)$"
+    r"(?P<severity>error|warning|info|information)(?:\([^)]*\))?: (?P<message>.*)$"
 )
 _AXIOMS = re.compile(r"depends on axioms: \[(?P<axioms>[^\]]*)\]")
 _LINE_COMMENT = re.compile(r"--.*$", re.MULTILINE)
