@@ -4081,7 +4081,45 @@ function workflowDetailScreen() {
       el(
         "div",
         { class: "screen-head", style: { marginTop: "var(--space-3)" } },
-        el("h4", { text: workflow.title }),
+        // The title, and the way to change it. Renaming rides the same filing machinery as
+        // the project and the directory — same state, same PATCH — because it is the same
+        // kind of act: correcting the record, allowed at any status. The workflows most in
+        // need of a better name are usually the ones already running.
+        state.filing &&
+        state.filing.workflowId === workflow.workflow_id &&
+        state.filing.field === "title"
+          ? el(
+              "span",
+              { class: "wf-edit", style: { flex: "1" } },
+              el("input", {
+                class: "input", id: "wf-title", type: "text", value: state.filing.draft,
+                placeholder: "Workflow title",
+                onInput: (e) => setState({ filing: { ...state.filing, draft: e.target.value } }),
+                onKeyDown: (e) => e.key === "Enter" && saveFiling(workflow),
+              }),
+              el("button", {
+                class: "btn btn-primary btn-sm", text: "Save",
+                onClick: () => saveFiling(workflow),
+              }),
+              el("button", {
+                class: "btn btn-secondary btn-sm", text: "Cancel",
+                onClick: () => setState({ filing: null }),
+              }),
+            )
+          : [
+              el("h4", { text: workflow.title }),
+              el("button", {
+                class: "cmt-add", style: { marginTop: "0" }, text: "rename…",
+                title: "Change the title. The plan is untouched.",
+                onClick: () =>
+                  setState({
+                    filing: {
+                      workflowId: workflow.workflow_id, field: "title",
+                      draft: workflow.title,
+                    },
+                  }),
+              }),
+            ],
         badge(life),
         progress &&
           el("span", {

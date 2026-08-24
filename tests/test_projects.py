@@ -272,3 +272,32 @@ def test_a_finished_workflow_can_have_its_directory_corrected(api):
         f"/v1/workflows/{workflow_id}", json={"origin_dir": "/w/chief"}
     )
     assert response.status_code == 200, response.text
+
+
+# --- renaming --------------------------------------------------------------------------------
+
+
+def test_a_workflow_can_be_renamed_at_any_status(api):
+    """The same PATCH as filing, for the same reason: a rename says nothing about the plan,
+    and the workflows most in need of a better name are the ones already running. The runs
+    follow, because the definition is the one document they all read."""
+    workflow_id, _ = api.run([task("s1")])
+    response = api.client.patch(
+        f"/v1/workflows/{workflow_id}", json={"title": "A better name"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["title"] == "A better name"
+    assert response.json()["status"] == "approved"
+    # The audit records what it was, so the rename is a correction, not an erasure.
+    entries = api.client.get(f"/v1/audit?workflow_id={workflow_id}").json()
+    labelled = [e for e in entries if e["event"] == "workflow.labelled"]
+    assert labelled and labelled[-1]["detail"]["title_was"] == "test"
+
+
+def test_a_title_cannot_be_blanked(api):
+    """Unlike the labels, a title is not clearable — a workflow without one is not a record
+    of anything — so blank is refused rather than read as 'remove'."""
+    workflow_id = api.draft([task("s1")])
+    response = api.client.patch(f"/v1/workflows/{workflow_id}", json={"title": "   "})
+    assert response.status_code == 422
+    assert api.client.get(f"/v1/workflows/{workflow_id}").json()["title"] == "test"

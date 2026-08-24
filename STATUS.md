@@ -373,7 +373,7 @@ POST   /v1/workflows
 GET    /v1/workflows
 GET    /v1/workflows/{workflow_id}
 PUT    /v1/workflows/{workflow_id}                         (extension, revise a draft)
-PATCH  /v1/workflows/{workflow_id}                         (extension, file under a project)
+PATCH  /v1/workflows/{workflow_id}                         (extension, rename or re-file)
 DELETE /v1/workflows/{workflow_id}                         (extension, delete permanently)
 GET    /v1/workflows/{workflow_id}/versions/{version}
 POST   /v1/workflows/{workflow_id}/approve

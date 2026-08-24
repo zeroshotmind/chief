@@ -791,6 +791,20 @@ record("open running workflow");
 if (!location.hash.startsWith("#/workflow/wf_")) {
   throw new Error(`expected a workflow hash, got ${JSON.stringify(location.hash)}`);
 }
+// Renaming: the title gets an editor in place, at any status — this workflow is running —
+// and saving PATCHes the same route filing uses. The plan is untouched.
+clickByText("rename…");
+await new Promise((r) => setTimeout(r, 30));
+typeIntoId("wf-title", "Approved one, renamed");
+await new Promise((r) => setTimeout(r, 20));
+clickIn(mainNode(), "Save");
+await new Promise((r) => setTimeout(r, 40));
+const renamed = posts.find(
+  (x) => x.method === "PATCH" && /\/workflows\/wf_/.test(x.url) && x.body && x.body.title,
+);
+if (!renamed || renamed.body.title !== "Approved one, renamed")
+  throw new Error(`rename did not PATCH the title: ${JSON.stringify(renamed)}`);
+
 const runNodes = countClass(mainNode(), "node");
 const runClusters = countClass(mainNode(), "node-cluster");
 // The cycle survives execution: body steps stay drawn, the gate carries the instances.
@@ -1147,8 +1161,9 @@ await new Promise((r) => setTimeout(r, 10));
 clickIn(findByClass(mainNode(), "wf-project")[0], "Save");
 await new Promise((r) => setTimeout(r, 40));
 const patches = posts.filter((x) => x.method === "PATCH" && x.url.includes("/workflows/wf_ok"));
-const filed = patches[0];
-const dirSet = patches[1];
+// By key, not by position: the rename earlier in the run PATCHes the same route.
+const filed = patches.find((x) => x.body && "project" in x.body);
+const dirSet = patches.find((x) => x.body && "origin_dir" in x.body);
 
 if (NO_TEMPLATES) {
   // A page newer than its server must still work: one 404 on an extension endpoint should
@@ -1442,14 +1457,6 @@ const outerGrpPanel =
   // Nobody described this group, so the panel explains itself instead of inventing one.
   outerText.includes("What crosses this boundary");
 
-// The note box posts to the graph's own notes route, not the workflow one.
-setNoteBox: {
-  const boxes = findByClass(mainNode(), "note-input");
-  if (boxes.length) {
-    boxes[0].value = "check it against last year too";
-    (boxes[0].onInput || (() => {}))({ target: boxes[0] });
-  }
-}
 clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
 const verified = posts.find((x) => x.url.includes("/verification"));

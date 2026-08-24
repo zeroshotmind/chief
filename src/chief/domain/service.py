@@ -164,6 +164,16 @@ class Chief:
         # leaves it as it was, and the two arrive looking identical without this.
         sent = body.model_fields_set
         detail: dict[str, Any] = {}
+        # The title first, because it alone cannot be cleared: blank is refused rather than
+        # read as "remove", since a workflow without a title is not a record of anything.
+        if "title" in sent:
+            new_title = (body.title or "").strip()
+            if not new_title:
+                raise ValidationFailed("a workflow needs a title; send the new one")
+            if new_title != defn.title:
+                detail["title"] = new_title
+                detail["title_was"] = defn.title
+                defn.title = new_title
         for field in ("project", "origin_dir"):
             if field not in sent:
                 continue
@@ -171,7 +181,7 @@ class Chief:
             detail[f"{field}_was"] = getattr(defn, field)
             setattr(defn, field, getattr(body, field))
         if not detail:
-            raise ValidationFailed("nothing to change: send a project or an origin_dir")
+            raise ValidationFailed("nothing to change: send a title, project or origin_dir")
         with self.store.transaction() as conn:
             self.store.save_workflow(conn, defn)
             self.store.audit(

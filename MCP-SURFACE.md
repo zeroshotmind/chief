@@ -196,7 +196,7 @@ a record is not something a session needs to do on its own initiative.
 | `PATCH /workflows/{id}/notes/{note_id}` | Closing the feedback you were given is deciding your own work was accepted — the loop §1 is about. |
 | `DELETE /proof-graphs/{graph_id}` | Erasing a record, like `delete_workflow` — not a session's to initiate. |
 | `GET /proof-graphs/toolchain` | Whether this instance can check proof graphs at all. A tool would learn it by failing, which is what this exists to avoid; the failure a session does see says it plainly. |
-| `PATCH /workflows/{id}` (project label) | The harness states the project when it creates the plan; re-filing one afterwards is filing, which is a person's housekeeping and not a step in any session. |
+| `PATCH /workflows/{id}` (title, project, directory) | The harness states these when it creates the plan; renaming or re-filing one afterwards is housekeeping in front of a person, not a step in any session. |
 | `GET /projects` | Derived from the workflows `list_workflows` already returns, so a tool would buy nothing. |
 | `GET /runs/{id}/artifacts/{id}/content` | A harness has the file already — it is the one that wrote it, and it has a filesystem. This exists so a *browser* can see it. |
 | `GET /runs/{id}/artifacts/{id}/modules` | Same: the harness wrote the components too. |

@@ -467,5 +467,11 @@ class WorkflowLabel(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: A new title, allowed at any status for the same reason the labels are: renaming says
+    #: nothing about the plan, and the workflows most in need of a better name are often the
+    #: ones already running or finished. Unlike the labels it cannot be cleared — a workflow
+    #: without a title is not a record of anything — so blank is refused rather than treated
+    #: as "remove".
+    title: str | None = None
     project: str | None = None
     origin_dir: str | None = None
