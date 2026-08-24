@@ -61,12 +61,16 @@ slice and would drag a conversion into every call. -/
 private def isBlank (s : String) : Bool :=
   s.all fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
+partial def SchemaField.toJson : SchemaField → String
+  | .mk n t nested =>
+      obj [("name", str n), ("type", str t),
+           ("fields", arr (nested.map SchemaField.toJson))]
+
 def Port.toJson (p : Port) : String :=
   obj [("label", str p.label), ("source", str p.source),
        ("artifact_type", str p.artifactType), ("contract", str p.contract),
        ("refined", bool p.refined),
-       ("schema", arr (p.schema.map fun (n, t) =>
-          obj [("name", str n), ("type", str t)]))]
+       ("schema", arr (p.schema.map SchemaField.toJson))]
 
 def Alg.AlgLine.toJson (l : Alg.AlgLine) : String :=
   obj [("indent", num l.indent), ("text", str l.text)]

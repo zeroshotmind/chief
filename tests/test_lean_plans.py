@@ -659,3 +659,39 @@ def test_compile_restates_a_schema_as_a_validation_criterion() -> None:
     assert any("document with fields: rows (Nat)" in t for t in texts), texts
     (output,) = step.outputs.values()
     assert output["schema"] == {"rows": "Nat"}
+
+
+@needs_lean
+def test_a_row_types_schema_nests_under_the_field_that_carries_it() -> None:
+    """A dataset's shape, not only its name: a field whose type was itself derived carries
+    that structure's fields nested. Derivation is the switch — an underived type stays a
+    bare name, which is what keeps `String` from expanding into its internals."""
+    rows = minimal().replace(
+        "structure Doc where",
+        "structure Row where\n"
+        "  body : String\n"
+        "  words : Nat\n"
+        "deriving Repr\n\n"
+        "instance : ArtifactType Row := ⟨\"Row\"⟩\n"
+        "artifact_schema Row\n\n"
+        "structure Doc where\n"
+        "  rows : List Row",
+    ).replace(
+        'instance : ArtifactType Doc := ⟨"Doc"⟩',
+        'instance : ArtifactType Doc := ⟨"Doc"⟩\nartifact_schema Doc',
+    ).replace("⟨0⟩", "⟨[], 0⟩")
+
+    result = verify_source(rows)
+
+    assert result.status == "verified", errors(result)
+    assert result.graph is not None
+    write = result.graph.node("write")
+    assert write is not None and write.produces is not None
+    by_name = {f.name: f for f in write.produces.schema_}
+    assert [(f.name, f.type) for f in by_name["rows"].fields] == [
+        ("body", "String"),
+        ("words", "Nat"),
+    ]
+    # `body : String` is a leaf: String was never derived, so it does not explode.
+    assert by_name["rows"].fields[0].fields == []
+    assert by_name["words"].fields == []

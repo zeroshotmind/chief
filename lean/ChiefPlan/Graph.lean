@@ -38,9 +38,9 @@ structure Port where
   artifactType : String
   contract : String
   refined : Bool
-  /-- The artifact type's fields, where `artifact_schema` derived them. Empty means
-  undeclared, not field-free. -/
-  schema : List (String × String) := []
+  /-- The artifact type's fields, where `artifact_schema` derived them, nested where a
+  field's own type was derived too. Empty means undeclared, not field-free. -/
+  schema : List SchemaField := []
 deriving Repr, Inhabited
 
 /-- A step, in the shape Chief will receive it. -/

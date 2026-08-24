@@ -31,8 +31,28 @@ _PRODUCES = "the {artifact} this step produces satisfies: {contract}"
 _SCHEMA = "the {artifact} this step produces is a document with fields: {fields}"
 
 
-def _schema_of(port) -> dict[str, str]:
-    return {field.name: field.type for field in port.schema_}
+def _schema_of(port) -> dict[str, object]:
+    """The schema as data, nesting where the plan's row types were derived too."""
+
+    def entry(field) -> object:
+        if not field.fields:
+            return field.type
+        return {"type": field.type, "fields": {f.name: entry(f) for f in field.fields}}
+
+    return {field.name: entry(field) for field in port.schema_}
+
+
+def _schema_text(fields) -> str:
+    """The schema as one criterion clause. Nesting goes one level deep here — the row type
+    is what a validating harness needs; anything deeper is on the outputs data."""
+    parts = []
+    for field in fields:
+        if field.fields:
+            inner = ", ".join(f"{f.name} ({f.type})" for f in field.fields)
+            parts.append(f"{field.name} ({field.type}: {inner})")
+        else:
+            parts.append(f"{field.name} ({field.type})")
+    return ", ".join(parts)
 
 
 def _inputs_for(node: PlanNode) -> dict[str, object]:
@@ -87,7 +107,7 @@ def _step_for(node: PlanNode) -> WorkflowStep:
         criteria.append(
             _SCHEMA.format(
                 artifact=node.produces.artifact_type,
-                fields=", ".join(f"{f.name} ({f.type})" for f in node.produces.schema_),
+                fields=_schema_text(node.produces.schema_),
             )
         )
 

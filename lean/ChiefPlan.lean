@@ -69,10 +69,13 @@ the wrong type.
   line next to the `ArtifactType` instance. The fields then travel on every edge the
   artifact crosses: shown on both ends in the UI, and compiled into the workflow so the
   produced document is validated against them. Derived by reflection, never written by
-  hand, so it cannot disagree with the structure. Optional — an artifact without one shows
-  no schema rather than a wrong one. Compatibility needs no extra check: both ends of an
-  edge name one structure, and an algorithm projecting `x!(c, field)` is checked against
-  it, so a field removed at the producer fails every consumer that reads it, at plan time.
+  hand, so it cannot disagree with the structure. The schema is a tree: a field whose type
+  was itself derived — directly or through `List`/`Array`/`Option` — carries that
+  structure's fields nested, so derive a row type *before* the artifact that contains it.
+  Optional — an artifact without one shows no schema rather than a wrong one.
+  Compatibility needs no extra check: both ends of an edge name one structure, and an
+  algorithm projecting `x!(c, field)` is checked against it, so a field removed at the
+  producer fails every consumer that reads it, at plan time.
 * `use r` — feed a handle to a step demanding less than was promised. Every edge goes through
   it; the proof is found for you.
 * `plan_entails` — the tactic that finds it. Read its docstring for what it covers.

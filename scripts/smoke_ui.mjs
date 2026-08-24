@@ -254,13 +254,23 @@ const PLAN_GRAPH = {
       inputs: [{
         label: "events", source: "harvest", artifact_type: "RawEvents",
         contract: "count ≥ 10000", refined: true,
-        // The artifact's derived field layout, shown under the condition on both ends.
-        schema: [{ name: "count", type: "Nat" }],
+        // The artifact's derived field layout, shown under the condition on both ends. The
+        // row type's own fields nest under the field that carries it, as a disclosure.
+        schema: [
+          { name: "count", type: "Nat", fields: [] },
+          {
+            name: "events", type: "List Event",
+            fields: [
+              { name: "amount", type: "Nat", fields: [] },
+              { name: "flagged", type: "Bool", fields: [] },
+            ],
+          },
+        ],
       }],
       produces: {
         label: "out", source: "fit_model", artifact_type: "Model",
         contract: "auc ≥ 80", refined: true,
-        schema: [{ name: "auc", type: "Nat" }],
+        schema: [{ name: "auc", type: "Nat", fields: [] }],
       },
       // The step's algorithm: rendered lines with indentation, and the external calls the
       // term reached for — pseudocode a reviewer reads, never something presented as proven.
@@ -1301,11 +1311,16 @@ const notInJsonDrawer = !stepText.includes("Other inputs");
 // thing the checking established.
 const promisesShown = stepText.includes("Produces") && stepText.includes("auc ≥ 80");
 // The derived schema renders under the condition, on the input and the output alike; a
-// port without one shows nothing rather than an empty pair of braces.
+// port without one shows nothing rather than an empty pair of braces. A row type's fields
+// sit behind a disclosure named for the field that carries them.
 const schemaShown =
   stepText.includes("{ count: Nat }") &&
   stepText.includes("{ auc: Nat }") &&
   !stepText.includes("{  }");
+const schemaNested =
+  countClass(mainNode(), "schema-nest") === 1 &&
+  stepText.includes("events: List Event") &&
+  stepText.includes("{ amount: Nat, flagged: Bool }");
 const givenAndNeeds = countClass(mainNode(), "contract-given");
 const weakeningVisible = stepText.includes("count ≥ 50000") && stepText.includes("count ≥ 10000");
 // The step's algorithm renders between the demands and the promise: numbered lines with the
@@ -1389,7 +1404,7 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
-console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown}`);
+console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
 console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
@@ -1601,6 +1616,7 @@ const ok =
   givenAndNeeds === 2 &&
   weakeningVisible &&
   schemaShown &&
+  schemaNested &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
   algIndented === 1 &&

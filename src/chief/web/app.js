@@ -1654,13 +1654,35 @@ function contractCard(label, port) {
     // The artifact's field layout, where the plan derived one. Derived from the structure
     // both ends of the edge name, so what is shown here is also what the runtime document
     // is validated against. Absent means undeclared, never field-free.
-    (port.schema || []).length > 0 &&
-      el("code", {
-        class: "contract-schema",
-        text: `{ ${port.schema.map((f) => `${f.name}: ${f.type}`).join(", ")} }`,
-      }),
+    (port.schema || []).length > 0 && schemaBlock(port.schema),
     port.from_step &&
       el("span", { class: "contract-from text-muted", text: `from ${port.from_step}` }),
+  );
+}
+
+/** An artifact's field layout. Flat fields share one brace line; a field whose own type
+    was derived — a corpus's row type — is a disclosure that opens to the nested layout,
+    recursively. A field with nothing nested is a leaf or an underived type, and the
+    rendering does not pretend to know which. */
+function schemaBlock(fields) {
+  const flat = fields.filter((f) => !(f.fields || []).length);
+  const nested = fields.filter((f) => (f.fields || []).length);
+  return el(
+    "div",
+    { class: "contract-schema" },
+    flat.length > 0 &&
+      el("code", {
+        class: "schema-line",
+        text: `{ ${flat.map((f) => `${f.name}: ${f.type}`).join(", ")} }`,
+      }),
+    nested.map((f) =>
+      el(
+        "details",
+        { class: "schema-nest" },
+        el("summary", { class: "schema-sum mono", text: `${f.name}: ${f.type}` }),
+        schemaBlock(f.fields),
+      ),
+    ),
   );
 }
 

@@ -48,12 +48,16 @@ class Diagnostic(BaseModel):
 
 
 class PlanField(BaseModel):
-    """One field of an artifact's schema: name and pretty-printed Lean type."""
+    """One field of an artifact's schema: name, pretty-printed Lean type, and — where the
+    field's own type is a structure whose schema was derived — that structure's fields,
+    nested. A field with none nested is a leaf or an underived type; the plan does not say
+    which, and neither does this."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     type: str
+    fields: list[PlanField] = Field(default_factory=list)
 
 
 class PlanPort(BaseModel):
