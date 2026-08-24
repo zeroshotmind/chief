@@ -560,6 +560,14 @@ const navNode = roots.app.children.find((c) => c.tag === "nav");
 const mark = navNode && collectClasses(navNode, "nav-mark");
 if (!mark || mark.length !== 1) throw new Error("no mark in the nav brand");
 
+// Refresh is a button, not a timer: the nav carries the one way the page reloads its data
+// unprompted, and pressing it re-renders without losing the screen you were on.
+if (countClass(navNode, "nav-refresh") !== 1) throw new Error("no refresh button in the nav");
+clickByText("↻");
+await new Promise((r) => setTimeout(r, 60));
+if (countClass(mainNode(), "run-row") === 0)
+  throw new Error("manual refresh lost the workflow list");
+
 record("initial");
 clickByText("A draft");
 await new Promise((r) => setTimeout(r, 50));

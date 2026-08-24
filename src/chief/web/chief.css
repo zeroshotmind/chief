@@ -237,6 +237,15 @@ a:hover { color: var(--color-accent-700); }
   display: inline-flex; align-items: center; gap: 8px;
 }
 .nav-mark { width: 22px; height: 22px; border-radius: 6px; display: block; }
+/* The manual refresh — the only unscheduled way the page reloads its data, so it earns a
+   place in the nav rather than a corner. Quiet until wanted, like the links beside it. */
+.nav-refresh {
+  border: none; background: none; cursor: pointer; padding: 2px 6px;
+  font-size: 15px; line-height: 1; color: var(--color-neutral-500);
+  border-radius: var(--radius-sm);
+}
+.nav-refresh:hover { color: var(--color-text); background: var(--color-neutral-100); }
+.nav-refresh:disabled { cursor: default; color: var(--color-neutral-400); }
 /* The current tab is marked by a rule sitting on the nav's own seam, which is why the
    negative margin has to match the nav's bottom padding. */
 .nav a {

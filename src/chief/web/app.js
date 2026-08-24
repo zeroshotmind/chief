@@ -118,7 +118,6 @@ const GROUP_NEST = 24;
 const GATE_H = 30;
 const GAP = 32;
 const DROP = 60;
-const POLL_MS = 15000;
 
 /** `{{ paper }}` in a body step's text, filled in from one instance's own metadata.
 
@@ -331,7 +330,7 @@ function stamp(iso) {
 
     Measured on the execution, not on the record — the plan may have sat as a draft for a
     week before anyone ran it, and that wait is not the work. A run still going is measured
-    to now, so the cell ticks along with the poll. */
+    to now, so the cell advances whenever the page re-renders. */
 function durationOf(run) {
   if (!run) return "";
   const end = ["completed", "failed"].includes(run.status) ? new Date(run.updated_at) : new Date();
@@ -836,9 +835,9 @@ function viewerBody(viewer) {
   if (viewer.loading) return el("p", { class: "text-muted", text: "Reading…" });
   if (viewer.error) return el("div", { class: "banner", text: viewer.error });
   if (!file) return null;
-  // Built once and kept. Every fifteen seconds the poll re-renders the page, and rebuilding
-  // this would decode the bytes again and — worse — spring every folded branch of a JSON
-  // tree back open under the reader.
+  // Built once and kept. A refresh re-renders the page, and rebuilding this would decode
+  // the bytes again and — worse — spring every folded branch of a JSON tree back open
+  // under the reader.
   if (viewer.node) return viewer.node;
 
   const bytes = new Uint8Array(file.bytes);
@@ -1845,7 +1844,7 @@ const state = {
   // Which of the two views of the plan is showing. Null means "whichever suits this plan",
   // decided at render: the graph if there is one, the source if there is not.
   planPane: null,
-  // The line a diagnostic sent you to, kept so it stays marked across the 15s poll.
+  // The line a diagnostic sent you to, kept so it stays marked across a refresh.
   planLine: null,
 
   workflowAudit: null, // { workflowId, entries }
@@ -1872,8 +1871,8 @@ const state = {
   artOpen: {},
   // Half-written review notes and which threads have their resolved history open, both
   // keyed by what the note is about — a step id, or NOTE_PLAN. In state for the reason
-  // cmtDrafts is: the poll rebuilds the DOM every 15 seconds and takes anything held only
-  // in it, including the box you are typing into.
+  // cmtDrafts is: a refresh rebuilds the DOM and takes anything held only in it,
+  // including the box you are typing into.
   noteDrafts: {},
   noteShow: {},
   // What a relative artifact ref is relative to, and the half-typed version of it while it
@@ -2118,6 +2117,18 @@ async function refresh() {
     restorePendingViewer();
   } catch (err) {
     setState({ error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+/** The nav's refresh: the only way the page reloads its data unprompted-by-navigation,
+    now that there is no timer. Explicit, so it never takes an open view from a reader. */
+async function manualRefresh() {
+  if (state.refreshing) return;
+  setState({ refreshing: true });
+  try {
+    await refresh();
+  } finally {
+    setState({ refreshing: false });
   }
 }
 
@@ -2371,6 +2382,13 @@ function navBar() {
       pending > 0 &&
         el("span", { class: "tag tag-accent", style: { padding: "0 7px" }, text: String(pending) }),
     ),
+    // Data updates when you ask for it. This is the asking — there is no timer behind it.
+    el("button", {
+      class: "nav-refresh", title: "Refresh",
+      disabled: state.refreshing || null,
+      onClick: manualRefresh,
+      text: state.refreshing ? "…" : "↻",
+    }),
   );
 }
 
@@ -5304,4 +5322,9 @@ appliedHash = hashFor(state);
 if (location.hash !== appliedHash) location.replace(appliedHash);
 render();
 refresh();
-setInterval(refresh, POLL_MS);
+// No timer. There used to be a 15-second poll here, and it re-rendered the page out from
+// under whoever was reading it — an opened artifact, an expanded schema, a disclosure
+// mid-thought, all snapped shut on a schedule. Data now refreshes when something you do
+// asks for it (navigating, acting on a run) or when you press the nav's refresh button.
+// The state-preservation patterns the poll forced (drafts in state, caches keyed off
+// content) stay: a manual refresh rebuilds the DOM just as thoroughly.
