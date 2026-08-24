@@ -2501,7 +2501,7 @@ function checkpointCard({ run, path, stepId, step, state: stepState }) {
     { class: "card" },
     el("span", { class: "card-kicker", text: `${titleOf(run)} · checkpoint${inst}` }),
     el("p", {
-      style: { margin: "0", fontSize: "14px" },
+      style: { margin: "0", fontSize: "14px", whiteSpace: "pre-line" },
       text: step ? step.goal : `Waiting on a decision at ${stepId}.`,
     }),
     el("span", {
@@ -2887,7 +2887,13 @@ function inspector(panel) {
         panel.close &&
           el("button", { class: "close-x", text: "✕", title: "Close", onClick: panel.close }),
       ),
-      el("p", { style: { margin: "0", fontSize: "13px", lineHeight: "1.45" }, text: panel.title }),
+      // `pre-line`, not the default: a goal is written as up to a few lines (see the field's
+      // own guidance), and the text still carries whatever newlines the harness put in it —
+      // the browser's default `white-space: normal` was the only thing collapsing them away.
+      el("p", {
+        style: { margin: "0", fontSize: "13px", lineHeight: "1.45", whiteSpace: "pre-line" },
+        text: panel.title,
+      }),
       el("span", {
         class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" },
         text: panel.metaLine,
