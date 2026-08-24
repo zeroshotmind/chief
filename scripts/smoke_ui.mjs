@@ -267,7 +267,8 @@ const PLANS = [
     created_at: "2026-08-24T08:00:00.000Z", updated_at: "2026-08-24T09:00:00.000Z",
   },
   {
-    plan_id: "pln_bad", title: "Docs index refresh", lean_source: "import ChiefPlan\n-- …\n",
+    plan_id: "pln_bad", title: "Docs index refresh",
+    lean_source: Array.from({ length: 80 }, (_, i) => `-- line ${i + 1}`).join("\n"),
     status: "failed", project: "chief", origin_dir: null, generated_by: null,
     verification: {
       status: "failed",
@@ -1215,6 +1216,18 @@ const contractCards = countClass(mainNode(), "contract");
 const contractShown = stepText.includes("count ≥ 10000");
 const notInJsonDrawer = !stepText.includes("Other inputs");
 
+// Graph and source are two views of one plan, so they sit behind a toggle rather than
+// stacked. The graph is what a verified plan opens on.
+const graphFirst = countClass(mainNode(), "node") > 0 && countClass(mainNode(), "src-line") === 0;
+const graphTab = `Graph ${countClass(mainNode(), "node")}`;
+clickByText("Source");
+await new Promise((r) => setTimeout(r, 30));
+const sourceShown = countClass(mainNode(), "src-line") > 0;
+const graphHidden = countClass(mainNode(), "node") === 0;
+clickByText(graphTab);
+await new Promise((r) => setTimeout(r, 30));
+const backToGraph = countClass(mainNode(), "node") > 0;
+
 clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
 const verified = posts.find((x) => x.url.includes("/verification"));
@@ -1228,10 +1241,18 @@ const failedText = JSON.stringify(mainNode());
 const diagnostics = countClass(mainNode(), "diagnostic");
 const goalShown = failedText.includes("x.vectors ≥ 5000");
 const blamedStep = failedText.includes("evaluate");
+// A plan that never ran has no graph, so there is nothing to toggle to: the source shows
+// plainly, and the diagnostic's line number is the way into it.
+const noToggleWithoutGraph = countClass(mainNode(), "chip") === 0;
+const sourceIsThere = countClass(mainNode(), "src-line") === 80;
+clickByText("line 71");
+await new Promise((r) => setTimeout(r, 30));
+const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/.test(c)).length;
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, not-json=${notInJsonDrawer}, verified-post=${verified && verified.url}`);
-console.log(`             diagnostics=${diagnostics}, goal-verbatim=${goalShown}, blamed=${blamedStep}`);
+console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
+console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 
 const ok =
   dialogOpened &&
@@ -1433,6 +1454,15 @@ const ok =
   verified.url.endsWith("/plans/pln_ok/verification") &&
   diagnostics === 2 &&
   goalShown &&
-  blamedStep;
+  blamedStep &&
+  // The toggle: a verified plan opens on the graph, switches to the source and back.
+  graphFirst &&
+  sourceShown &&
+  graphHidden &&
+  backToGraph &&
+  // A plan with no graph has no toggle, and its diagnostics jump into the source.
+  noToggleWithoutGraph &&
+  sourceIsThere &&
+  lineMarked === 1;
 console.log(ok ? "PASS" : `FAIL: expected ${expected.join(", ")}`);
 process.exit(ok ? 0 : 1);

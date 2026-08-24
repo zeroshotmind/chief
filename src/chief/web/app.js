@@ -1749,6 +1749,11 @@ const state = {
   // pressed twice. One at a time is enough: these are deliberate, one-off acts.
   planBusy: null,
   planError: null,
+  // Which of the two views of the plan is showing. Null means "whichever suits this plan",
+  // decided at render: the graph if there is one, the source if there is not.
+  planPane: null,
+  // The line a diagnostic sent you to, kept so it stays marked across the 15s poll.
+  planLine: null,
 
   workflowAudit: null, // { workflowId, entries }
   // Review notes for the workflow on screen: { workflowId, notes }. Fetched per screen and
@@ -4386,7 +4391,10 @@ function planMeta(plan) {
 }
 
 function openPlan(planId) {
-  setState({ view: "plan", planId, selected: null, dialog: null, planError: null });
+  setState({
+    view: "plan", planId, selected: null, dialog: null,
+    planError: null, planPane: null, planLine: null,
+  });
 }
 
 const withPlan = (plan) =>
@@ -4559,6 +4567,40 @@ function planOverviewPanel(plan, graph, topSteps) {
   };
 }
 
+/** The plan's source, numbered.
+
+    Numbered because a diagnostic reports a line, and a line number is useless against three
+    hundred lines of unnumbered `pre`. The numbers are what `diagnosticCard` jumps to, which
+    is the whole of the loop between "what is wrong" and "where". */
+function sourceView(source, highlight) {
+  return el(
+    "div",
+    { class: "plan-source" },
+    ...source.split("\n").map((text, index) => {
+      const line = index + 1;
+      return el(
+        "div",
+        { class: line === highlight ? "src-line on" : "src-line", id: `src-line-${line}` },
+        el("span", { class: "src-no", text: String(line) }),
+        // A blank line still needs a box, or the numbering drifts against the text.
+        el("code", { class: "src-text", text: text || " " }),
+      );
+    }),
+  );
+}
+
+/** Show the source and put the named line in view. */
+function jumpToLine(line) {
+  setState({ planPane: "source", planLine: line });
+  // After the render, not during it: the node does not exist until `replaceChildren` has run.
+  setTimeout(() => {
+    const found = document.getElementById(`src-line-${line}`);
+    if (found && typeof found.scrollIntoView === "function") {
+      found.scrollIntoView({ block: "center" });
+    }
+  }, 0);
+}
+
 /** One thing the checker said. The message is shown verbatim in a `pre`: it is a proof goal,
     its line breaks and alignment carry the meaning, and reflowing it would destroy the very
     thing a reader is trying to read. */
@@ -4573,7 +4615,14 @@ function diagnosticCard(d) {
       dot(color, false),
       el("span", { class: "mono", style: { fontSize: "11px", color }, text: d.severity }),
       d.step_id && el("span", { class: "tag", text: d.step_id }),
-      d.line && el("span", { class: "text-muted mono", style: { fontSize: "11px" }, text: `line ${d.line}` }),
+      d.line &&
+        el("button", {
+          class: "btn btn-ghost mono",
+          style: { fontSize: "11px", padding: "0 4px" },
+          title: "Show this line in the source",
+          text: `line ${d.line}`,
+          onClick: () => jumpToLine(d.line),
+        }),
     ),
     el("pre", { class: "diagnostic-body", text: d.message }),
   );
@@ -4699,24 +4748,56 @@ function planDetailScreen() {
         el("span", { class: "section-label", text: `Also worth fixing (${warnings.length})` }),
         ...warnings.map(diagnosticCard),
       ),
-    el(
-      "div",
-      { style: { marginTop: "var(--space-4)" } },
-      el("span", { class: "section-label", text: "Source" }),
-      el("pre", { class: "plan-source", text: plan.lean_source }),
-    ),
   );
 
-  // No graph until it has been checked: the nodes are read out of the plan by running it, so
-  // before that there is nothing to draw and a placeholder is more honest than an empty frame.
+  // The graph and the source are two views of one thing — the same `do` block, read once by
+  // the elaborator and once by the evaluator — so they belong behind a toggle rather than
+  // stacked, and either one alone is a complete answer to "what is this plan".
+  //
+  // The toggle appears only when there is a graph to switch to. A plan that has not been
+  // checked, or that failed, was never run, so no graph was read out of it — and a toggle
+  // with one live option is worse than no toggle at all. Those screens show the source
+  // plainly, which is also the thing their diagnostics point into.
+  const pane = drawn ? state.planPane || "graph" : "source";
+  const source = sourceView(plan.lean_source, state.planLine);
+
   if (!drawn) {
-    return el("main", { class: "narrow", "data-screen-label": "Plan detail" }, side);
+    return el(
+      "main", { class: "narrow", "data-screen-label": "Plan detail" },
+      side,
+      el(
+        "div",
+        { style: { marginTop: "var(--space-4)" } },
+        el("span", { class: "section-label", text: "Source" }),
+        source,
+      ),
+    );
   }
+
+  const tab = (key, label) =>
+    el("button", {
+      class: pane === key ? "chip on" : "chip",
+      "aria-pressed": pane === key ? "true" : "false",
+      text: label,
+      onClick: () => setState({ planPane: key }),
+    });
+
   return el(
     "main",
     { class: "wide graph", "data-screen-label": "Plan detail" },
     side,
-    splitView(drawn.viewport, drawn.panel || planOverviewPanel(plan, planGraphOf(plan), drawn.topSteps)),
+    el(
+      "div",
+      { class: "chips", style: { marginTop: "var(--space-4)" } },
+      tab("graph", `Graph ${drawn.topSteps.length}`),
+      tab("source", "Source"),
+    ),
+    pane === "graph"
+      ? splitView(
+          drawn.viewport,
+          drawn.panel || planOverviewPanel(plan, planGraphOf(plan), drawn.topSteps),
+        )
+      : source,
   );
 }
 
