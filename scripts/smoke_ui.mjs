@@ -1301,6 +1301,11 @@ const algShown =
   stepText.includes("xgboost(harvest, λ)") &&
   stepText.includes("return M") &&
   stepText.includes("xgboost ⟨algo⟩");
+// The loop body's structural indent arrives as an inline margin — one line of the three
+// sits inside the `if`, and it is the only one indented.
+const algIndented = findByClass(mainNode(), "alg-text").filter(
+  (n) => n.style && n.style.marginLeft === "16px",
+).length;
 
 // Graph and source are two views of one plan, so they sit behind a toggle rather than
 // stacked. The graph is what a verified plan opens on.
@@ -1313,6 +1318,32 @@ const graphHidden = countClass(mainNode(), "node") === 0;
 clickByText(graphTab);
 await new Promise((r) => setTimeout(r, 30));
 const backToGraph = countClass(mainNode(), "node") > 0;
+
+// A group's label opens the group as the function it is: what crosses its boundary, and
+// the algorithms of the steps inside. The leaf group takes the corpus contract in from
+// outside and its product is consumed outside, so both cross.
+clickByText("Modelling");
+await new Promise((r) => setTimeout(r, 30));
+const grpText = JSON.stringify(mainNode());
+const grpPanel =
+  grpText.includes("Group · 1 step") &&
+  grpText.includes("Data/Modelling") &&
+  grpText.includes("Takes in (1)") &&
+  grpText.includes("count ≥ 10000") &&
+  grpText.includes("auc ≥ 80") &&
+  grpText.includes("xgboost(harvest, λ)") &&
+  grpText.includes("fit_model");
+// The outer group swallows the harvest→fit_model edge: nothing crosses in, the corpus
+// contract is plumbing its callers never see, and only the model leaves.
+clickByText("Data");
+await new Promise((r) => setTimeout(r, 30));
+const outerText = JSON.stringify(mainNode());
+const outerGrpPanel =
+  outerText.includes("Group · 2 steps") &&
+  !outerText.includes("Takes in") &&
+  outerText.includes("auc ≥ 80") &&
+  !outerText.includes("count ≥ 10000") &&
+  !outerText.includes("count ≥ 50000");
 
 clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));
@@ -1337,7 +1368,8 @@ const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
-console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}`);
+console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}`);
+console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
@@ -1549,6 +1581,10 @@ const ok =
   weakeningVisible &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
+  algIndented === 1 &&
+  // Clicking a group label inspects the group: boundary contracts and member algorithms.
+  grpPanel &&
+  outerGrpPanel &&
   notInJsonDrawer &&
   claimsShown &&
   !!verified &&

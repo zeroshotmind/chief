@@ -1673,9 +1673,12 @@ function algBlock(alg) {
           "span",
           { class: "alg-line" },
           el("span", { class: "alg-no", text: String(i + 1) }),
+          // Margin, not padding: the stylesheet's hanging indent for wrapped lines lives
+          // in the padding, and the structural indent has to compose with it, not replace
+          // it.
           el("span", {
             class: "alg-text",
-            style: line.indent ? { paddingLeft: `${line.indent * 16}px` } : null,
+            style: line.indent ? { marginLeft: `${line.indent * 16}px` } : null,
             text: line.text,
           }),
         ),
@@ -3013,6 +3016,7 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
         }));
         groups.push({
           label: box.label,
+          path: box.path,
           depth: box.depth,
           d: outlinePath(banded),
           labelX: banded[0].x0 + 10,
@@ -3172,8 +3176,80 @@ function stepPanel(step, stepState, def) {
     outputsLabel: outputContracts.length ? "Produces" : null,
     outputContracts,
     outputMeta,
-    // The how, between the two halves of the signature. Only plan-derived steps carry one.
-    algorithm: step.algorithm || null,
+    // The how, between the two halves of the signature. Only plan-derived steps carry
+    // one; a group panel lists several, so this is a list with an optional label each.
+    algorithms: step.algorithm ? [{ label: null, alg: step.algorithm }] : null,
+  };
+}
+
+/** A group, read as what the design already says it is: a function made of steps.
+
+    Its signature is derived, never declared. The inputs are the edges that cross into the
+    boundary, the produces are what escapes it — consumed outside, or consumed by nothing
+    and therefore a result — and anything both made and used wholly inside is plumbing the
+    group's callers never see. The algorithms are the member steps' own, labelled, in plan
+    order. */
+function groupPanel(path, def) {
+  const members = (def.steps || []).filter((s) => {
+    const key = groupPath(s).join(GROUP_SEP);
+    return key === path || key.startsWith(path + GROUP_SEP);
+  });
+  const ids = new Set(members.map((s) => s.id));
+
+  const inputContracts = [];
+  const seen = new Set();
+  for (const step of members) {
+    for (const [label, port] of Object.entries(step.inputs || {})) {
+      if (!isContract(port) || !port.from_step || ids.has(port.from_step)) continue;
+      const key = `${port.from_step}·${label}·${port.contract}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      inputContracts.push({ label, port });
+    }
+  }
+  // The same promise lookup the step panel does: what the outside producer committed to,
+  // above what this boundary demands of it.
+  for (const entry of inputContracts) {
+    const from = (def.steps || []).find((s) => s.id === entry.port.from_step);
+    const promised = Object.values((from && from.outputs) || {}).find(
+      (o) => o.artifact_type === entry.port.artifact_type,
+    );
+    if (promised) entry.port = { ...entry.port, promise: promised };
+  }
+
+  const outputContracts = [];
+  for (const step of members) {
+    const consumers = (def.steps || []).filter((s) =>
+      Object.values(s.inputs || {}).some((p) => p && p.from_step === step.id),
+    );
+    const leaves = consumers.length === 0 || consumers.some((s) => !ids.has(s.id));
+    if (!leaves) continue;
+    for (const [label, port] of Object.entries(step.outputs || {})) {
+      if (!isContract(port)) continue;
+      outputContracts.push({ label, port: { ...port, from_step: step.id } });
+    }
+  }
+
+  const algorithms = members
+    .filter((s) => s.algorithm)
+    .map((s) => ({ label: s.id, alg: s.algorithm }));
+
+  return {
+    kicker: `Group · ${members.length} step${members.length === 1 ? "" : "s"}`,
+    title: path.split(GROUP_SEP).pop(),
+    metaLine: path,
+    summary:
+      "What crosses this boundary. Anything produced and consumed wholly inside is not " +
+      "shown — the group's callers never see it.",
+    summaryColor: "var(--color-neutral-500)",
+    instances: [],
+    inputsLabel: inputContracts.length ? `Takes in (${inputContracts.length})` : null,
+    inputContracts,
+    outputsLabel: outputContracts.length ? "Produces" : null,
+    outputContracts,
+    algorithms: algorithms.length ? algorithms : null,
+    bodyLabel: members.length ? "Steps" : null,
+    body: members.map((s) => ({ id: s.id, goal: s.goal })),
   };
 }
 
@@ -3269,10 +3345,17 @@ function inspector(panel) {
       (panel.inputContracts || []).map(({ label, port }) => contractCard(label, port)),
       metadataBlock(panel.inputMeta, "full", "Other inputs"),
       // Between the demands and the promise, where a paper would put it: Require, body,
-      // Ensure.
-      panel.algorithm &&
+      // Ensure. A step has one; a group lists its members', each under the step's id.
+      (panel.algorithms || []).length > 0 &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: "Algorithm" }),
-      panel.algorithm && algBlock(panel.algorithm),
+      (panel.algorithms || []).map(({ label, alg }) =>
+        el(
+          "div",
+          { class: "alg-entry" },
+          label && el("span", { class: "alg-step mono", text: label }),
+          algBlock(alg),
+        ),
+      ),
       panel.outputsLabel &&
         el("span", {
           class: "section-label", style: { marginTop: "var(--space-1)" },
@@ -3839,6 +3922,8 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   } else if (selected?.startsWith("pam:")) {
     const amendment = past.find((a) => `pam:${a.amendment_id}` === selected);
     if (amendment) panel = amendmentPanel(amendment, false, def, stepStates);
+  } else if (selected?.startsWith("grp:")) {
+    panel = groupPanel(selected.slice(4), def);
   }
   if (panel) panel.close = () => setState({ selected: "none" });
 
@@ -3872,8 +3957,14 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
             "g",
             { class: "group" },
             svgEl("path", { class: "group-box", d: g.d }),
+            // The label is the group's handle: clicking it inspects the group as the
+            // function it is — what crosses its boundary, and the algorithms inside.
             svgEl("text", {
               class: "group-label", x: String(g.labelX), y: String(g.labelY),
+              onClick: (e) => {
+                e.stopPropagation();
+                setState({ selected: `grp:${g.path}` });
+              },
             }, g.label),
           ),
         ),

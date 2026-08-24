@@ -725,10 +725,14 @@ details[open] > .meta-summary::before { content: "▾ "; }
      from reading as a stack of separate boxes. */
   stroke-linejoin: round;
 }
+/* The label is clickable — it opens the group in the inspector — so it is the one part of
+   the boundary that carries an affordance. */
 .group-label {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
   text-transform: uppercase; fill: var(--color-neutral-500);
+  cursor: pointer;
 }
+.group-label:hover { fill: var(--color-text); text-decoration: underline; }
 
 /* — contracts, diagnostics, plan source —
    A contract is what a checked plan proved about an artifact that does not exist yet, so it
@@ -759,18 +763,27 @@ details[open] > .meta-summary::before { content: "▾ "; }
    carried. Deliberately in neutral ink rather than the accent the contracts wear — the
    contracts were proven and this was rendered, and the colour keeps that distinction. */
 .alg { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) 0; }
-.alg-lines { display: flex; flex-direction: column; overflow-x: auto; }
+.alg-lines { display: flex; flex-direction: column; }
 .alg-line { display: flex; gap: var(--space-2); align-items: baseline; }
 .alg-no {
   flex: none; min-width: 2ch; text-align: right; font-family: var(--font-mono);
   font-size: 10px; color: var(--color-neutral-400); user-select: none;
 }
+/* A formula longer than the panel wraps with a hanging indent, the way a paper breaks a
+   long displayed equation — every token visible, continuations set in from the number.
+   The hanging indent lives in the padding; a loop body's structural indent arrives as an
+   inline margin on top of it, so the two compose. */
 .alg-text {
   font-family: var(--font-mono); font-size: 11px; color: var(--color-text);
-  white-space: pre; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: break-word; line-height: 1.6;
+  padding-left: 3ch; text-indent: -3ch;
 }
 .alg-ext { font-size: 10px; }
 .alg-ext .mono { font-size: 10px; }
+/* Which member step an algorithm belongs to, when a group lists several. */
+.alg-entry { display: flex; flex-direction: column; }
+.alg-entry .alg { padding-top: 0; }
+.alg-step { font-size: 10px; color: var(--color-neutral-500); margin-top: var(--space-2); }
 
 /* A diagnostic's message is a proof goal: its line breaks and its alignment carry the
    meaning, so it is never reflowed, and it scrolls inside itself rather than widening the
