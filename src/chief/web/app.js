@@ -2424,11 +2424,11 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       text: progress ? `${progress.done}/${progress.total}` : `${workflow.steps.length} steps`,
     }),
     el("span", {
-      class: "stamp", text: stamp(workflow.created_at),
+      class: "stamp c-added", text: stamp(workflow.created_at),
       title: workflow.created_at ? new Date(workflow.created_at).toLocaleString() : null,
     }),
     el("span", {
-      class: "stamp", text: stamp(updated),
+      class: "stamp c-updated", text: stamp(updated),
       title: updated ? `${relAgo(updated)} \u00b7 ${new Date(updated).toLocaleString()}` : null,
     }),
     el("span", { class: "dur", text: fmtDuration(duration) }),

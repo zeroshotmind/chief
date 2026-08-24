@@ -150,6 +150,22 @@ class Store:
         with self._conn:
             self._adopt_plans_table(self._conn)
             self._conn.executescript(SCHEMA)
+            self._migrate(self._conn)
+
+    # ``CREATE TABLE IF NOT EXISTS`` leaves an existing table exactly as it was, so a column
+    # added to SCHEMA after a database was first written never reaches it: the store comes up
+    # clean and then fails on the first insert naming the new column. Adding them here keeps
+    # an old file readable by new code without a separate migration step.
+    _ADDED_COLUMNS = {
+        "runs": (("parent_run_id", "TEXT"), ("parent_step_path", "TEXT")),
+    }
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        for table, columns in self._ADDED_COLUMNS.items():
+            have = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, decl in columns:
+                if name not in have:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     # The proof_graphs table was born under the name ``plans``. A database written before
     # the rename is adopted on open — table, key column, and the key inside each stored

@@ -696,6 +696,19 @@ if (badgeTones.length !== 2 || badgeTones.some((t) => t === "?"))
 if (countClass(mainNode(), "dot") !== 0)
   throw new Error("a status dot survived in the workflow list");
 
+// The two timestamp cells are told apart by a class, not by their order among siblings.
+// At phone width the stylesheet hides "added" and keeps "last updated"; if these collapse
+// back to a bare `stamp` the rule silently starts hiding both, and the column the list is
+// sorted by disappears with no other symptom.
+const stamps = collectClasses(mainNode(), "stamp");
+const kinds = (re) => stamps.filter((c) => re.test(c)).length;
+// Two rows, so two of each cell; one head each. Both halves matter: the rule names the
+// cell class and the head class, and either one going missing hides half the pair.
+if (kinds(/\bc-added\b/) !== 2 || kinds(/\bc-updated\b/) !== 2)
+  throw new Error(`stamp cells: got ${JSON.stringify(stamps)}`);
+if (kinds(/\bcol-added\b/) !== 1 || kinds(/\bcol-updated\b/) !== 1)
+  throw new Error(`stamp column heads: got ${JSON.stringify(stamps)}`);
+
 // "Needs you" is one question, not three: an unapproved draft and a run stopped at a
 // checkpoint are both waiting on the same person.
 clickByText("Needs you");

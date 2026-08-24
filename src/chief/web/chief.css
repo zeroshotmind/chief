@@ -1113,6 +1113,53 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   border-left: 1px solid var(--color-neutral-200);
 }
 
+/* — the list on a phone —
+
+   The five columns are ~390px of fixed width before the title is given any, so at a phone's
+   width the title is squeezed to one word per line and the status badge lands on top of it.
+   Below this the list stops being a table: the title takes a line of its own and the rest
+   follow under it, sized to their content. The column heads stay — they are the only way to
+   change the sort — but they wrap like everything else.
+
+   The delete control is revealed rather than left on hover: a touch screen has no hover, so
+   the hover-only affordance is simply absent there. It still opens the same confirmation. */
+@media (max-width: 560px) {
+  .list-head { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+  .col-head.status, .col-head.when, .col-head.stamp, .col-head.dur { width: auto; }
+  .col-head.title { flex: 1 1 100%; }
+
+  .run-row { flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: 11px var(--space-4); }
+  .run-row .title { flex: 1 1 100%; }
+  .run-row .status, .run-row .when, .run-row .stamp, .run-row .dur { width: auto; }
+  .run-row .status { order: 2; }
+  .run-row .when, .run-row .stamp, .run-row .dur { order: 3; }
+  /* Two full timestamps side by side, unlabelled, are two things you have to tell apart
+     before either is useful. The list is sorted by last-updated, so that is the one that
+     stays; "added" goes, and its column head with it, because being able to sort by a
+     column you cannot see is a way to end up staring at an order with no explanation. */
+  .run-row .c-added, .col-head.col-added { display: none; }
+  .row-del-spacer { display: none; }
+  .row-del { order: 4; margin-left: auto; }
+}
+@media (hover: none) {
+  .row-del { opacity: 0.55; }
+}
+
+/* Installed to a home screen, the page owns the whole display including the notch and the
+   home indicator. `viewport-fit=cover` is what lets it draw there; these keep the nav and
+   the last row out from under the hardware. Zero in a browser tab, where the insets are 0. */
+.nav {
+  padding-top: max(var(--space-3), env(safe-area-inset-top));
+  padding-left: max(var(--space-4), env(safe-area-inset-left));
+  padding-right: max(var(--space-4), env(safe-area-inset-right));
+}
+/* On `main`, not `#app`: `#app`'s own padding-right is the artifact viewer's inset
+   (`--viewer-right`) and is not this to set. */
+main {
+  padding-left: max(var(--space-4), env(safe-area-inset-left));
+  padding-right: max(var(--space-4), env(safe-area-inset-right));
+  padding-bottom: max(var(--space-8), env(safe-area-inset-bottom));
+}
 
 @media (max-width: 900px) {
   /* No room for a side panel over a phone-width page: it takes the screen, and the page
