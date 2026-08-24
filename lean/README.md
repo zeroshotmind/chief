@@ -16,13 +16,14 @@ Plan.lean  ──lake env lean──▶  verified graph  ──compile──▶ 
 
 ## Using it
 
-Build the library once:
+Chief builds the library itself the first time it checks anything, so there is no setup step.
+To build it by hand — worth doing after changing the prelude:
 
 ```
 cd lean && lake build
 ```
 
-Then check a plan, **from this directory, with an absolute path to the file**:
+Check a plan **from this directory, with an absolute path to the file**:
 
 ```
 cd lean && lake env lean /path/to/Plan.lean

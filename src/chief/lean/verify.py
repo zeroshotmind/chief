@@ -124,6 +124,45 @@ def available() -> bool:
     return shutil.which("lake") is not None and package_dir() is not None
 
 
+#: What `lake build` leaves behind. Its absence is the state a fresh checkout is in, and the
+#: state that used to make every plan look unsound.
+_BUILT = Path(".lake") / "build" / "lib" / "lean" / "ChiefPlan.olean"
+
+
+def is_built(package: Path) -> bool:
+    return (package / _BUILT).exists()
+
+
+def ensure_built(package: Path, *, timeout: float = 600.0) -> None:
+    """Build the prelude if it has not been built here.
+
+    A checkout has no `.lake`, so without this the first plan anyone checks fails with Lean
+    reporting an unknown module prefix — which reads as *"this plan is broken"* when what is
+    actually true is *"nothing has been compiled yet"*. That is precisely the confusion the
+    rest of this module exists to prevent, arriving through the back door.
+
+    Built once and then skipped, so it costs a couple of seconds on a new machine and nothing
+    afterwards. A build that fails raises rather than returning a verdict: a plan that could
+    not be checked has not been found unsound.
+    """
+    if is_built(package):
+        return
+    try:
+        completed = subprocess.run(
+            ["lake", "build"], cwd=package, capture_output=True, text=True, timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LeanUnavailable(
+            f"building the ChiefPlan prelude took longer than {timeout:g}s"
+        ) from exc
+    if completed.returncode != 0 or not is_built(package):
+        raise LeanUnavailable(
+            "the ChiefPlan prelude could not be built, so no plan can be checked here:\n"
+            + ((completed.stderr or completed.stdout or "").strip()[-2000:] or "no output")
+        )
+
+
 def toolchain_version() -> str | None:
     package = package_dir()
     if package is None:
@@ -445,6 +484,9 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
     lint = lint_source(source)
     if any(d.severity == "error" for d in lint):
         return VerifyResult(status="failed", diagnostics=lint, toolchain=toolchain_version())
+
+    # Before anything is checked, not after: an unbuilt prelude makes every plan look broken.
+    ensure_built(package)
 
     with tempfile.TemporaryDirectory(prefix="chief-plan-") as tmp:
         path = Path(tmp) / "Plan.lean"

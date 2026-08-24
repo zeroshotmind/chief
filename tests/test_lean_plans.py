@@ -14,7 +14,14 @@ from __future__ import annotations
 import pytest
 
 from chief.lean import attribute_diagnostics, available, compile_plan, verify_source
-from chief.lean.verify import lint_source, package_dir, parse_output
+from chief.lean.verify import (
+    LeanUnavailable,
+    ensure_built,
+    is_built,
+    lint_source,
+    package_dir,
+    parse_output,
+)
 from chief.models import PlanGraph
 
 needs_lean = pytest.mark.skipif(not available(), reason="no Lean toolchain on this machine")
@@ -451,3 +458,32 @@ def test_a_failed_edge_is_reported_once_not_twice() -> None:
     assert not any("could not synthesize default value" in m for m in errors(result))
     assert len(errors(result)) == 1
     assert "auc ≥ 75" in errors(result)[0]
+
+
+# --------------------------------------------------------------------------- the prelude
+
+
+@needs_lean
+def test_the_prelude_is_built_before_anything_is_checked() -> None:
+    """A checkout has no build, and an unbuilt prelude made every plan look broken.
+
+    Lean reports an unknown module prefix, which reads as "this plan does not hold up" when
+    what is true is "nothing has been compiled yet" — the exact confusion the rest of this
+    module exists to prevent, arriving through the back door. Verifying anything at all is
+    enough to leave it built.
+    """
+    package = package_dir()
+    assert package is not None
+
+    verify_source(example_source())
+
+    assert is_built(package)
+    # And a second call is a no-op rather than a rebuild.
+    ensure_built(package)
+
+
+def test_a_prelude_that_cannot_be_built_is_unavailable_not_unsound(tmp_path) -> None:
+    (tmp_path / "lakefile.toml").write_text("name = \"broken\"\n", encoding="utf-8")
+
+    with pytest.raises(LeanUnavailable):
+        ensure_built(tmp_path, timeout=120)
