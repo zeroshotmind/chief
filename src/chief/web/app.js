@@ -109,6 +109,9 @@ const NODE_H = 62;
 // Room around a group's members, and the strip its label sits in above them.
 const GROUP_PAD = 12;
 const GROUP_LABEL_H = 18;
+// How much further out an enclosing group sits than the ones inside it — enough to clear
+// their labels, so two nested titles never land on the same line.
+const GROUP_NEST = 24;
 // A construct is not drawn as a container: its body steps join the main graph as ordinary
 // nodes, and the construct itself shrinks to a small gate the cycle passes through — repeat
 // or exit for a loop, a join for a parallel. This is the gate's height.
@@ -1619,6 +1622,11 @@ function splitInputs(inputs) {
     left to look the same as the rest: a plan whose contracts are real except on the edge that
     matters is exactly the one worth noticing. */
 function contractCard(label, port) {
+  // The promise and the demand, one above the other, when they differ. That difference *is*
+  // what was proven — the step above committed to more than this one needs — and it is the
+  // one thing a reader cannot work out from anywhere else on the screen. Where they are the
+  // same there is nothing to show, so nothing is shown.
+  const weakened = port.promise && port.promise.contract !== port.contract;
   return el(
     "div",
     { class: "contract" },
@@ -1630,7 +1638,19 @@ function contractCard(label, port) {
       port.proven === false &&
         el("span", { class: "tag", style: { color: "var(--warn)" }, text: "unconstrained" }),
     ),
-    el("code", { class: "contract-pred", text: port.contract }),
+    weakened &&
+      el(
+        "div",
+        { class: "contract-given" },
+        el("span", { class: "contract-arrow", text: "given" }),
+        el("code", { class: "contract-pred", text: port.promise.contract }),
+      ),
+    el(
+      "div",
+      { class: weakened ? "contract-given" : null },
+      weakened && el("span", { class: "contract-arrow", text: "needs" }),
+      el("code", { class: "contract-pred", text: port.contract }),
+    ),
     port.from_step &&
       el("span", { class: "contract-from text-muted", text: `from ${port.from_step}` }),
   );
@@ -2734,49 +2754,76 @@ function approvalsScreen() {
     pending amendment proposes to insert. */
 /** Columns, when the steps say which part of the work they belong to.
 
-    A group is only worth drawing a boundary around if the boundary can be trusted, and in a
-    layered graph it cannot be drawn after the fact: depth is fixed by the longest path, and
-    functional phases interleave across depths — in the benchmark plan, collection and taxonomy
-    both occupy layer 1. A box around either would enclose a node from the other, which is
-    worse than no box.
+    A group is only worth a boundary if the boundary can be trusted, and in a layered graph it
+    cannot be drawn after the fact: depth is fixed by the longest path, and functional phases
+    interleave across depths — in the benchmark plan collection and taxonomy both occupy layer
+    1. A box around either would enclose a node from the other, which is worse than no box.
 
-    So grouping is a layout constraint rather than a decoration. Each group is given a lane —
-    a contiguous run of columns, held across every layer it spans — sized by the most members
-    it has in any one layer. Lanes are disjoint by construction, so a group's rectangle
-    contains its own nodes and nothing else, and two rectangles can never overlap.
+    So grouping is a layout constraint. Each innermost group gets a lane — a run of columns
+    held across every layer it spans, as wide as its busiest layer — and lanes are laid out in
+    tree order, so a parent's lanes are always adjacent. That makes every rectangle exact, and
+    makes overlap impossible at any depth.
 
-    Returns null when nothing declares a group, and then the layout is exactly what it was:
-    this must not move a single existing plan. -/ */
+    Groups nest by path: `Encoder/Training` sits inside `Encoder`. A group may hold steps of
+    its own as well as sub-groups; its own steps take the first lane under it.
+
+    Returns null when nothing declares a group, and then the layout is exactly what it was —
+    this must not move a single plan that never asked for it. */
+const GROUP_SEP = "/";
+
+const groupPath = (step) =>
+  (step.group || "").split(GROUP_SEP).map((s) => s.trim()).filter(Boolean);
+
 function lanesFor(all, layers) {
-  const order = [];
-  const seen = new Set();
-  for (const step of all) {
-    const key = step.group || "";
-    if (!seen.has(key)) {
-      seen.add(key);
-      order.push(key);
-    }
-  }
-  if (!order.some((key) => key !== "")) return null;
+  if (!all.some((step) => groupPath(step).length)) return null;
 
-  // A lane is as wide as the most members the group has in any single layer.
-  const wide = new Map(order.map((key) => [key, 1]));
+  // A trie of path segments in first-appearance order, so lanes come out in the order the
+  // plan was written rather than alphabetically.
+  const root = { order: [], children: new Map(), members: false };
+  for (const step of all) {
+    let node = root;
+    for (const segment of groupPath(step)) {
+      if (!node.children.has(segment)) {
+        node.children.set(segment, { order: [], children: new Map(), members: false });
+        node.order.push(segment);
+      }
+      node = node.children.get(segment);
+    }
+    node.members = true;
+  }
+
+  // Depth-first: a group's own steps take the lane immediately under it, then its sub-groups.
+  const keys = [];
+  const boxes = [];
+  const walk = (node, path) => {
+    const first = keys.length;
+    if (node.members) keys.push(path.join(GROUP_SEP));
+    for (const segment of node.order) walk(node.children.get(segment), [...path, segment]);
+    if (path.length) {
+      boxes.push({ label: path[path.length - 1], depth: path.length - 1, first, last: keys.length - 1 });
+    }
+  };
+  walk(root, []);
+
+  const laneOf = (step) => groupPath(step).join(GROUP_SEP);
+  const wide = new Map(keys.map((key) => [key, 1]));
   for (const layer of layers) {
     const count = new Map();
     for (const step of layer || []) {
-      const key = step.group || "";
+      const key = laneOf(step);
       count.set(key, (count.get(key) || 0) + 1);
     }
-    for (const [key, n] of count) wide.set(key, Math.max(wide.get(key), n));
+    for (const [key, n] of count) wide.set(key, Math.max(wide.get(key) || 1, n));
   }
 
   const offset = new Map();
   let column = 0;
-  for (const key of order) {
+  for (const key of keys) {
     offset.set(key, column);
     column += wide.get(key);
   }
-  return { order, wide, offset, columns: column };
+  const depth = Math.max(0, ...boxes.map((b) => b.depth));
+  return { keys, wide, offset, columns: column, laneOf, boxes, depth };
 }
 
 function layout(topSteps, ghosts, rewires, width, heightFor) {
@@ -2842,11 +2889,11 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
       tallest = Math.max(tallest, h);
       let slot = i;
       if (lanes) {
-        const key = step.group || "";
+        const key = lanes.laneOf(step);
         const taken = used.get(key) || 0;
         used.set(key, taken + 1);
         const room = lanes.wide.get(key);
-        const here = layer.filter((s) => (s.group || "") === key).length;
+        const here = layer.filter((s) => lanes.laneOf(s) === key).length;
         slot = lanes.offset.get(key) + Math.floor((room - here) / 2) + taken;
       }
       pos[step.id] = { x: columnX(slot), y, h };
@@ -2875,23 +2922,32 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   // The rectangles, in lane coordinates rather than from where the members happened to land:
   // a lane's full width is the box's width even where one layer holds a single node, so the
   // shape stays a rectangle rather than a staircase.
+  // One rectangle per group at every depth, in lane coordinates rather than from where the
+  // members happened to land: a lane's full width is the box's width even where one layer
+  // holds a single node, so the shape stays a rectangle rather than a staircase. An enclosing
+  // group is padded further out than the ones inside it, by enough to clear their labels.
   const groups = [];
   if (lanes) {
-    for (const key of lanes.order) {
-      if (!key) continue;
-      const members = all.filter((s) => (s.group || "") === key && pos[s.id]);
+    for (const box of lanes.boxes) {
+      const mine = lanes.keys.slice(box.first, box.last + 1);
+      const members = all.filter((s) => mine.includes(lanes.laneOf(s)) && pos[s.id]);
       if (!members.length) continue;
-      const top = Math.min(...members.map((s) => pos[s.id].y));
-      const base = Math.max(...members.map((s) => pos[s.id].y + (pos[s.id].h ?? NODE_H)));
-      const first = lanes.offset.get(key);
+      const pad = GROUP_PAD + (lanes.depth - box.depth) * GROUP_NEST;
+      const top = Math.min(...members.map((s) => pos[s.id].y)) - pad - GROUP_LABEL_H;
+      const base = Math.max(...members.map((s) => pos[s.id].y + (pos[s.id].h ?? NODE_H))) + pad;
+      const firstCol = lanes.offset.get(mine[0]);
+      const lastCol = lanes.offset.get(mine[mine.length - 1]) + lanes.wide.get(mine[mine.length - 1]) - 1;
       groups.push({
-        label: key,
-        x: columnX(first) - GROUP_PAD,
-        y: top - GROUP_PAD - GROUP_LABEL_H,
-        w: columnX(first + lanes.wide.get(key) - 1) + nodeW + GROUP_PAD - (columnX(first) - GROUP_PAD),
-        h: base + GROUP_PAD - (top - GROUP_PAD - GROUP_LABEL_H),
+        label: box.label,
+        depth: box.depth,
+        x: columnX(firstCol) - pad,
+        y: top,
+        w: columnX(lastCol) + nodeW + pad - (columnX(firstCol) - pad),
+        h: base - top,
       });
     }
+    // Outer first, so a nested box paints over the one holding it.
+    groups.sort((a, b) => a.depth - b.depth);
   }
 
   return { all, pos, nodeW, height: bottom + 24, ghostIds, planeW, groups };
@@ -2918,6 +2974,17 @@ function edgeDefs() {
 function stepPanel(step, stepState, def) {
   const arts = stepArtifacts(stepState);
   const { arts: inputArts, contracts: inputContracts, meta: inputMeta } = splitInputs(step.inputs);
+  const { contracts: outputContracts, meta: outputMeta } = splitInputs(step.outputs);
+  // What the producing step promised about the artifact this one reads. Looked up rather than
+  // carried on the edge, because the promise belongs to the producer and duplicating it would
+  // be a second copy to keep true.
+  for (const entry of inputContracts) {
+    const from = (def.steps || []).find((s) => s.id === entry.port.from_step);
+    const promised = Object.values((from && from.outputs) || {}).find(
+      (o) => o.artifact_type === entry.port.artifact_type,
+    );
+    if (promised) entry.port = { ...entry.port, promise: promised };
+  }
   const instances = stepState.instances || [];
   const body = bodyStepsOf(step, def);
   const meta =
@@ -3026,6 +3093,11 @@ function stepPanel(step, stepState, def) {
     inputArts,
     inputContracts,
     inputMeta,
+    // What this step commits to producing. A step is a function; stating only what it demands
+    // writes half a signature, and the half left out is what everything after it depends on.
+    outputsLabel: outputContracts.length ? "Produces" : null,
+    outputContracts,
+    outputMeta,
   };
 }
 
@@ -3120,6 +3192,13 @@ function inspector(panel) {
       (panel.inputArts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
       (panel.inputContracts || []).map(({ label, port }) => contractCard(label, port)),
       metadataBlock(panel.inputMeta, "full", "Other inputs"),
+      panel.outputsLabel &&
+        el("span", {
+          class: "section-label", style: { marginTop: "var(--space-1)" },
+          text: panel.outputsLabel,
+        }),
+      (panel.outputContracts || []).map(({ label, port }) => contractCard(label, port)),
+      metadataBlock(panel.outputMeta, "full", "Other outputs"),
       panel.opsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.opsLabel }),
       (panel.ops || []).map(opRow),
@@ -4642,6 +4721,15 @@ function defFromPlan(plan) {
           },
         ]),
       ),
+      outputs: n.produces
+        ? {
+            [n.produces.label]: {
+              artifact_type: n.produces.artifact_type,
+              contract: n.produces.contract,
+              proven: n.produces.refined,
+            },
+          }
+        : {},
       fields: n.type === "checkpoint" ? (n.fields || []).map((name) => ({ name })) : null,
       body: null,
     })),

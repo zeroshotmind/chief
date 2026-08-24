@@ -45,8 +45,9 @@ structure Node where
   kind : String
   goal : String
   harness : String
-  /-- Which part of the work this step belongs to, or empty. A label for a reader, never
-  something the checking reads: naming a phase says nothing about what any step demands. -/
+  /-- Which part of the work this step belongs to, or empty. Nests on `/`, so
+  `"Encoder/Training"` sits inside `"Encoder"`. A label for a reader, never something the
+  checking reads: naming a phase says nothing about what any step demands. -/
   group : String
   criteria : List String
   /-- What a checkpoint asks a person for. Empty on a task. -/

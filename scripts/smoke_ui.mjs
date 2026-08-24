@@ -244,12 +244,12 @@ const PLAN_GRAPH = {
   title: "Fraud model refresh",
   nodes: [
     {
-      id: "harvest", type: "task", goal: "Pull the events.", harness: "claude", group: "Collection",
+      id: "harvest", type: "task", goal: "Pull the events.", harness: "claude", group: "Data/Collection",
       criteria: ["count recorded"], fields: [], depends_on: [], inputs: [],
       produces: { label: "out", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 50000", refined: true },
     },
     {
-      id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude", group: "Modelling",
+      id: "fit_model", type: "task", goal: "Fit the classifier.", harness: "claude", group: "Data/Modelling",
       criteria: ["AUC recorded"], fields: [], depends_on: ["harvest"],
       inputs: [{ label: "events", source: "harvest", artifact_type: "RawEvents", contract: "count ≥ 10000", refined: true }],
       produces: { label: "out", source: "fit_model", artifact_type: "Model", contract: "auc ≥ 80", refined: true },
@@ -1209,9 +1209,36 @@ record("nav Plan detail");
 const planNodes = countClass(mainNode(), "node");
 const claimsShown = JSON.stringify(mainNode()).includes("3 of 3 conditions constrain");
 // A step says which part of the work it belongs to, and the graph draws a lane round each.
+// Groups nest by path, so "Data/Collection" and "Data/Modelling" give three boxes: one round
+// each phase and one round both.
 const groupBoxes = countClass(mainNode(), "group-box");
 const groupLabels = JSON.stringify(mainNode());
-const groupsNamed = groupLabels.includes("Collection") && groupLabels.includes("Modelling");
+const groupsNamed = ["Data", "Collection", "Modelling"].every((n) => groupLabels.includes(n));
+
+// The invariant the whole lane scheme exists to guarantee, checked numerically rather than
+// trusted: every node inside a box belongs to that box's group, and no node of that group
+// falls outside it. A box that encloses a foreign node is the failure this replaced.
+function boxesAndNodes(root, boxes = [], nodes = []) {
+  const cls = (root.class || "").split(" ");
+  if (cls.includes("group-box")) {
+    boxes.push({ x: +root.x, y: +root.y, w: +root.width, h: +root.height });
+  }
+  if (cls.includes("node") && root.style && root.style.left) {
+    nodes.push({
+      id: (root.textContent || "") + JSON.stringify(root),
+      x: parseFloat(root.style.left), y: parseFloat(root.style.top),
+      w: parseFloat(root.style.width), h: parseFloat(root.style.height),
+    });
+  }
+  for (const child of root.children || []) boxesAndNodes(child, boxes, nodes);
+  return { boxes, nodes };
+}
+const drawn = boxesAndNodes(mainNode());
+const inside = (b, n) =>
+  n.x >= b.x && n.y >= b.y && n.x + n.w <= b.x + b.w && n.y + n.h <= b.y + b.h;
+// Two leaf boxes hold one node each; the box round both holds two. No box holds a stray.
+const held = drawn.boxes.map((b) => drawn.nodes.filter((n) => inside(b, n)).length).sort();
+const containment = JSON.stringify(held) === JSON.stringify([1, 1, 2]);
 
 // Selecting the step that reads something shows what was proven about what it reads. The
 // condition is drawn as a condition — not through artifactCard, which would offer to open a
@@ -1222,6 +1249,12 @@ const stepText = JSON.stringify(mainNode());
 const contractCards = countClass(mainNode(), "contract");
 const contractShown = stepText.includes("count ≥ 10000");
 const notInJsonDrawer = !stepText.includes("Other inputs");
+// A step is a function: what it demands and what it promises are both shown. And where the
+// two sides of an edge differ, the promise sits above the demand — that difference is the
+// thing the checking established.
+const promisesShown = stepText.includes("Produces") && stepText.includes("auc ≥ 80");
+const givenAndNeeds = countClass(mainNode(), "contract-given");
+const weakeningVisible = stepText.includes("count ≥ 50000") && stepText.includes("count ≥ 10000");
 
 // Graph and source are two views of one plan, so they sit behind a toggle rather than
 // stacked. The graph is what a verified plan opens on.
@@ -1257,8 +1290,8 @@ await new Promise((r) => setTimeout(r, 30));
 const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/.test(c)).length;
 
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
-console.log(`             contracts=${contractCards} shown=${contractShown}, not-json=${notInJsonDrawer}, verified-post=${verified && verified.url}`);
-console.log(`             groups=${groupBoxes} boxes, named=${groupsNamed}, ungrouped-plan-boxes=${ungroupedBoxes}`);
+console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
+console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}, ungrouped=${ungroupedBoxes}`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 
@@ -1456,11 +1489,15 @@ const ok =
   planNodes === 2 &&
   // One lane per declared group, labelled; and a plan that declares none is laid out exactly
   // as it was, with nothing drawn round it.
-  groupBoxes === 2 &&
+  groupBoxes === 3 &&
   groupsNamed &&
+  containment &&
   ungroupedBoxes === 0 &&
-  contractCards === 1 &&
+  contractCards === 2 &&
   contractShown &&
+  promisesShown &&
+  givenAndNeeds === 2 &&
+  weakeningVisible &&
   notInJsonDrawer &&
   claimsShown &&
   !!verified &&

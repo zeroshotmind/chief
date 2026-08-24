@@ -162,12 +162,30 @@ class WorkflowStep(BaseModel):
         default=None,
         description=(
             "Which part of the work this step belongs to, e.g. 'Collection' or 'Evaluation'. "
-            "Steps sharing a group are drawn together under that label. Optional, and worth "
-            "setting only on a plan big enough that its shape is hard to read; use the same "
-            "wording across the steps of one group, since the label is matched literally."
+            "Steps sharing a group are drawn together under that label. Nests on '/', so "
+            "'Encoder/Training' sits inside 'Encoder'. Optional, and worth setting only on a "
+            "plan big enough that its shape is hard to read; use the same wording across the "
+            "steps of one group, since the label is matched literally."
         ),
     )
     inputs: dict[str, Any] = Field(default_factory=dict)
+    # What the step promises about what it produces, keyed the way `inputs` is keyed. Open and
+    # unvalidated for the same reason `inputs` is: Chief holds it and shows it, and a schema
+    # over it would have to be kept in step with every harness that writes one.
+    #
+    # A step is a function, and a plan that states only what a step demands has written half a
+    # signature. The half it leaves out is the one every later step depends on. Distinct from
+    # the artifacts a run reports, which are what was *actually* produced: this is the claim
+    # made before anything ran.
+    outputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "What this step promises about what it produces, e.g. "
+            "{'model': {'artifact_type': 'Model', 'contract': 'auc >= 80'}}. The counterpart "
+            "of `inputs`. Optional; a step that says nothing about its output behaves as it "
+            "always has."
+        ),
+    )
     body: list[str] | None = None
     # Governs whether a failed instance (or a failed step inside an instance body) fails
     # the construct, or is tolerated so the remaining instances still run. Only meaningful

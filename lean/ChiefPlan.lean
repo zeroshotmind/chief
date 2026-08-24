@@ -75,6 +75,11 @@ the wrong type.
   *promises*; `produces` names the output port, and is worth setting to something meaningful
   (`"ledger"`, `"model"`) since it is what the artifact is called wherever it is shown.
   Everything after `out` is a named optional argument — pass them by name, not by position.
+* `group` on either — which part of the work a step belongs to, e.g. `(group := "Encoder")`.
+  Optional, and worth setting only on a plan big enough that its shape is hard to read.
+  Groups nest on `/`: `(group := "Encoder/Training")` draws a box inside the `Encoder` one,
+  and a group may hold steps of its own as well as sub-groups. Nothing checks it and nothing
+  derives from it — naming a phase says nothing about what any step demands.
 * `checkpoint id goal (fields := []) (inputs := [])` — record a point where a person decides,
   and return their approval as an artifact.
 * `input label r` — name an artifact being fed to a step. This is what creates the edge.

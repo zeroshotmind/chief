@@ -46,6 +46,25 @@ def _inputs_for(node: PlanNode) -> dict[str, object]:
     }
 
 
+def _outputs_for(node: PlanNode) -> dict[str, object]:
+    """What the step promised about what it produces.
+
+    Carried as data as well as restated as a criterion, and the two are not redundant: the
+    criterion is what a harness answers for at report time, this is what a reader sees at plan
+    time. Both are written here from the same port, so they cannot drift.
+    """
+    port = node.produces
+    if port is None:
+        return {}
+    return {
+        port.label: {
+            "artifact_type": port.artifact_type,
+            "contract": port.contract,
+            "proven": port.refined,
+        }
+    }
+
+
 def _step_for(node: PlanNode) -> WorkflowStep:
     criteria = list(node.criteria)
     if node.type == "task" and node.produces is not None and node.produces.refined:
@@ -63,6 +82,7 @@ def _step_for(node: PlanNode) -> WorkflowStep:
         "depends_on": list(node.depends_on),
         "group": node.group,
         "inputs": _inputs_for(node),
+        "outputs": _outputs_for(node),
     }
     if node.type == "checkpoint":
         # Criteria are task-only, and a checkpoint's outcome is a person's to give — there is
