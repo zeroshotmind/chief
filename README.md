@@ -93,6 +93,14 @@ on the artifacts a run produced, a file viewer that renders markdown, maths, ima
 **projects** to file workflows under, **templates** for plans worth reusing, and an
 **approval policy** for the routine ones.
 
+For work whose steps have real preconditions, there are **checked plans**. A plan is written
+so each step declares what it needs from the ones before it, and the server proves — before
+anyone approves anything — that every one of those demands is met by what feeds it. It then
+compiles into an ordinary draft workflow. It says nothing about whether the work is any good;
+what it rules out is a plan that was never going to hold together.
+**→ [lean/README.md](lean/README.md)**, and Lean is optional — without it everything else is
+unchanged.
+
 **→ [docs/using-chief.md](docs/using-chief.md)** covers all of it, and why each part behaves
 the way it does.
 
@@ -116,7 +124,9 @@ src/chief/
   storage/    SQLite document store + audit log
   api/        REST routes
   mcp_server.py   MCP tools, mounted at /mcp on the same app
+  lean/       checking a plan's logic, and compiling it into a workflow
   web/        the UI: static files, no build step
+lean/         the ChiefPlan Lean prelude a plan is written against
 site/         the landing page, published to GitHub Pages
 ```
 
@@ -131,5 +141,6 @@ that rather than trusting it.
 | [docs/using-chief.md](docs/using-chief.md) | Every feature, and why it works that way |
 | [docs/internals.md](docs/internals.md) | Data model, derivation, amendments, design choices |
 | [CONTRACT-NOTES.md](CONTRACT-NOTES.md) | Where implementation found the contract open or inconsistent |
+| [lean/README.md](lean/README.md) | Checked plans: what is proven, what is not, and how to write one |
 | [MCP-SURFACE.md](MCP-SURFACE.md) | Why the MCP tool list is not the contract's tool list |
 | [STATUS.md](STATUS.md) | Requirement-by-requirement state, and the full route inventory |

@@ -102,7 +102,12 @@ def test_a_checkpoint_finishing_a_child_run_also_cascades(api: Api):
 
 def test_a_workflow_ref_inside_a_loop_surfaces_and_cascades(api: Api):
     template_id = api.create_template([task("only_step")])
-    _, run_id = api.run([construct("loop_01", "loop", ["sub"]), workflow_ref("sub", ref_template_id=template_id)])
+    _, run_id = api.run(
+        [
+            construct("loop_01", "loop", ["sub"]),
+            workflow_ref("sub", ref_template_id=template_id),
+        ]
+    )
     api.add_instance(run_id, "loop_01", instance_id="inst_00")
     api.nested_update(run_id, "loop_01/inst_00/sub", status="running")
 

@@ -25,6 +25,7 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types.methods import KNOWN_PROTOCOL_VERSIONS
 
+from chief import lean as chief_lean
 from chief import mcp_server
 from chief.api import routes
 from chief.domain.service import Chief
@@ -448,3 +449,64 @@ def test_every_field_a_harness_fills_says_what_to_put_in_it():
     summary = described["summary"]["description"]
     assert "two or three sentences" in summary.lower()
     assert "artifacts" in summary
+
+
+def open_mcp_session(client):
+    """Handshake, and hand back a function that calls a tool and returns its parsed result."""
+    handshake = client.post(
+        "/mcp/",
+        headers=MCP_HEADERS,
+        json={
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18", "capabilities": {},
+                "clientInfo": {"name": "parity-test", "version": "1"},
+            },
+        },
+    )
+    assert handshake.status_code == 200, handshake.text
+    session = {**MCP_HEADERS, "mcp-session-id": handshake.headers["mcp-session-id"],
+               "mcp-protocol-version": "2025-06-18"}
+    client.post(
+        "/mcp/", headers={**session, "mcp-method": "notifications/initialized"},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+
+    def call(name, arguments, request_id):
+        response = client.post(
+            "/mcp/", headers={**session, "mcp-method": "tools/call"},
+            json={
+                "jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+        )
+        payload = rpc_payload(response)
+        assert "error" not in payload, payload["error"]
+        return json.loads(payload["result"]["content"][0]["text"])
+
+    return call
+
+
+@pytest.mark.skipif(not chief_lean.available(), reason="no Lean toolchain on this machine")
+def test_both_transports_spell_a_plan_graph_the_same_way(client):
+    """REQ-4 at the level of a field name, which is where it is easiest to break.
+
+    ``PlanGraph`` names its version marker ``schema_`` and aliases it back to ``schema``,
+    because a bare ``schema`` would shadow a BaseModel attribute. FastAPI serialises response
+    models by alias and pydantic's own ``model_dump`` does not, so a transport that reached
+    for the latter would emit ``schema_`` where REST emits ``schema`` — the same document
+    spelled two ways depending on how you asked for it. It is the only alias in these models,
+    so this is the whole exposure, and it is worth a test rather than a memory.
+    """
+    call = open_mcp_session(client)
+    source = (chief_lean.package_dir() / "Examples" / "Pipeline.lean").read_text(encoding="utf-8")
+
+    made = call("create_plan", {"body": {"title": "parity", "lean_source": source}}, 2)
+    checked = call("verify_plan", {"plan_id": made["plan_id"]}, 3)
+
+    assert checked["status"] == "verified", checked["verification"]["diagnostics"]
+    over_mcp = checked["verification"]["graph"]
+    over_rest = client.get(f"/v1/plans/{made['plan_id']}").json()["verification"]["graph"]
+    assert sorted(over_mcp) == sorted(over_rest)
+    assert "schema" in over_mcp
+    assert over_mcp["nodes"] == over_rest["nodes"]
