@@ -46,6 +46,7 @@ from ..models import (
     ProofGraph,
     ProofGraphCompile,
     ProofGraphCreate,
+    ProofGraphLabel,
     ProofGraphRevise,
     ReviewNote,
     ReviewNoteCreate,
@@ -630,6 +631,42 @@ class Chief:
             self.store.save_proof_graph(conn, graph)
             self.store.audit(
                 conn, "graph.revised", detail={"graph_id": graph_id, "reason": body.reason}
+            )
+        return self._freshen(graph)
+
+    def label_proof_graph(self, graph_id: str, body: ProofGraphLabel) -> ProofGraph:
+        """Rename or refile a graph. Not a source change, so the verdict survives it.
+
+        ``revise`` is deliberately the wrong door for this: revising drops the graph back to
+        ``draft`` because a verdict belongs to the text that was checked — and the title is
+        not part of that text. Allowed at any status for the same reason a workflow's
+        labels are: the graphs most in need of a better name are the ones already verified.
+        """
+        graph = self.store.get_proof_graph(graph_id)
+        # Only what the caller actually sent, exactly as ``label_workflow`` reads it:
+        # `project=None` clears the project, omitting it leaves it alone.
+        sent = body.model_fields_set
+        changed: dict[str, Any] = {}
+        if "title" in sent:
+            new_title = (body.title or "").strip()
+            if not new_title:
+                raise ValidationFailed("a graph needs a title; send the new one")
+            if new_title != graph.title:
+                changed["title"] = new_title
+                changed["title_was"] = graph.title
+                graph.title = new_title
+        for field in ("project", "origin_dir"):
+            if field not in sent:
+                continue
+            changed[field] = getattr(body, field)
+            changed[f"{field}_was"] = getattr(graph, field)
+            setattr(graph, field, getattr(body, field))
+        if not changed:
+            raise ValidationFailed("nothing to change: send a title, project or origin_dir")
+        with self.store.transaction() as conn:
+            self.store.save_proof_graph(conn, graph)
+            self.store.audit(
+                conn, "graph.labelled", detail={"graph_id": graph_id, **changed}
             )
         return self._freshen(graph)
 

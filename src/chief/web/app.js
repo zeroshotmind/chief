@@ -31,10 +31,11 @@
 */
 
 import {
-  ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createTemplateFromWorkflow,
+  ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
+  createTemplate, createTemplateFromWorkflow, createWorkflow,
   decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
-  decideGraphNote, decideReviewNote, labelWorkflow, listAmendments, listGraphNotes,
+  decideGraphNote, decideReviewNote, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
@@ -1847,6 +1848,8 @@ const state = {
   graphPane: null,
   // The line a diagnostic sent you to, kept so it stays marked across a refresh.
   graphLine: null,
+  // graph_id whose source was just copied, so the button can say so for a moment.
+  graphCopied: null,
 
   workflowAudit: null, // { workflowId, entries }
   // Review notes for the workflow on screen: { workflowId, notes }. Fetched per screen and
@@ -2614,6 +2617,12 @@ function workflowsScreen() {
       el("span", {
         class: "text-muted", style: { fontSize: "12px" },
         text: `${running} running · ${waiting} awaiting a decision`,
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px", marginLeft: "auto" },
+        text: "Import from a file",
+        title: "Registers an exported workflow file here, as a new draft",
+        onClick: importWorkflowFile,
       }),
     ),
     workflows.length > 0 &&
@@ -3520,18 +3529,114 @@ function exportTemplate(template) {
     steps: template.steps,
     project: template.project,
   };
-  const slug = (template.title || template.template_id)
-    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(body, null, 2) + "\n"], { type: "application/json" }),
+  downloadFile(
+    `${fileSlug(template.title) || template.template_id}.json`,
+    JSON.stringify(body, null, 2) + "\n",
+    "application/json",
   );
-  const link = el("a", { href: url, download: `${slug || "template"}.json` });
+}
+
+/** A workflow, as the `POST /workflows` body it once was — same field-picking discipline as
+    `exportTemplate`, and for the same reason: the server refuses `status` and `version` on
+    create (a workflow always starts as a draft at version 1), so dumping the whole document
+    would make a file that cannot be posted back. The id travels, which is what makes
+    re-registering the same file a refusal rather than a silent second copy. */
+function exportWorkflow(workflow) {
+  const body = {
+    workflow_id: workflow.workflow_id,
+    title: workflow.title,
+    source: workflow.source,
+    generated_by: workflow.generated_by,
+    steps: workflow.steps,
+    project: workflow.project,
+    origin_dir: workflow.origin_dir,
+  };
+  downloadFile(
+    `${fileSlug(workflow.title) || workflow.workflow_id}.json`,
+    JSON.stringify(body, null, 2) + "\n",
+    "application/json",
+  );
+}
+
+const fileSlug = (text) =>
+  (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+
+/** Hand the browser a file to write. */
+function downloadFile(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = el("a", { href: url, download: name });
   document.body.appendChild(link);
   link.click();
   link.remove();
   // Freed on the next tick rather than immediately: revoking it before the click has been
   // dispatched cancels the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** Ask the browser for a file and hand its text to `take`. Whatever `take` throws lands on
+    the shared error banner — a picked file that the server refuses must say so, not
+    silently fail to appear in the list. */
+function pickFile(accept, take) {
+  const input = el("input", { type: "file", accept });
+  input.addEventListener("change", async () => {
+    const file = (input.files || [])[0];
+    if (!file) return;
+    try {
+      await take(await file.text(), file.name);
+    } catch (err) {
+      setState({ error: err instanceof ApiError ? err.message : String(err) });
+    }
+  });
+  document.body.appendChild(input);
+  input.click();
+  input.remove();
+}
+
+/** What an exported file parses as, or a message that says which mistake was made — the
+    JSON error itself ("unexpected token" at some offset) reads as the app being broken. */
+function parsedImport(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("that file is not JSON — import takes the file 'Export to a file' writes");
+  }
+}
+
+/** The import half of each export. The file is the request body, so importing is posting it
+    back; the server validates it exactly as if a harness had sent it, and an id that already
+    lives here is refused rather than duplicated. Each lands on the imported thing's own
+    screen, because "it worked" should look like the thing, not like a longer list. */
+function importWorkflowFile() {
+  pickFile(".json,application/json", async (text) => {
+    const created = await createWorkflow(parsedImport(text));
+    await refresh();
+    openWorkflow(created.workflow_id);
+  });
+}
+
+function importTemplateFile() {
+  pickFile(".json,application/json", async (text) => {
+    const created = await createTemplate(parsedImport(text));
+    await refresh();
+    openTemplate(created.template_id);
+  });
+}
+
+/** A proof graph travels as its .lean source — the canonical form, nothing to parse. The
+    title `POST /proof-graphs` wants is read out of the file's own `emitGraph "…"` line,
+    falling back to the file's name; a graph arrives as a draft either way and is checked
+    here, by this machine's toolchain, before it claims anything. */
+function importGraphFile() {
+  pickFile(".lean,text/plain", async (text, name) => {
+    const quoted = text.match(/emitGraph\s+"([^"\n]+)"/);
+    const title =
+      (quoted && quoted[1]) ||
+      name.replace(/\.lean$/i, "").replace(/[-_]+/g, " ").trim() ||
+      "Imported proof graph";
+    const created = await createProofGraph({ title, lean_source: text });
+    await refresh();
+    openProofGraph(created.graph_id);
+  });
 }
 
 /** A template is the plan you keep; a workflow is the plan you are running this time. It
@@ -3589,6 +3694,12 @@ function templatesScreen() {
       el("span", {
         class: "text-muted", style: { fontSize: "12px" },
         text: `${active.length} available`,
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px", marginLeft: "auto" },
+        text: "Import from a file",
+        title: "Registers an exported template file here, id and all",
+        onClick: importTemplateFile,
       }),
     ),
     templates.length === 0 &&
@@ -4177,6 +4288,13 @@ function workflowDetailScreen() {
                 }
               },
             }),
+          el("button", {
+            class: "btn btn-ghost", style: { fontSize: "12px" }, text: "Export to a file",
+            title: "Downloads the plan as JSON — the same body POST /workflows takes, so it "
+                 + "can be committed alongside the project or registered on another Chief "
+                 + "as a new draft",
+            onClick: () => exportWorkflow(workflow),
+          }),
         ),
       // Reuse is a template's job, so more than one execution is unusual. When it happens,
       // say so plainly rather than silently showing only the newest.
@@ -4525,6 +4643,20 @@ async function saveFiling(workflow) {
   }
 }
 
+/** The graph's rename, riding the same `filing` state as a workflow's. The title goes as
+    typed (trimmed) rather than null-when-blank: a blank title is the server's refusal to
+    make, and its message says so better than a silent no-op would. */
+async function saveGraphTitle(graph) {
+  const { draft } = state.filing;
+  try {
+    await labelProofGraph(graph.graph_id, { title: (draft || "").trim() });
+    setState({ filing: null });
+    await refresh();
+  } catch (err) {
+    setState({ error: err instanceof ApiError ? err.message : String(err), filing: null });
+  }
+}
+
 /** Open the plan's own thread — the panel you get with no node selected.
 
     Shown as a count so it also answers "is there anything on the plan I have not read", and
@@ -4864,7 +4996,7 @@ function graphMeta(graph) {
 function openProofGraph(graphId) {
   setState({
     view: "graph", graphId, selected: null, dialog: null,
-    graphError: null, graphPane: null, graphLine: null,
+    graphError: null, graphPane: null, graphLine: null, graphCopied: null,
     workflowNotes: null, noteDrafts: {}, noteShow: {},
   });
   refresh();
@@ -4947,6 +5079,13 @@ function proofGraphsScreen() {
       el("span", {
         class: "text-muted", style: { fontSize: "12px" },
         text: `${readyGraphs().length} ready to compile`,
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px", marginLeft: "auto" },
+        text: "Import from a file",
+        title: "Registers a .lean proof-graph file here, as a draft to be checked by this "
+             + "machine's own toolchain",
+        onClick: importGraphFile,
       }),
     ),
     // Said once, here, rather than discovered as a failed verification on a graph screen: an
@@ -5097,6 +5236,31 @@ function jumpToLine(line) {
   }, 0);
 }
 
+/** The graph, back as the .lean file it never stopped being.
+
+    The source is the canonical form — everything else on the document is derived from it —
+    so exporting it is exporting the whole graph. Same shape as `exportTemplate`: the browser
+    writes the file, the server stays a tracker. The file checks anywhere the prelude is
+    (`lake env lean`), and handing it to `POST /proof-graphs` on any Chief server recreates
+    the graph, which is what makes it portable rather than merely saved. */
+function exportGraphSource(graph) {
+  const name = `${fileSlug(graph.title) || graph.graph_id}.lean`;
+  downloadFile(name, graph.lean_source, "text/plain");
+}
+
+/** The same source onto the clipboard, for the paste-it-somewhere-else path. */
+function copyGraphSource(graph) {
+  navigator.clipboard.writeText(graph.lean_source).then(
+    () => {
+      setState({ graphCopied: graph.graph_id });
+      setTimeout(() => {
+        if (state.graphCopied === graph.graph_id) setState({ graphCopied: null });
+      }, 1500);
+    },
+    () => setState({ graphError: "the browser refused clipboard access" }),
+  );
+}
+
 /** One thing the checker said. The message is shown verbatim in a `pre`: it is a proof goal,
     its line breaks and alignment carry the meaning, and reflowing it would destroy the very
     thing a reader is trying to read. */
@@ -5151,7 +5315,44 @@ function graphDetailScreen() {
     el(
       "div",
       { class: "screen-head", style: { marginTop: "var(--space-3)" } },
-      el("h4", { text: graph.title }),
+      // The title and the way to change it, exactly as on a workflow — and going through
+      // PATCH rather than revise on purpose: a rename is not a source change, so it is the
+      // one edit that does not cost a verified graph its verdict.
+      state.filing &&
+      state.filing.workflowId === graph.graph_id &&
+      state.filing.field === "title"
+        ? el(
+            "span",
+            { class: "wf-edit", style: { flex: "1" } },
+            el("input", {
+              class: "input", id: "pg-title", type: "text", value: state.filing.draft,
+              placeholder: "Proof graph title",
+              onInput: (e) => setState({ filing: { ...state.filing, draft: e.target.value } }),
+              onKeyDown: (e) => e.key === "Enter" && saveGraphTitle(graph),
+            }),
+            el("button", {
+              class: "btn btn-primary btn-sm", text: "Save",
+              onClick: () => saveGraphTitle(graph),
+            }),
+            el("button", {
+              class: "btn btn-secondary btn-sm", text: "Cancel",
+              onClick: () => setState({ filing: null }),
+            }),
+          )
+        : [
+            el("h4", { text: graph.title }),
+            el("button", {
+              class: "cmt-add", style: { marginTop: "0" }, text: "rename…",
+              title: "Change the title. The source — and the verdict — are untouched.",
+              onClick: () =>
+                setState({
+                  filing: {
+                    workflowId: graph.graph_id, field: "title",
+                    draft: graph.title,
+                  },
+                }),
+            }),
+          ],
       el("span", { style: { fontSize: "13px", color: meta.color }, text: meta.label }),
     ),
     el("p", {
@@ -5211,6 +5412,23 @@ function graphDetailScreen() {
           text: "Compile to a workflow",
           onClick: () => doCompile(graph.graph_id),
         }),
+      // The two doors out. The source is the whole graph — the document is derived from
+      // it — so either of these carries it to another Chief server intact: the file posts
+      // back to /proof-graphs, the clipboard pastes to whoever will make that call.
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px" },
+        text: "Export to a file",
+        title: "Downloads the graph as the .lean file it is — checkable with `lake env lean`, "
+             + "and what POST /proof-graphs takes as lean_source, so it can be committed or "
+             + "recreated on another Chief server",
+        onClick: () => exportGraphSource(graph),
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px" },
+        text: state.graphCopied === graph.graph_id ? "Copied" : "Copy source",
+        title: "Puts the Lean source on the clipboard, for pasting into a message or a file",
+        onClick: () => copyGraphSource(graph),
+      }),
     ),
     (graph.compiled_to || []).length > 0 &&
       el(

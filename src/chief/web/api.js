@@ -42,6 +42,13 @@ const post = (path, body) =>
   });
 
 export const listWorkflows = () => request("/workflows");
+
+/** The import half of "Export to a file": the exported file is a request body at rest, and
+    registering it here — on this Chief or any other — is posting it back. */
+export const createWorkflow = (body) => post("/workflows", body);
+export const createTemplate = (body) => post("/templates", body);
+export const createProofGraph = (body) => post("/proof-graphs", body);
+
 export const listRuns = () => request("/runs");
 export const getRun = (runId) => request(`/runs/${runId}`);
 export const getRunDefinition = (runId) => request(`/runs/${runId}/definition`);
@@ -145,6 +152,15 @@ export const createTemplateFromWorkflow = (workflowId, body) =>
     worth stopping for, exactly as templates do. */
 export const listProofGraphs = () => request("/proof-graphs");
 export const getProofGraph = (graphId) => request(`/proof-graphs/${graphId}`);
+
+/** Rename or refile a graph — never the source, so this is the one write that does not
+    cost the verdict. Same only-what-you-send discipline as `labelWorkflow`. */
+export const labelProofGraph = (graphId, patch) =>
+  request(`/proof-graphs/${graphId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
 
 /** Whether this instance can check a graph at all. Asked before offering the button: an
     instance without a Lean toolchain must say so, not report every graph as unsound. */

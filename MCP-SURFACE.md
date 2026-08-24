@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 58 REST routes and requires them to correspond one-to-one. This doc
+against what is now 59 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by

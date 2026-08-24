@@ -392,8 +392,17 @@ globalThis.fetch = async (url, options) => {
   if (NO_TEMPLATES && url.endsWith("/templates")) {
     return { ok: false, status: 404, json: async () => ({ error: { code: "not_found" } }) };
   }
+  // A create answers with the created document, not the list: the importers read the new
+  // id off the response to land on the imported thing's own screen.
+  const made = options && options.method === "POST" && options.body ? JSON.parse(options.body) : null;
   const body =
-    url.endsWith("/proof-graphs/toolchain") ? TOOLCHAIN
+    made && /\/v1\/workflows$/.test(url)
+      ? { ...made, workflow_id: made.workflow_id || "wf_new", status: "draft", version: 1 }
+    : made && /\/v1\/templates$/.test(url)
+      ? { ...made, template_id: made.template_id || "tpl_new", status: "active" }
+    : made && /\/v1\/proof-graphs$/.test(url)
+      ? { ...made, graph_id: "pg_new", status: "draft" }
+    : url.endsWith("/proof-graphs/toolchain") ? TOOLCHAIN
     : url.includes("/proof-graphs/") && url.includes("/notes") ? GRAPH_NOTES
     : url.endsWith("/proof-graphs") ? PLANS
     : /\/proof-graphs\/[^/]+$/.test(url) ? PLANS[0]
@@ -846,6 +855,9 @@ Object.defineProperty(globalThis.navigator, "clipboard", {
 const copyNode = findByClass(mainNode(), "art-copy")[0];
 [...clicks].reverse().find((c) => c.node === copyNode)?.fn({ currentTarget: copyNode });
 await new Promise((r) => setTimeout(r, 10));
+// Snapshotted here because `copied` is the shim's one register, and the proof-graph screen
+// writes to it again later — asserting the live value at the end reads that later copy.
+const artifactCopied = copied;
 
 // Naming the folder is the only interactive part of this, so drive it: open the field, type
 // a new root with a trailing slash on it, save. What should come back is a stored value with
@@ -1440,6 +1452,33 @@ clickByText(graphTab);
 await new Promise((r) => setTimeout(r, 30));
 const backToGraph = countClass(mainNode(), "node") > 0;
 
+// The two doors out of a proof graph. The source is the canonical form — the whole document
+// is derived from it — so exporting the .lean file, or copying the text, carries the entire
+// graph to another Chief server: what comes out must be `lean_source` byte for byte, or the
+// file is a dead end rather than something POST /proof-graphs can take back.
+exported = null;
+clickByText("Export to a file");
+await new Promise((r) => setTimeout(r, 20));
+const exportedSource = exported ? await exported.text() : null;
+const sourceExported = exportedSource === PLANS[0].lean_source;
+copied = null;
+clickByText("Copy source");
+await new Promise((r) => setTimeout(r, 20));
+const sourceCopied = copied === PLANS[0].lean_source;
+
+// Renaming a graph goes out as a PATCH of its own — never through revise, which would drop
+// a verified graph back to draft over an edit that changed nothing the checker read.
+clickByText("rename…");
+await new Promise((r) => setTimeout(r, 20));
+typeIntoId("pg-title", "Fraud model refresh v2");
+await new Promise((r) => setTimeout(r, 10));
+clickIn(mainNode(), "Save");
+await new Promise((r) => setTimeout(r, 30));
+const graphRenamePatch = posts.find(
+  (x) => x.method === "PATCH" && /\/v1\/proof-graphs\/pg_ok$/.test(x.url),
+);
+const graphRenamed = !!graphRenamePatch && graphRenamePatch.body.title === "Fraud model refresh v2";
+
 // A group's label opens the group as the function it is: what crosses its boundary, and
 // the algorithms of the steps inside. The leaf group takes the corpus contract in from
 // outside and its product is consumed outside, so both cross.
@@ -1491,6 +1530,65 @@ clickByText("line 71");
 await new Promise((r) => setTimeout(r, 30));
 const lineMarked = collectClasses(mainNode(), "src-line").filter((c) => /\bon\b/.test(c)).length;
 
+// Export/import as a round trip, for all three artifact kinds. Each file is the create
+// request body at rest — a workflow and a template as JSON, a proof graph as its .lean
+// source — so importing is posting it back, and the assertion that matters is byte-level:
+// what import sends is exactly what export wrote, or the file is a dead end.
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 40));
+clickByText("Approved one");
+await new Promise((r) => setTimeout(r, 40));
+exported = null;
+clickByText("Export to a file");
+await new Promise((r) => setTimeout(r, 20));
+const wfFile = exported ? await exported.text() : null;
+const wfBody = wfFile ? JSON.parse(wfFile) : null;
+// Exactly the WorkflowCreate fields, in place: status and version must not travel (the
+// server refuses them — a workflow is always created draft at v1), and nothing may be
+// missing, or the file registers as a different plan than the one exported.
+const wfExported =
+  !!wfBody &&
+  Object.keys(wfBody).join(",") === "workflow_id,title,source,generated_by,steps,project,origin_dir" &&
+  wfBody.workflow_id === "wf_ok" &&
+  wfBody.steps.length === STEPS.length;
+
+/** Drive the picker: "Import from a file" opens a file input, and the change handler it
+    registers reads the file's text. The stub cannot click a real picker open, so the
+    chosen file is planted and the handler invoked directly. */
+async function importFile(name, text) {
+  clickByText("Import from a file");
+  const picker = [...handlers].reverse().find((h) => h.type === "change" && h.node.type === "file");
+  picker.node.files = [{ name, text: async () => text }];
+  await picker.fn();
+  await new Promise((r) => setTimeout(r, 30));
+}
+
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 30));
+await importFile("approved-one.json", wfFile);
+const wfImportPost = posts.find((x) => x.method === "POST" && /\/v1\/workflows$/.test(x.url));
+const wfRoundTrips = !!wfImportPost && JSON.stringify(wfImportPost.body) === JSON.stringify(wfBody);
+
+// The template file captured from its own export earlier goes back the same way.
+clickByText("Templates");
+await new Promise((r) => setTimeout(r, 30));
+await importFile("release-checklist.json", JSON.stringify(exportedBody));
+const tplImportPost = posts.find((x) => x.method === "POST" && /\/v1\/templates$/.test(x.url));
+const tplRoundTrips =
+  !!tplImportPost && JSON.stringify(tplImportPost.body) === JSON.stringify(exportedBody);
+
+// A proof graph travels as bare Lean, so the title has to come from the file itself: the
+// emitGraph line names it, and the source arrives untouched.
+clickByText("Proof Graphs");
+await new Promise((r) => setTimeout(r, 30));
+const leanFile = 'import ProofGraph\nopen ProofGraph\n#eval emitGraph "Fraud model refresh" graph\n';
+await importFile("fraud.lean", leanFile);
+const pgImportPost = posts.find((x) => x.method === "POST" && /\/v1\/proof-graphs$/.test(x.url));
+const pgRoundTrips =
+  !!pgImportPost &&
+  pgImportPost.body.lean_source === leanFile &&
+  pgImportPost.body.title === "Fraud model refresh";
+
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
@@ -1499,6 +1597,8 @@ console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
 console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} (graph hidden=${graphHidden}), back=${backToGraph}`);
+console.log(`             export .lean=${sourceExported}, copy source=${sourceCopied}, renamed=${graphRenamed}`);
+console.log(`portability: wf export=${wfExported} reimports=${wfRoundTrips}, tpl reimports=${tplRoundTrips}, graph .lean reimports=${pgRoundTrips}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 
 const ok =
@@ -1542,7 +1642,7 @@ const ok =
   copyButtons === 5 &&
   hrefs.includes("vscode://file/Users/you/work/songs/notes/personas.md") &&
   hrefs.includes("https://example.com/pr/1") &&
-  copied === "/Users/you/work/songs/notes/personas.md" &&
+  artifactCopied === "/Users/you/work/songs/notes/personas.md" &&
   // Changing the folder: stored without its trailing slash, and the links follow it.
   rootSaved === "/elsewhere/tree" &&
   rehomed &&
@@ -1730,6 +1830,13 @@ const ok =
   sourceShown &&
   graphHidden &&
   backToGraph &&
+  sourceExported &&
+  sourceCopied &&
+  graphRenamed &&
+  wfExported &&
+  wfRoundTrips &&
+  tplRoundTrips &&
+  pgRoundTrips &&
   // A plan with no graph has no toggle, and its diagnostics jump into the source.
   noToggleWithoutGraph &&
   sourceIsThere &&

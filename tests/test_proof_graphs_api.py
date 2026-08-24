@@ -123,6 +123,39 @@ def test_the_toolchain_route_says_whether_checking_is_possible_here(client) -> N
         assert body["toolchain"]
 
 
+def test_renaming_a_plan_does_not_cost_it_the_verdict(client, store) -> None:
+    """A rename goes through PATCH, not revise, precisely so the verdict survives: the title
+    is not part of the text that was checked, so what was proven is exactly as proven."""
+    plan = store_verified_plan(store, toolchain="leanprover/lean4:v4.33.1")
+
+    response = client.patch(f"/v1/proof-graphs/{plan.graph_id}", json={"title": "Better name"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["title"] == "Better name"
+    assert body["status"] == "verified"
+    assert body["verification"] is not None
+    assert body["lean_source"] == MINIMAL_SOURCE
+
+
+def test_a_plan_title_cannot_be_blanked(client) -> None:
+    graph_id = create(client).json()["graph_id"]
+
+    assert client.patch(f"/v1/proof-graphs/{graph_id}", json={"title": "   "}).status_code == 422
+    assert client.get(f"/v1/proof-graphs/{graph_id}").json()["title"] == "A plan"
+
+
+def test_a_plan_can_be_refiled_like_a_workflow(client) -> None:
+    """The other labels ride the same PATCH: project and origin_dir are clearable, and a
+    request that sends nothing at all is a mistake to say so about, not a silent no-op."""
+    graph_id = create(client, project="one").json()["graph_id"]
+
+    assert client.patch(
+        f"/v1/proof-graphs/{graph_id}", json={"project": None}
+    ).json()["project"] is None
+    assert client.patch(f"/v1/proof-graphs/{graph_id}", json={}).status_code == 422
+
+
 # --------------------------------------------------------------------------- the verdict
 
 

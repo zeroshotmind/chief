@@ -1,6 +1,6 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Thirty tools against 58 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Thirty tools against 59 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
 and the approval-policy config, the audit query, artifact comments, draft review notes and
 both destructive deletes are deliberately REST-only — a session that can edit the policy

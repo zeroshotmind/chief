@@ -244,13 +244,26 @@ finished long ago, which are exactly the ones worth filing.
 
 Templates carry a project too, and a workflow made from one inherits it.
 
-## Exporting a template to a project
+## Export and import — carrying work between machines
 
-A template detail screen has **Export to a file**. What comes out is exactly the body
-`POST /templates` takes, id included, so you can commit it beside the code it describes and
-register it again — on this machine or another — by posting it back. The file is written by
-your browser, not by Chief: the server reads nothing off disk and writes nothing to it, which
-is what keeps it a tracker rather than a file server.
+Templates, workflows and proof graphs all round-trip through files. Each detail screen has
+**Export to a file**, and each list screen has **Import from a file**, and the two are exact
+inverses: what comes out of an export is exactly the body the matching create endpoint takes,
+so importing — on this Chief or any other — is just posting it back. The files are written and
+read by your browser, not by the server: Chief reads nothing off disk and writes nothing to
+it, which is what keeps it a tracker rather than a file server.
+
+- A **template** exports as JSON, id included, so you can commit it beside the code it
+  describes and re-register it anywhere. An id that already exists is refused rather than
+  duplicated, which is what makes re-importing the same file safe.
+- A **workflow** exports as JSON too — the plan, not its history. It imports as a fresh
+  draft at version 1, whatever it had reached here, because approvals and runs belong to the
+  server they happened on.
+- A **proof graph** exports as the `.lean` file it never stopped being — the source is the
+  canonical form, and everything else on the document is derived from it. **Copy source**
+  puts the same text on the clipboard. Importing the file registers it as a draft, titled
+  from its own `emitGraph "…"` line; it is then checked *there*, by that machine's toolchain,
+  because a verification verdict is a claim about a toolchain and does not travel.
 
 ## Templates
 

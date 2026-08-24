@@ -329,6 +329,28 @@ class ProofGraphRevise(BaseModel):
     reason: str | None = None
 
 
+class ProofGraphLabel(BaseModel):
+    """Body for ``PATCH /proof-graphs/{graph_id}``: correcting the record, not the graph.
+
+    The same request :class:`WorkflowLabel` is for a workflow, for the same reasons — and
+    with one more thing at stake here. Revision is deliberately the only door that touches
+    the source, and it drops the graph back to ``draft`` because a verdict belongs to the
+    text that was checked. The title is not part of that text: what was proven about a graph
+    called one thing is exactly as proven when it is called another, so a rename must ride a
+    request of its own or every correction of a name would cost a verification run.
+
+    ``null`` clears a label and an omitted field is left alone, told apart by
+    ``model_fields_set``. The title alone cannot be cleared — a graph without one is not a
+    record of anything — so blank is refused rather than read as "remove".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    project: str | None = None
+    origin_dir: str | None = None
+
+
 class ProofGraphCompile(BaseModel):
     """Request body for ``POST /proof-graphs/{graph_id}/workflows``: lower a verified graph.
 

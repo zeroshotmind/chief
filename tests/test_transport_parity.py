@@ -56,6 +56,7 @@ REST_ONLY = {
     # A harness states the project when it creates the plan. Re-filing one afterwards, and
     # reading the list of labels in use, are both housekeeping in front of a person.
     "label_workflow",
+    "label_proof_graph",
     "list_projects",
     # A harness wrote the file and can open it directly. This route exists for the browser,
     # which cannot.

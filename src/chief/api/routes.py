@@ -34,6 +34,7 @@ from ..models import (
     ProofGraph,
     ProofGraphCompile,
     ProofGraphCreate,
+    ProofGraphLabel,
     ProofGraphRevise,
     ReviewNote,
     ReviewNoteCreate,
@@ -210,6 +211,12 @@ def list_proof_graphs(
 @router.get("/proof-graphs/{graph_id}", response_model=ProofGraph)
 def get_proof_graph(graph_id: str, service: Service) -> ProofGraph:
     return service.get_proof_graph(graph_id)
+
+
+@router.patch("/proof-graphs/{graph_id}", response_model=ProofGraph)
+def label_proof_graph(graph_id: str, body: ProofGraphLabel, service: Service) -> ProofGraph:
+    """Rename or refile — never the source, so the verdict survives (see the model's doc)."""
+    return service.label_proof_graph(graph_id, body)
 
 
 @router.put("/proof-graphs/{graph_id}", response_model=ProofGraph)
