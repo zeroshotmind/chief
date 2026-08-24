@@ -95,6 +95,19 @@ private def duplicateIds (ids : List String) : List String :=
     if seen.contains x then (seen, if dups.contains x then dups else dups ++ [x])
     else (seen ++ [x], dups)).2
 
+/-- Group descriptions that do not hold together: a described group no step belongs to is
+stale text about nothing, and a group described twice is two lines fighting over one box. -/
+def groupProblems (nodes : List Node) (groups : List (String × String)) : List String :=
+  let keys := nodes.map (·.group)
+  let belongs := fun (path : String) =>
+    keys.any fun k => k == path || (k.startsWith (path ++ "/") : Bool)
+  let dangling := groups.filterMap fun (path, _) =>
+    if belongs path then none
+    else some s!"'{path}' is described but no step belongs to it"
+  let dups := (duplicateIds (groups.map (·.1))).map fun p =>
+    s!"group '{p}' is described twice"
+  dangling ++ dups
+
 /-- Everything wrong with the graph that is not a matter of logic. -/
 def problems (nodes : List Node) : List String :=
   let ids := nodes.map (·.id)
@@ -130,11 +143,14 @@ def stats (nodes : List Node) : String :=
        ("contracts_any", num (ports.filter (!·.refined)).length),
        ("algorithms", num (nodes.filter (·.algorithm.isSome)).length)]
 
-def planJson (title : String) (nodes : List Node) : String :=
+def planJson (title : String) (st : PlanState) : String :=
+  let nodes := st.nodes
   obj [("schema", str "chief.plan/v1"),
        ("title", str title),
        ("nodes", arr (nodes.map Node.toJson)),
-       ("problems", arr ((problems nodes).map str)),
+       ("groups", arr (st.groups.map fun (path, description) =>
+          obj [("path", str path), ("description", str description)])),
+       ("problems", arr ((problems nodes ++ groupProblems nodes st.groups).map str)),
        ("stats", stats nodes)]
 
 /-- The markers the verifier scans for. Lean writes warnings and hints to the same stream,
@@ -145,7 +161,7 @@ def endMarker : String := "--CHIEF-PLAN-END--"
 /-- Print a plan's graph. Every plan file ends with `#eval emitPlan "…" plan`. -/
 def emitPlan (title : String) (p : PlanM Unit) : IO Unit := do
   IO.println beginMarker
-  IO.println (planJson title p.nodes)
+  IO.println (planJson title p.final)
   IO.println endMarker
 
 end ChiefPlan

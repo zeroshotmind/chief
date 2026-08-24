@@ -3234,14 +3234,19 @@ function groupPanel(path, def) {
     .filter((s) => s.algorithm)
     .map((s) => ({ label: s.id, alg: s.algorithm }));
 
+  // What the plan says this group is for. Falls back to explaining the panel itself, which
+  // is the only thing that can honestly be said about a group nobody described.
+  const described = ((def.groups || []).find((g) => g.path === path) || {}).description;
+
   return {
     kicker: `Group · ${members.length} step${members.length === 1 ? "" : "s"}`,
     title: path.split(GROUP_SEP).pop(),
     metaLine: path,
     summary:
+      described ||
       "What crosses this boundary. Anything produced and consumed wholly inside is not " +
-      "shown — the group's callers never see it.",
-    summaryColor: "var(--color-neutral-500)",
+        "shown — the group's callers never see it.",
+    summaryColor: described ? "var(--color-neutral-600)" : "var(--color-neutral-500)",
     instances: [],
     inputsLabel: inputContracts.length ? `Takes in (${inputContracts.length})` : null,
     inputContracts,
@@ -4871,6 +4876,8 @@ function defFromPlan(plan) {
   return {
     workflow_id: plan.plan_id,
     title: graph.title,
+    // What each group is for, where the plan says. Read by the group panel, keyed by path.
+    groups: graph.groups || [],
     steps: graph.nodes.map((n) => ({
       id: n.id,
       type: n.type,

@@ -145,6 +145,17 @@ class PlanStats(BaseModel):
         return self.contracts_total > 0 and self.contracts_refined == 0
 
 
+class PlanGroup(BaseModel):
+    """What one group of steps is for, in a line. Declared in the plan source with
+    ``describeGroup``; a description of a group no step belongs to never gets this far,
+    because extraction reports it as a problem instead."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    description: str
+
+
 class PlanGraph(BaseModel):
     """The graph read back out of a plan by running it."""
 
@@ -155,6 +166,8 @@ class PlanGraph(BaseModel):
     schema_: str = Field(alias="schema")
     title: str
     nodes: list[PlanNode] = Field(default_factory=list)
+    #: Group descriptions, where the plan gives any. Keyed by path, nesting on ``/``.
+    groups: list[PlanGroup] = Field(default_factory=list)
     #: Things wrong with the graph as a record rather than as logic — a repeated id, a handle
     #: naming a step that was never recorded. Not type errors, so not the kernel's business.
     problems: list[str] = Field(default_factory=list)

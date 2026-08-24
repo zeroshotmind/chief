@@ -269,6 +269,8 @@ const PLAN_GRAPH = {
       criteria: [], fields: [], depends_on: ["fit_model"], inputs: [], produces: null,
     },
   ],
+  // What each group is for, where the plan says — shown as the group panel's summary.
+  groups: [{ path: "Data/Modelling", description: "Fit and score the classifier." }],
   problems: [],
   stats: { nodes: 3, edges: 1, contracts_total: 3, contracts_refined: 3, contracts_any: 0 },
 };
@@ -1328,6 +1330,8 @@ const grpText = JSON.stringify(mainNode());
 const grpPanel =
   grpText.includes("Group · 1 step") &&
   grpText.includes("Data/Modelling") &&
+  // The plan's own line about what the group is for, not the panel's generic explainer.
+  grpText.includes("Fit and score the classifier.") &&
   grpText.includes("Takes in (1)") &&
   grpText.includes("count ≥ 10000") &&
   grpText.includes("auc ≥ 80") &&
@@ -1343,7 +1347,9 @@ const outerGrpPanel =
   !outerText.includes("Takes in") &&
   outerText.includes("auc ≥ 80") &&
   !outerText.includes("count ≥ 10000") &&
-  !outerText.includes("count ≥ 50000");
+  !outerText.includes("count ≥ 50000") &&
+  // Nobody described this group, so the panel explains itself instead of inventing one.
+  outerText.includes("What crosses this boundary");
 
 clickByText("Check again");
 await new Promise((r) => setTimeout(r, 40));

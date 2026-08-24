@@ -587,3 +587,35 @@ def test_an_algorithm_cannot_reach_an_artifact_the_step_does_not_hold() -> None:
 
     assert result.status == "failed"
     assert any("nothere" in message for message in errors(result)), errors(result)
+
+
+@needs_lean
+def test_a_group_description_travels_and_a_dangling_one_is_refused() -> None:
+    grouped = minimal().replace(
+        'task "revise" "Revise the thing." weak (inputs := [input "draft" d])',
+        'task "revise" "Revise the thing." weak (inputs := [input "draft" d]) '
+        '(group := "Polish")',
+    ).replace(
+        "def plan : PlanM Unit := do",
+        "def plan : PlanM Unit := do\n"
+        '  describeGroup "Polish" "Everything after the first draft."',
+    )
+
+    result = verify_source(grouped)
+
+    assert result.status == "verified", errors(result)
+    assert result.graph is not None
+    assert [(g.path, g.description) for g in result.graph.groups] == [
+        ("Polish", "Everything after the first draft.")
+    ]
+
+    # A description of a group no step belongs to is stale text about nothing, refused
+    # rather than displayed.
+    dangling = verify_source(
+        minimal().replace(
+            "def plan : PlanM Unit := do",
+            "def plan : PlanM Unit := do\n  describeGroup \"Ghost\" \"A part nobody is in.\"",
+        )
+    )
+    assert dangling.status == "failed"
+    assert any("Ghost" in message for message in errors(dangling)), errors(dangling)

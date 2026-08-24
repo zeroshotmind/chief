@@ -64,6 +64,8 @@ deriving Repr, Inhabited
 /-- What a plan accumulates as it is run. -/
 structure PlanState where
   nodes : List Node := []
+  /-- One line per described group: path, then what that part of the work is for. -/
+  groups : List (String × String) := []
 deriving Inhabited
 
 /-- The monad a plan is written in: state, and nothing else.
@@ -146,7 +148,20 @@ def checkpoint (id : String) (goal : String)
         algorithm := none }] }
   return ⟨id⟩
 
+/-- Say what a group is for, in a line.
+
+Optional, like the grouping itself, and checked only structurally: describing a group no
+step belongs to is a problem at extraction, since a description of nothing is exactly the
+kind of stale text this design refuses to display. Nesting works by path —
+`describeGroup "Encoder" "…"` describes the box that `group := "Encoder/Training"` steps
+sit inside. -/
+def describeGroup (path : String) (description : String) : PlanM Unit :=
+  modify fun s => { s with groups := s.groups ++ [(path, description)] }
+
 /-- Run a plan and hand back the nodes it recorded, in the order they were written. -/
 def PlanM.nodes (p : PlanM Unit) : List Node := (p.run {}).2.nodes
+
+/-- Run a plan and hand back everything it recorded. -/
+def PlanM.final (p : PlanM Unit) : PlanState := (p.run {}).2
 
 end ChiefPlan

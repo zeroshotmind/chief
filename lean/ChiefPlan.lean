@@ -81,6 +81,10 @@ the wrong type.
   Groups nest on `/`: `(group := "Encoder/Training")` draws a box inside the `Encoder` one,
   and a group may hold steps of its own as well as sub-groups. Nothing checks it and nothing
   derives from it — naming a phase says nothing about what any step demands.
+* `describeGroup path description` — say what a group is for, in a line, shown when the
+  group is inspected. Optional, like the grouping; call it anywhere in `plan`'s `do` block.
+  Describing a group no step belongs to is a problem at extraction — a description of
+  nothing is stale text, and it is refused rather than displayed.
 * `checkpoint id goal (fields := []) (inputs := [])` — record a point where a person decides,
   and return their approval as an artifact.
 * `input label r` — name an artifact being fed to a step. This is what creates the edge.
