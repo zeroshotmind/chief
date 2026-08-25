@@ -32,7 +32,8 @@ designed — before composing, ask three questions of the work: what is *indepen
 *repeats*, and what gets *decided*. Each has its own construction:
 
 - One step per unit of work. Every step needs a **goal** (what done looks like, in a
-  sentence) and the **harness** that will run it — `claude-code` when that is you. The
+  sentence) and the **harness** that will run it — `claude-code` or `codex`, whichever
+  you are. The
   namespace is open strings, so spelling drift fragments it: match what existing workflows
   already use (`list_workflows` shows you) rather than inventing a variant.
 - **Keep the goal to two or three lines, and put what decides "done" in `criteria`.** A

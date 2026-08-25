@@ -51,7 +51,7 @@ To see it with something in it, against an empty database:
 python scripts/seed_demo.py --base http://127.0.0.1:8080/v1
 ```
 
-## Connecting Claude Code
+## Connecting Claude Code or Codex
 
 Two pieces doing different jobs, and **both are needed**: the MCP server is the capability
 surface, the skill is the protocol that makes tracking worth having.
@@ -62,7 +62,7 @@ claude mcp add --transport http chief http://127.0.0.1:8080/mcp/ -s user
 
 # 2. Install the skill
 mkdir -p ~/.claude/skills/chief
-ln -s "$PWD/integrations/claude-code/SKILL.md" ~/.claude/skills/chief/SKILL.md
+ln -s "$PWD/integrations/SKILL.md" ~/.claude/skills/chief/SKILL.md
 ```
 
 `-s user` rather than `project`: project scope writes a `.mcp.json` meant to be committed and
@@ -72,6 +72,11 @@ drifting apart is the failure worth avoiding.
 
 Full detail, including what Claude deliberately *cannot* do, is in
 **[integrations/claude-code/](integrations/claude-code/README.md)**.
+
+Codex works the same way — same server, same skill file, `codex mcp add chief --url
+http://127.0.0.1:8080/mcp/` and a symlink into `~/.codex/skills/chief/`. Both agents share
+one database, so a workflow planned by one is reportable by the other. Setup is in
+**[integrations/codex/](integrations/codex/README.md)**.
 
 ## How it goes
 

@@ -179,8 +179,9 @@ What shipped:
   `HARNESS_OPERATIONS`, the REST-only exclusions, the documented flow end to end, and
   `tools/list` driven over the mounted endpoint at every protocol revision the server
   speaks. See section 8 for why that last one exists.
-- `integrations/claude-code/` — the SKILL.md carrying the protocol no tool description
-  conveys, and how to register the server.
+- `integrations/` — the shared SKILL.md carrying the protocol no tool description conveys,
+  with per-client setup in `claude-code/` and `codex/`. One skill file for both agents,
+  because the protocol is Chief's, not the client's.
 
 Still open: the contract doc itself has not been rewritten, and `mcp>=2.0` is a new runtime
 dependency.

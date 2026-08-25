@@ -2,9 +2,9 @@
 
 Two pieces, doing different jobs:
 
-- **The MCP server** is the capability surface — 24 tools (REQ-2). Without it Claude Code
+- **The MCP server** is the capability surface — 30 tools (REQ-2). Without it Claude Code
   cannot reach Chief at all.
-- **`SKILL.md`** is the protocol — plan first, summarise every update, propose an amendment
+- **[`SKILL.md`](../SKILL.md)** is the protocol — plan first, summarise every update, propose an amendment
   rather than improvising, wait for the human, read what a person wrote back: the comments
   on the artifacts, and the review notes on a draft you are about to revise. No tool
   description conveys that, and it is what makes the tracking worth having.
@@ -37,12 +37,13 @@ Verify with `claude mcp list`, or ask Claude to call `list_workflows`.
 
 ```bash
 mkdir -p ~/.claude/skills/chief
-ln -s "$PWD/integrations/claude-code/SKILL.md" ~/.claude/skills/chief/SKILL.md
+ln -s "$PWD/integrations/SKILL.md" ~/.claude/skills/chief/SKILL.md
 ```
 
 A symlink so it tracks the repo — the protocol it describes is enforced by the code next to
 it, and the two drifting apart is the failure worth avoiding. Copy it instead if you would
-rather pin it.
+rather pin it. The file is shared with the [Codex integration](../codex/README.md), because
+the protocol is Chief's, not the client's.
 
 For one repo rather than globally, put it at `.claude/skills/chief/SKILL.md` in that repo.
 
