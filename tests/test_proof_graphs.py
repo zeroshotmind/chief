@@ -290,6 +290,13 @@ def graph(**overrides) -> ExtractedGraph:
                     "contract": "auc ≥ 80",
                     "refined": True,
                 },
+                "algorithm": {
+                    "lines": [
+                        {"indent": 0, "text": "M ← xgboost(corpus, λ)"},
+                        {"indent": 0, "text": "return M"},
+                    ],
+                    "externals": [{"tag": "algo", "fn": "xgboost"}],
+                },
             },
             {
                 "id": "review",
@@ -346,6 +353,23 @@ def test_compile_restates_a_promise_as_a_criterion() -> None:
     texts = [criterion.text for criterion in fit.criteria]
     assert "AUC recorded" in texts
     assert any("auc ≥ 80" in text and "Model" in text for text in texts)
+
+
+def test_compile_carries_the_algorithm_onto_the_step() -> None:
+    """Checked at graph time, most useful at run time: the person watching a step execute
+    is the one who wants the exact operators, so the compiled step keeps them."""
+    workflow = compile_graph(graph())
+
+    fit = next(step for step in workflow.steps if step.id == "fit")
+    assert fit.algorithm == {
+        "lines": [
+            {"indent": 0, "text": "M ← xgboost(corpus, λ)"},
+            {"indent": 0, "text": "return M"},
+        ],
+        "externals": [{"tag": "algo", "fn": "xgboost"}],
+    }
+    review = next(step for step in workflow.steps if step.id == "review")
+    assert review.algorithm is None
 
 
 def test_compile_leaves_criteria_off_a_checkpoint() -> None:

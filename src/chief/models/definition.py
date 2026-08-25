@@ -186,6 +186,20 @@ class WorkflowStep(BaseModel):
             "always has."
         ),
     )
+    # The how, between the two halves of the signature. Open data like `inputs` and
+    # `outputs`, for the same reason: Chief holds it and shows it. On a step compiled from a
+    # proof graph the lines were scope-checked against what the step holds; written by hand
+    # they are pseudocode on the same terms as the goal — nothing checks them.
+    algorithm: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The step's algorithm as numbered pseudocode: {'lines': [{'indent': 0, 'text': "
+            "'...'}, ...], 'externals': [{'tag': 'llm', 'fn': '...'}, ...]}. `externals` "
+            "names every call that leaves the step (an LLM, a search, a database, a "
+            "library routine), shown once as a legend. Optional, and rendered exactly as "
+            "sent — worth writing only where the how is mathematics rather than judgement."
+        ),
+    )
     body: list[str] | None = None
     # Governs whether a failed instance (or a failed step inside an instance body) fails
     # the construct, or is tolerated so the remaining instances still run. Only meaningful

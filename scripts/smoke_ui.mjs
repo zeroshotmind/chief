@@ -110,7 +110,10 @@ const STEPS = [
   // answered; and on one that has not, so the outstanding state is drawn too.
   { id: "a", type: "task", goal: "first", harness: "claude-code", depends_on: [],
     criteria: [{ id: "c1", text: "every persona has a voice note" },
-               { id: "c2", text: "the two cut parts are still listed" }] },
+               { id: "c2", text: "the two cut parts are still listed" }],
+    // An algorithm on an ordinary step: same field and renderer as a compiled plan's.
+    algorithm: { lines: [{ indent: 0, text: "R ← dedupe(rows)" }, { indent: 0, text: "return R" }],
+                 externals: [{ tag: "algo", fn: "dedupe" }] } },
   // Declared instance parameters, and a body step that names one: the count is decided at
   // runtime, so what tells one iteration from another can only arrive at runtime too.
   { id: "b", type: "loop", goal: "each thing", harness: "claude-code", depends_on: ["a"], body: ["c", "d"], exit_when: "the check passes",
@@ -368,6 +371,15 @@ globalThis.fetch = async (url, options) => {
       return { ok: false, status: 404, json: async () => ({ error: { message: "no modules" } }) };
     }
     return { ok: true, status: 200, json: async () => ({ modules: MODULES[mods[1]] }) };
+  }
+  if (/\/proof-graphs\/[^/]+\/fixed\/[^/]+\/[^/]+\/content$/.test(url)) {
+    fileRequests += 1;
+    const bytes = new TextEncoder().encode("warehouse: events\n");
+    return {
+      ok: true, status: 200,
+      headers: { get: (k) => ({ "X-Chief-Media-Type": "text/plain", "X-Chief-File-Name": "events-warehouse.yaml" })[k] || null },
+      arrayBuffer: async () => bytes.buffer,
+    };
   }
   const content = /\/artifacts\/(\w+)\/content$/.exec(url);
   if (content) {
@@ -946,6 +958,12 @@ const critShown = critRows.length === 2 &&
                   JSON.stringify(mainNode()).includes("all nine recorded") &&
                   JSON.stringify(mainNode()).includes("every persona has a voice note") &&
                   JSON.stringify(mainNode()).includes("Done when (2/2)");
+// The algorithm rides on an ordinary workflow step — same field, same renderer as a step
+// compiled from a proof graph — so the how is readable where the run is watched.
+const wfAlgShown =
+  countClass(mainNode(), "alg-line") === 2 &&
+  JSON.stringify(mainNode()).includes("dedupe(rows)") &&
+  JSON.stringify(mainNode()).includes("dedupe ⟨algo⟩");
 // And a criterion nothing has answered reads as outstanding rather than silently absent —
 // the state a reader needs before approving a plan.
 clickByText("then check it");
@@ -1270,7 +1288,7 @@ console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stri
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
 console.log(`instances:   labelled=${instLabelled}, declared=${paramDeclared}, body-filled=${paramsFilled}`);
-console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOutstanding}`);
+console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOutstanding}, step-algorithm=${wfAlgShown}`);
 console.log(`inputs:      artifact-shown=${inputArtShown}, plain-shown=${inputMetaShown}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, mermaid=${viewerMermaid}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
@@ -1440,6 +1458,28 @@ const algIndented = findByClass(mainNode(), "alg-text").filter(
   (n) => n.style && n.style.marginLeft === "16px",
 ).length;
 
+// The fixed input's relative ref is dead text until the browser knows the project folder —
+// the server never serves plan files — so the folder control sits beside the card, and
+// saving one turns the ref into an editor link. The graph files under "chief", so the
+// folder lands under that project's own key, same as from a run screen.
+const fixedRootOffered = countClass(mainNode(), "art-root") === 1;
+clickByText("Set…");
+await new Promise((r) => setTimeout(r, 20));
+typeIntoId("files-root", "/w/chief");
+await new Promise((r) => setTimeout(r, 10));
+clickIn(mainNode(), "Save");
+await new Promise((r) => setTimeout(r, 20));
+const fixedLinked = findByClass(mainNode(), "art-edit")
+  .some((n) => n.href === "vscode://file/w/chief/configs/events-warehouse.yaml");
+// And the path itself opens the file here, exactly as on a run: served through the graph's
+// own route, resolved server-side against the origin_dir the graph records.
+clickIn(mainNode(), "configs/events-warehouse.yaml");
+await new Promise((r) => setTimeout(r, 30));
+const fixedDrawer = findByClass(roots.app, "viewer")[0];
+const fixedViewed = !!fixedDrawer && JSON.stringify(fixedDrawer).includes("warehouse: events");
+fixedDrawer && clickIn(fixedDrawer, "✕");
+await new Promise((r) => setTimeout(r, 20));
+
 // Graph and source are two views of one plan, so they sit behind a toggle rather than
 // stacked. The graph is what a verified plan opens on.
 const graphFirst = countClass(mainNode(), "node") > 0 && countClass(mainNode(), "src-line") === 0;
@@ -1592,7 +1632,7 @@ const pgRoundTrips =
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
-console.log(`             fixed=${fixedShown}, notes: badges=${graphNoteBadges} thread=${graphNoteThread} empty-invites=${emptyThreadInvites}, nav-single=${litOnce}`);
+console.log(`             fixed=${fixedShown} root-offered=${fixedRootOffered} linked-once-set=${fixedLinked} viewed-in-page=${fixedViewed}, notes: badges=${graphNoteBadges} thread=${graphNoteThread} empty-invites=${emptyThreadInvites}, nav-single=${litOnce}`);
 console.log(`             group panel: leaf=${grpPanel}, outer=${outerGrpPanel}`);
 console.log(`             groups=${groupBoxes} boxes (nested), named=${groupsNamed}, contains=${JSON.stringify(held)} ok=${containment}`);
 console.log(`             optional: ${ungroupedNode.length} of ${drawn.nodes.length} nodes in no box=${optionalPerStep}, whole plan ungrouped -> ${ungroupedBoxes} boxes`);
@@ -1610,6 +1650,7 @@ const ok =
   paramDeclared &&
   paramsFilled &&
   critShown &&
+  wfAlgShown &&
   critOutstanding &&
   inputArtShown &&
   inputMetaShown &&
@@ -1811,6 +1852,9 @@ const ok =
   graphNoteBadges === 1 &&
   graphNoteThread &&
   emptyThreadInvites &&
+  fixedRootOffered &&
+  fixedLinked &&
+  fixedViewed &&
   litOnce &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&

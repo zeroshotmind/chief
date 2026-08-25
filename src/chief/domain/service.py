@@ -670,6 +670,30 @@ class Chief:
             )
         return self._freshen(graph)
 
+    def graph_fixed_content(self, graph_id: str, step_id: str, label: str) -> files.ArtifactFile:
+        """The bytes of the file a fixed input names — ``artifact_content``'s plan-side
+        sibling, under the same discipline: ids in, never a path. The ref comes from the
+        graph's own extraction and resolves against the ``origin_dir`` the graph records, so
+        the readable set is exactly the files the checked plan already names.
+        """
+        graph = self.store.get_proof_graph(graph_id)
+        extraction = graph.graph
+        if extraction is None:
+            raise NotFound(
+                f"graph '{graph_id}' has not been checked, so it has no extracted inputs",
+                details={"graph_id": graph_id},
+            )
+        node = extraction.node(step_id)
+        fixed = next((f for f in node.fixed if f.label == label), None) if node else None
+        if fixed is None:
+            raise NotFound(
+                f"graph '{graph_id}' has no fixed input '{label}' on step '{step_id}'",
+                details={"graph_id": graph_id, "step_id": step_id, "label": label},
+            )
+        path = files.resolve(fixed.ref, graph.origin_dir)
+        data, media = files.read(path)
+        return files.ArtifactFile(path=path, data=data, media_type=media, name=path.name)
+
     def verify_proof_graph(self, graph_id: str) -> ProofGraph:
         """Check the graph's logic and record what came back.
 

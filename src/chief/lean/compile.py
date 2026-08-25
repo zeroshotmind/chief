@@ -130,6 +130,11 @@ def _step_for(node: GraphNode) -> WorkflowStep:
         "inputs": _inputs_for(node),
         "outputs": _outputs_for(node),
     }
+    # The algorithm travels too. It was checked at graph time and it is most useful at run
+    # time — the person watching a step execute is the one who wants the exact operators —
+    # so dropping it here would strand it on the screen nobody revisits.
+    if node.algorithm is not None:
+        step["algorithm"] = node.algorithm.model_dump()
     if node.type == "checkpoint":
         # Criteria are task-only, and a checkpoint's outcome is a person's to give — there is
         # nowhere for a harness to answer for a condition here. The fields are what the plan

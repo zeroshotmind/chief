@@ -275,6 +275,36 @@ def decide_graph_note(
     return service.decide_graph_note(graph_id, note_id, body)
 
 
+@router.get("/proof-graphs/{graph_id}/fixed/{step_id}/{label}/content")
+def graph_fixed_content(
+    graph_id: str,
+    step_id: str,
+    label: str,
+    service: Service,
+    request: Request,
+    host: Annotated[str | None, Header()] = None,
+) -> Response:
+    """The file a fixed input names, for the viewer — ``artifact_content`` for a plan.
+
+    Same addressing (ids only, the path comes from the graph's own extraction), same host
+    guard, and the same always-octet-stream answer with the renderable type in a header,
+    for the same reasons.
+    """
+    _check_host(request, host)
+    found = service.graph_fixed_content(graph_id, step_id, label)
+    return Response(
+        content=found.data,
+        media_type="application/octet-stream",
+        headers={
+            "X-Chief-Media-Type": found.media_type,
+            "X-Chief-File-Name": found.name,
+            "Content-Disposition": f'attachment; filename="{found.name}"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.delete("/proof-graphs/{graph_id}")
 def delete_proof_graph(graph_id: str, service: Service) -> dict[str, Any]:
     return service.delete_proof_graph(graph_id)

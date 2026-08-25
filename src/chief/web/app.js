@@ -35,7 +35,7 @@ import {
   createTemplate, createTemplateFromWorkflow, createWorkflow,
   decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
-  decideGraphNote, decideReviewNote, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
+  decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
@@ -440,7 +440,12 @@ function currentProject() {
   if (wf) return wf.project || null;
   const run = (state.runs || []).find((r) => r.run_id === state.runId);
   const owner = run && (state.workflows || []).find((w) => w.workflow_id === run.workflow_id);
-  return (owner && owner.project) || null;
+  if (owner) return owner.project || null;
+  // A proof graph files under a project too, and its fixed inputs resolve against the same
+  // per-project folder — without this branch the graph screen reads as no project at all,
+  // and a folder set for the project never reaches its refs.
+  const graph = (state.proofGraphs || []).find((p) => p.graph_id === state.graphId);
+  return (graph && graph.project) || null;
 }
 
 /** Where this plan was made, if it says. Only ever offered as a suggestion — see
@@ -451,7 +456,9 @@ function originDirOf() {
   if (wf) return wf.origin_dir || null;
   const run = (state.runs || []).find((r) => r.run_id === state.runId);
   const owner = run && (state.workflows || []).find((w) => w.workflow_id === run.workflow_id);
-  return (owner && owner.origin_dir) || null;
+  if (owner) return owner.origin_dir || null;
+  const graph = (state.proofGraphs || []).find((p) => p.graph_id === state.graphId);
+  return (graph && graph.origin_dir) || null;
 }
 
 /** One editor, named once. Not a preference and not a picker: on the machine Chief runs on
@@ -542,12 +549,15 @@ function releaseViewerUrl() {
 /** Open the drawer on an artifact and fetch it. */
 async function openViewer(artifact, label) {
   const runId = state.detail && state.detail.runId;
-  if (!runId || !artifact.artifact_id) return;
+  // A plan-fixed input has no run and no artifact id; `fixed_source` is how it is asked for.
+  const plan = artifact.fixed_source || null;
+  if (!plan && (!runId || !artifact.artifact_id)) return;
+  const key = artifact.artifact_id || `${plan.stepId}:${plan.label}`;
   const web = /^https?:/i.test(artifact.ref || "");
   setState({
     viewerPending: null,
     viewer: {
-      runId, artifactId: artifact.artifact_id, ref: artifact.ref,
+      runId: plan ? null : runId, artifactId: key, ref: artifact.ref,
       title: label || artifact.description || artifact.ref,
       // A URL is not Chief's to fetch and never was — it is framed, not read. The page on
       // the other end renders itself, with whatever it is built from.
@@ -558,9 +568,12 @@ async function openViewer(artifact, label) {
   if (web) return;
   // An MDX document needs its neighbours and a runtime as well as its own bytes.
   try {
-    const file = await artifactContent(runId, artifact.artifact_id);
+    const file = plan
+      ? await graphFixedContent(plan.graphId, plan.stepId, plan.label)
+      : await artifactContent(runId, artifact.artifact_id);
     let extra = {};
-    if (file.mediaType === "text/mdx") {
+    // Modules are a run's affair — a plan file's MDX renders with its components named.
+    if (!plan && file.mediaType === "text/mdx") {
       try {
         const [{ modules }, runtime] = await Promise.all([
           artifactModules(runId, artifact.artifact_id),
@@ -575,10 +588,10 @@ async function openViewer(artifact, label) {
     }
     // A slow read that lands after the reader moved on must not reopen the drawer or
     // overwrite what they are looking at now.
-    if (!state.viewer || state.viewer.artifactId !== artifact.artifact_id) return;
+    if (!state.viewer || state.viewer.artifactId !== key) return;
     setState({ viewer: { ...state.viewer, loading: false, file, ...extra } });
   } catch (err) {
-    if (!state.viewer || state.viewer.artifactId !== artifact.artifact_id) return;
+    if (!state.viewer || state.viewer.artifactId !== key) return;
     setState({
       viewer: {
         ...state.viewer, loading: false,
@@ -1140,11 +1153,14 @@ function pathRow(ref, artifact = null, label = null) {
   // no folder set there is still the raw ref, and handing that over beats handing over
   // nothing, so the copy control is unconditional.
   const target = web ? ref : absolute || ref;
-  // Readable here when there is a run behind the screen to ask against. A URL is not ours
-  // to fetch, and without a run there is no artifact id to name.
+  // Readable here when there is a run behind the screen to ask against — or, for a plan's
+  // fixed input, a graph: those carry their server address in `fixed_source`. A URL is not
+  // ours to fetch either way.
   // A web ref is framed rather than read, so it is openable here too — that is how a page
   // your own dev server renders gets to sit beside the run that produced it.
-  const viewable = artifact && artifact.artifact_id && !!state.detail;
+  const viewable =
+    (artifact && artifact.artifact_id && !!state.detail) ||
+    !!(artifact && artifact.fixed_source);
 
   return el(
     "span",
@@ -3242,8 +3258,10 @@ function stepPanel(step, stepState, def) {
     outputsLabel: outputContracts.length ? "Produces" : null,
     outputContracts,
     outputMeta,
-    // The how, between the two halves of the signature. Only plan-derived steps carry
-    // one; a group panel lists several, so this is a list with an optional label each.
+    // The how, between the two halves of the signature. Any step may carry one — compiled
+    // from a proof graph (where its variables were checked) or written into the workflow
+    // (where they were not); a group panel lists several, so this is a list with an
+    // optional label each.
     algorithms: step.algorithm ? [{ label: null, alg: step.algorithm }] : null,
   };
 }
@@ -3412,6 +3430,11 @@ function inspector(panel) {
       // the outputs section further down.
       panel.inputsLabel &&
         el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: panel.inputsLabel }),
+      // A fixed input with a relative ref is dead text until the browser knows the project
+      // folder — the server never serves plan files, so the editor link is the only door,
+      // and this control is where the folder that builds it gets set. Same row, same
+      // storage, same suggestion as on a run's artifacts.
+      (panel.inputArts || []).length > 0 && rootRow(panel.inputArts),
       (panel.inputArts || []).map(({ artifact, label }) => artifactCard(artifact, label)),
       (panel.inputContracts || []).map(({ label, port }) => contractCard(label, port)),
       metadataBlock(panel.inputMeta, "full", "Other inputs"),
@@ -5151,10 +5174,14 @@ function defFromGraph(graph) {
           },
         ]),
         // Fixed at graph time, so drawn through artifactCard like a run's inputs — a
-        // thing with a ref, not a condition.
+        // thing with a ref, not a condition. `fixed_source` is its server address: the ids
+        // the viewer sends to read the file, with the path staying the server's business.
         ...(n.fixed || []).map((f) => [
           f.label,
-          { type: "file", ref: f.ref, description: f.description || f.label },
+          {
+            type: "file", ref: f.ref, description: f.description || f.label,
+            fixed_source: { graphId: graph.graph_id, stepId: n.id, label: f.label },
+          },
         ]),
       ]),
       outputs: n.produces
@@ -5564,6 +5591,11 @@ function render() {
   // including the 15s poll, so a scroll position held only in the old (about-to-be-
   // discarded) DOM node would otherwise snap back to the top mid-read.
   const viewerScroll = document.querySelector(".viewer-body")?.scrollTop;
+  // And for the graph canvas: selecting a node is a `setState` like any other, so without
+  // this every click on a node scrolled the plane back to its origin — the read-a-node,
+  // click-the-one-beside-it loop this is for would cost a re-scroll every single time.
+  const graphViewport = document.querySelector(".graph-viewport");
+  const graphScroll = graphViewport && { left: graphViewport.scrollLeft, top: graphViewport.scrollTop };
   // replaceChildren has no conditional-child idiom of its own — a skipped branch reaching
   // it would be stringified into the page — so the list is filtered before it gets there.
   root.replaceChildren(
@@ -5578,6 +5610,15 @@ function render() {
   if (viewerScroll) {
     const body = document.querySelector(".viewer-body");
     if (body) body.scrollTop = viewerScroll;
+  }
+  if (graphScroll) {
+    const canvas = document.querySelector(".graph-viewport");
+    // Absent after this render on a screen with no graph to draw — the plan failed to
+    // check, say — in which case there is nothing to put the position back on.
+    if (canvas) {
+      canvas.scrollLeft = graphScroll.left;
+      canvas.scrollTop = graphScroll.top;
+    }
   }
 
   // The dialog is a sibling of the app tree and is rebuilt only when it changes identity,

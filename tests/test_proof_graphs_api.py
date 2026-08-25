@@ -9,6 +9,8 @@ workflow compiled from a plan is an ordinary workflow in every respect.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from chief.ids import now
@@ -60,7 +62,9 @@ GRAPH = {
 }
 
 
-def store_verified_plan(store, *, toolchain: str) -> ProofGraph:
+def store_verified_plan(
+    store, *, toolchain: str, origin_dir: str | None = None, graph: dict | None = None
+) -> ProofGraph:
     """A plan carrying a verdict, without needing a toolchain to produce one."""
     stamp = now()
     plan = ProofGraph(
@@ -68,11 +72,12 @@ def store_verified_plan(store, *, toolchain: str) -> ProofGraph:
         title="Stored plan",
         lean_source=MINIMAL_SOURCE,
         status="verified",
+        origin_dir=origin_dir,
         verified_at=stamp,
         verification=VerifyResult(
             status="verified",
             toolchain=toolchain,
-            graph=ExtractedGraph.model_validate(GRAPH),
+            graph=ExtractedGraph.model_validate(graph or GRAPH),
         ),
         created_at=stamp,
         updated_at=stamp,
@@ -154,6 +159,46 @@ def test_a_plan_can_be_refiled_like_a_workflow(client) -> None:
         f"/v1/proof-graphs/{graph_id}", json={"project": None}
     ).json()["project"] is None
     assert client.patch(f"/v1/proof-graphs/{graph_id}", json={}).status_code == 422
+
+
+def test_a_fixed_input_is_readable_through_the_graph(client, store, tmp_path) -> None:
+    """`artifact_content` for a plan: ids in, never a path. The ref comes from the stored
+    extraction, the base from the graph's own origin_dir — so the readable set is exactly
+    the files the checked plan names, and nothing else is addressable."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "spec.md").write_text("# the spec\n", encoding="utf-8")
+    graph = json.loads(json.dumps(GRAPH))
+    graph["nodes"][0]["fixed"] = [{"label": "spec", "ref": "docs/spec.md", "description": ""}]
+    plan = store_verified_plan(
+        store, toolchain="leanprover/lean4:v4.33.1", origin_dir=str(tmp_path), graph=graph
+    )
+
+    response = client.get(f"/v1/proof-graphs/{plan.graph_id}/fixed/fit/spec/content")
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"# the spec\n"
+    assert response.headers["X-Chief-Media-Type"] == "text/markdown"
+    # Always opaque bytes on the wire; the renderable type travels only in the header.
+    assert response.headers["content-type"].startswith("application/octet-stream")
+
+    # Addressing that misses is a 404 — a label the plan never named cannot become a path.
+    assert (
+        client.get(f"/v1/proof-graphs/{plan.graph_id}/fixed/fit/nope/content").status_code
+        == 404
+    )
+
+
+def test_a_fixed_input_without_an_origin_dir_says_so(client, store) -> None:
+    """A graph that never recorded where it was made has nothing to resolve against, and
+    the answer is a refusal that says that — not a guess and not a traversal."""
+    graph = json.loads(json.dumps(GRAPH))
+    graph["nodes"][0]["fixed"] = [{"label": "spec", "ref": "docs/spec.md", "description": ""}]
+    plan = store_verified_plan(store, toolchain="leanprover/lean4:v4.33.1", graph=graph)
+
+    response = client.get(f"/v1/proof-graphs/{plan.graph_id}/fixed/fit/spec/content")
+
+    assert response.status_code == 409
+    assert "nothing to resolve" in response.json()["error"]["message"]
 
 
 # --------------------------------------------------------------------------- the verdict

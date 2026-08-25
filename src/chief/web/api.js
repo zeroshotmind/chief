@@ -153,6 +153,29 @@ export const createTemplateFromWorkflow = (workflowId, body) =>
 export const listProofGraphs = () => request("/proof-graphs");
 export const getProofGraph = (graphId) => request(`/proof-graphs/${graphId}`);
 
+/** The bytes of the file a proof graph's fixed input names — `artifactContent` for a plan.
+
+    Same discipline: ids in, never a path. The server reads the ref off its own stored
+    extraction and resolves it against the origin_dir the graph records. */
+export async function graphFixedContent(graphId, stepId, label) {
+  const response = await fetch(
+    `${API_BASE}/proof-graphs/${graphId}/fixed/${encodeURIComponent(stepId)}/${encodeURIComponent(label)}/content`,
+  ).catch(() => null);
+  if (!response) throw new ApiError(`cannot reach the Chief API at ${API_BASE}`, { code: "unreachable" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const err = body && body.error;
+    throw new ApiError((err && err.message) || `could not read the file (${response.status})`, {
+      status: response.status, code: err && err.code,
+    });
+  }
+  return {
+    bytes: await response.arrayBuffer(),
+    mediaType: response.headers.get("X-Chief-Media-Type") || "application/octet-stream",
+    name: response.headers.get("X-Chief-File-Name") || "file",
+  };
+}
+
 /** Rename or refile a graph — never the source, so this is the one write that does not
     cost the verdict. Same only-what-you-send discipline as `labelWorkflow`. */
 export const labelProofGraph = (graphId, patch) =>
