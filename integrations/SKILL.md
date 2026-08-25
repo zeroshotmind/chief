@@ -10,11 +10,18 @@ Chief holds the plan and the state of the work. It never executes anything — y
 you report what happened. The tools come from the `chief` MCP server; if they are not
 available, say so rather than working untracked.
 
+**Loading this skill is not a cue to call anything.** Each tool below is named at the moment
+its answer changes what you do next — reach for it then, not on arrival: `list_templates`
+when you are about to compose a plan, `list_workflows` when you need a harness name or
+project label you are unsure of, `list_runs` when you are picking up existing work. A
+question the conversation already answers is not worth a call.
+
 ## Check for a template first
 
-`list_templates` before planning anything. A template is a plan someone already approved the
-shape of; `create_workflow_from_template` with its parameters beats composing the same plan
-again by hand, and the result may not even need approving if a policy covers it.
+When you are about to compose a plan, `list_templates`. A template is a plan someone already
+approved the shape of; `create_workflow_from_template` with its parameters beats composing
+the same plan again by hand, and the result may not even need approving if a policy covers
+it.
 
 `get_template` shows which parameters it needs. Supply every required one — a missing or
 misspelled name is refused rather than quietly defaulted.
@@ -35,7 +42,8 @@ designed — before composing, ask three questions of the work: what is *indepen
   sentence) and the **harness** that will run it — `claude-code` or `codex`, whichever
   you are. The
   namespace is open strings, so spelling drift fragments it: match what existing workflows
-  already use (`list_workflows` shows you) rather than inventing a variant.
+  already use rather than inventing a variant — `list_workflows` shows you, worth a call
+  only when the name in use is actually in doubt.
 - **Keep the goal to two or three lines, and put what decides "done" in `criteria`.** A
   goal that runs long is nearly always one with acceptance conditions buried in its prose —
   "…unit-tested against hand-written correct, incorrect and malformed completions", three
@@ -81,7 +89,8 @@ designed — before composing, ask three questions of the work: what is *indepen
 **Say what it belongs to.** `create_workflow` takes `project` — a short label for the body
 of work ("chief", "songs"), which is how a person finds this later among everything else —
 and `origin_dir`, the directory you are working in. Match a label already in use rather than
-inventing a variant of it (`list_workflows` shows you); a project is not a directory, so two
+inventing a variant of it — `list_workflows` shows what is in use, when the conversation
+does not already say; a project is not a directory, so two
 checkouts can share one label and one checkout can carry work for two. Leave `project` out if
 the work does not belong to anything in particular. `origin_dir` is a record of where you
 stood, not a path anything resolves against, so give it as you see it.
