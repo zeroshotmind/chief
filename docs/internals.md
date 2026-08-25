@@ -99,7 +99,7 @@ src/chief/
   web/        the UI: five static files, no build step
 tests/        the suite
 scripts/      seed_demo.py, smoke_ui.mjs (headless UI check)
-integrations/claude-code/   MCP registration + the skill that drives it
+integrations/   the shared SKILL.md that drives an agent, + per-client setup (claude-code/, codex/)
 ```
 
 Invariants live in `service.py` rather than the route handlers, so the MCP surface got them
