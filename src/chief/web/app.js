@@ -5248,17 +5248,29 @@ function exportGraphSource(graph) {
   downloadFile(name, graph.lean_source, "text/plain");
 }
 
-/** The same source onto the clipboard, for the paste-it-somewhere-else path. */
+/** The same source onto the clipboard, for the paste-it-somewhere-else path.
+
+    Same secure-context caveat as `copyPath`: over plain http on a non-localhost address
+    `navigator.clipboard` does not exist at all, so the guard is a try/catch as well as a
+    rejection handler — and the answer to "copy is refused here" is the Export button,
+    which needs no such context. */
 function copyGraphSource(graph) {
-  navigator.clipboard.writeText(graph.lean_source).then(
-    () => {
-      setState({ graphCopied: graph.graph_id });
-      setTimeout(() => {
-        if (state.graphCopied === graph.graph_id) setState({ graphCopied: null });
-      }, 1500);
-    },
-    () => setState({ graphError: "the browser refused clipboard access" }),
-  );
+  try {
+    navigator.clipboard.writeText(graph.lean_source).then(
+      () => {
+        setState({ graphCopied: graph.graph_id });
+        setTimeout(() => {
+          if (state.graphCopied === graph.graph_id) setState({ graphCopied: null });
+        }, 1500);
+      },
+      () => setState({ graphError: "the browser refused clipboard access" }),
+    );
+  } catch {
+    setState({
+      graphError:
+        "no clipboard here — copying needs https or localhost. Export to a file instead.",
+    });
+  }
 }
 
 /** One thing the checker said. The message is shown verbatim in a `pre`: it is a proof goal,
