@@ -541,6 +541,21 @@ let viewerObjectUrl = null;
     arrangement the inspector uses, and one fewer DOM lookup per pointermove. */
 let viewerNode = null;
 
+/** Which `state.viewer` the drawer currently on screen was built from, and at what phase
+    (loading, errored, or holding a file) — see `render()`'s viewer-root block for why this
+    exists at all: an iframe reloads whenever it is removed from the document and put back,
+    even as the very same node, so the drawer must never be rebuilt for a render that has
+    nothing to do with it. `viewerGen` stamps each newly *opened* viewer; the phase fields
+    ride on the same object across the `loading -> file` transition via `{...state.viewer}`,
+    so the key changes exactly when the drawer's content should. */
+let viewerGen = 0;
+let viewerRootKey = null;
+
+function viewerKey(viewer) {
+  if (!viewer) return null;
+  return `${viewer._gen}:${viewer.loading}:${!!viewer.error}`;
+}
+
 function releaseViewerUrl() {
   if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
   viewerObjectUrl = null;
@@ -557,6 +572,7 @@ async function openViewer(artifact, label) {
   setState({
     viewerPending: null,
     viewer: {
+      _gen: ++viewerGen,
       runId: plan ? null : runId, artifactId: key, ref: artifact.ref,
       title: label || artifact.description || artifact.ref,
       // A URL is not Chief's to fetch and never was — it is framed, not read. The page on
@@ -612,7 +628,7 @@ function openJsonViewer(title, value) {
   viewerNode = null;
   setState({
     viewerPending: null,
-    viewer: { title, ref: null, json: value, loading: false, error: null, file: null },
+    viewer: { _gen: ++viewerGen, title, ref: null, json: value, loading: false, error: null, file: null },
   });
 }
 
@@ -830,36 +846,37 @@ function frameSandbox(url) {
 
 function viewerBody(viewer) {
   const { file } = viewer;
-  // A value rather than a file: metadata opened from a card, through the same tree a JSON
-  // artifact gets. Nothing to fetch, so it is checked before the loading state.
-  if (viewer.json !== undefined && viewer.json !== null) {
-    if (viewer.node) return viewer.node;
-    viewer.node = el("div", { class: "viewer-json" }, jsonValue(viewer.json, 2));
-    return viewer.node;
-  }
-  // A page renders itself. This is the only way to see MDX with the components it actually
-  // imports — they live in a project Chief has never seen, and the thing that has them is
-  // the dev server already serving them. See CONTRACT-NOTES.md #36.
-  if (viewer.url) {
-    return el("iframe", {
-      class: "viewer-frame", src: viewer.url, title: viewer.title,
-      sandbox: frameSandbox(viewer.url),
-      referrerpolicy: "no-referrer",
-    });
-  }
-  if (viewer.loading) return el("p", { class: "text-muted", text: "Reading…" });
-  if (viewer.error) return el("div", { class: "banner", text: viewer.error });
-  if (!file) return null;
-  // Built once and kept. A refresh re-renders the page, and rebuilding this would decode
-  // the bytes again and — worse — spring every folded branch of a JSON tree back open
-  // under the reader.
-  if (viewer.node) return viewer.node;
-
-  const bytes = new Uint8Array(file.bytes);
+  // Built once and kept, every branch below alike: an iframe (the `url` and MDX-runtime
+  // cases) reloads whenever it is detached from the document and reattached, even as the
+  // very same node — see `render()`'s viewer-root block, which exists so that never
+  // happens for a render that has nothing to do with the drawer. This function itself must
+  // hold up its half: called again for the same `viewer`, it returns the same node rather
+  // than building a second one.
   const keep = (node) => {
     viewer.node = node;
     return node;
   };
+  if (viewer.node) return viewer.node;
+  // A value rather than a file: metadata opened from a card, through the same tree a JSON
+  // artifact gets. Nothing to fetch, so it is checked before the loading state.
+  if (viewer.json !== undefined && viewer.json !== null) {
+    return keep(el("div", { class: "viewer-json" }, jsonValue(viewer.json, 2)));
+  }
+  if (viewer.loading) return el("p", { class: "text-muted", text: "Reading…" });
+  if (viewer.error) return el("div", { class: "banner", text: viewer.error });
+  // A page renders itself. This is the only way to see MDX with the components it actually
+  // imports — they live in a project Chief has never seen, and the thing that has them is
+  // the dev server already serving them. See CONTRACT-NOTES.md #36.
+  if (viewer.url) {
+    return keep(el("iframe", {
+      class: "viewer-frame", src: viewer.url, title: viewer.title,
+      sandbox: frameSandbox(viewer.url),
+      referrerpolicy: "no-referrer",
+    }));
+  }
+  if (!file) return null;
+
+  const bytes = new Uint8Array(file.bytes);
 
   if (isText(file.mediaType)) {
     const text = new TextDecoder().decode(bytes);
@@ -5587,10 +5604,11 @@ function render() {
   // typed into is destroyed mid-word. Its identity and selection are carried across.
   const active = document.activeElement;
   const keepFocus = active && active.id ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
-  // Same problem as focus, for the file viewer: its body is rebuilt fresh every render,
-  // including the 15s poll, so a scroll position held only in the old (about-to-be-
-  // discarded) DOM node would otherwise snap back to the top mid-read.
-  const viewerScroll = document.querySelector(".viewer-body")?.scrollTop;
+  // Same problem as focus, for the inspector panel: it is rebuilt fresh every render,
+  // including one caused by toggling a note thread or typing a comment draft, so a scroll
+  // position held only in the old (about-to-be-discarded) DOM node would otherwise snap
+  // back to the top on every keystroke.
+  const inspectorScroll = document.querySelector(".inspector")?.scrollTop;
   // And for the graph canvas: selecting a node is a `setState` like any other, so without
   // this every click on a node scrolled the plane back to its origin — the read-a-node,
   // click-the-one-beside-it loop this is for would cost a re-scroll every single time.
@@ -5604,12 +5622,11 @@ function render() {
       state.error &&
         el("div", { class: "banner", style: { margin: "0 var(--space-4)" }, text: state.error }),
       screenFor(state.view),
-      fileViewer(),
     ].filter((n) => n instanceof Node),
   );
-  if (viewerScroll) {
-    const body = document.querySelector(".viewer-body");
-    if (body) body.scrollTop = viewerScroll;
+  if (inspectorScroll) {
+    const panel = document.querySelector(".inspector");
+    if (panel) panel.scrollTop = inspectorScroll;
   }
   if (graphScroll) {
     const canvas = document.querySelector(".graph-viewport");
@@ -5619,6 +5636,27 @@ function render() {
       canvas.scrollLeft = graphScroll.left;
       canvas.scrollTop = graphScroll.top;
     }
+  }
+
+  // The file viewer is a sibling of the app tree, same reasoning as the dialog below but
+  // sharper: it is not only that a rebuild would lose a scroll position or a half-typed
+  // field, it is that an <iframe> — the PDF case, a framed URL, MDX in its runtime —
+  // *reloads* whenever it is removed from the document and put back, even as the exact
+  // same node. `#app` is torn down on every render (there is no diffing here), so the
+  // drawer has to live outside it or every keystroke elsewhere on the page would restart
+  // whatever it is showing. Rebuilt only when `viewerKey` actually changes: a different
+  // file opened, the fetch finishing, or an error landing.
+  const viewerHost = document.getElementById("viewer-root");
+  const vKey = viewerKey(state.viewer);
+  if (vKey !== viewerRootKey) {
+    viewerRootKey = vKey;
+    viewerHost.replaceChildren(...(state.viewer ? [fileViewer()] : []));
+  }
+  // Width is cheap to keep current regardless: a resize commits through `setState` like
+  // anything else, and must not cost the rebuild above skips for everyone else.
+  if (state.viewer) {
+    setViewerInset(state.viewerWidth);
+    if (viewerNode) viewerNode.style.width = `${state.viewerWidth}px`;
   }
 
   // The dialog is a sibling of the app tree and is rebuilt only when it changes identity,

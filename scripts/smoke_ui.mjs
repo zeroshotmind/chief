@@ -46,7 +46,7 @@ function node(tag) {
   return self;
 }
 
-const roots = { app: node("div"), "dialog-root": node("div") };
+const roots = { app: node("div"), "viewer-root": node("div"), "dialog-root": node("div") };
 // What a browser download needs and the stub DOM does not have. The blob is captured so the
 // exported bytes can be asserted rather than only the fact that a click happened.
 let exported = null;
@@ -174,6 +174,10 @@ const RUN = {
       // The same kind of document with nothing beside it: no modules, so nothing to run, and
       // it falls back to prose with its components named. Both paths matter.
       { artifact_id: "art_5", type: "file", description: "Lone", ref: "notes/named.mdx", data: null, comments: [] },
+      // A binary type the viewer frames in an <iframe> rather than decoding as text — the
+      // one artifact kind that actually reloads if its DOM node is ever detached and put
+      // back, which is exactly what typing elsewhere on the page used to do to it.
+      { artifact_id: "art_6", type: "file", description: "Report", ref: "notes/report.pdf", data: null, comments: [] },
     ] },
     b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { paper: "arxiv:2401.11111", seed: 7, deep: { a: 1 } } }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
@@ -236,6 +240,10 @@ const FILE_BODIES = {
   art_4: {
     text: 'import { Callout } from "./Callout"\n\n## Findings\n\n<Callout kind="warn">\n\ntext\n\n</Callout>\n',
     type: "text/mdx", name: "post.mdx",
+  },
+  art_6: {
+    bytes: Uint8Array.from([0x25, 0x50, 0x44, 0x46]), // "%PDF" — content is irrelevant here
+    type: "application/pdf", name: "report.pdf",
   },
 };
 // Two proof graphs: one that holds up and one that does not, which is what the graphs
@@ -513,11 +521,11 @@ async function reloadInto(hash) {
   location.hash = "#/workflows";
   fireWindow("hashchange", {});
   await new Promise((r) => setTimeout(r, 60));
-  if (findByClass(roots.app, "viewer").length) throw new Error("leaving did not close the file");
+  if (findByClass(roots["viewer-root"], "viewer").length) throw new Error("leaving did not close the file");
   location.hash = hash;
   fireWindow("hashchange", {});
   await new Promise((r) => setTimeout(r, 120));
-  const drawer = findByClass(roots.app, "viewer")[0];
+  const drawer = findByClass(roots["viewer-root"], "viewer")[0];
   return drawer ? JSON.stringify(drawer).includes("metrics.json") : false;
 }
 
@@ -901,10 +909,10 @@ await new Promise((r) => setTimeout(r, 20));
 // workflow recorded rather than anything held in here.
 const editLinks = findByClass(mainNode(), "art-edit");
 const unlinked = editLinks.length === 1 && editLinks[0].href === "https://example.com/pr/1";
-const stillOpenable = countClass(mainNode(), "art-open") === 5;
+const stillOpenable = countClass(mainNode(), "art-open") === 6;
 // The copy button does not go away with the link: what the harness reported is still worth
 // having on the clipboard.
-const stillCopyable = countClass(mainNode(), "art-copy") === 5;
+const stillCopyable = countClass(mainNode(), "art-copy") === 6;
 
 // Markdown, rendered rather than dumped as one run-on line: a heading, a hard break where
 // the harness put a newline, emphasis, a code span, a list, and maths as MathML.
@@ -1011,12 +1019,12 @@ const instInline = instPairs.some((p) => p.includes("seed") && p.includes("7"));
 const openAll = findByClass(mainNode(), "meta-open")[0];
 [...clicks].reverse().find((c) => c.node === openAll).fn({ preventDefault() {}, stopPropagation() {} });
 await new Promise((r) => setTimeout(r, 40));
-const metaDrawer = findByClass(roots.app, "viewer")[0];
+const metaDrawer = findByClass(roots["viewer-root"], "viewer")[0];
 const instDeepInDrawer = !!metaDrawer && JSON.stringify(metaDrawer).includes("deep") &&
                          countClass(metaDrawer, "viewer-json") === 1;
 // Opened from a value, so nothing was fetched for it.
 const metaNoFetch = fileRequests === 0;
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
 clickByText("each thing");
 await new Promise((r) => setTimeout(r, 30));
@@ -1033,7 +1041,7 @@ const viewButtons = countClass(mainNode(), "art-open");
 // more than one openable path on this screen, and "the newest" is not a stable target.
 clickPath("notes/personas.md");
 await new Promise((r) => setTimeout(r, 40));
-const drawer = findByClass(roots.app, "viewer")[0];
+const drawer = findByClass(roots["viewer-root"], "viewer")[0];
 const viewerOpened = !!drawer;
 // Markdown from a file goes through the same renderer as an inline body.
 const viewerRendered = drawer && countClass(drawer, "md-p") > 0 && countTag(drawer, "math") === 1;
@@ -1045,12 +1053,12 @@ const viewerMermaid = drawer && countClass(drawer, "mermaid") === 1;
 // A URL artifact is framed, not fetched: the page renders itself, with the components the
 // project that owns them actually builds. Nothing is read off the disk and nothing is
 // evaluated by Chief.
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
 const fetchesBeforeFrame = fileRequests;
 clickPath("https://example.com/pr/1");
 await new Promise((r) => setTimeout(r, 40));
-const frame = findByTag(findByClass(roots.app, "viewer")[0], "iframe")[0];
+const frame = findByTag(findByClass(roots["viewer-root"], "viewer")[0], "iframe")[0];
 const framed = !!frame && frame.src === "https://example.com/pr/1";
 // The page is inset by the drawer's width rather than covered by it, so the artifact list
 // you opened this from is still there to open the next one.
@@ -1067,13 +1075,37 @@ const frameSandboxed = !!frame && frame.sandbox.includes("allow-scripts") &&
 const selfFrame = frameSandboxOf("http://localhost:8080/ui/index.html");
 const crossFrame = frameSandboxOf("https://example.com/x");
 
+// The bug this was written for: an <iframe> reloads whenever it is detached from the
+// document and put back — even as the exact same node — and every setState used to tear
+// down and rebuild the whole app tree the drawer lived in, so typing a single character
+// into a comment box elsewhere on the page reloaded whatever was open beside it. Opening a
+// PDF and then typing into an unrelated field must leave its frame node untouched.
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
+await new Promise((r) => setTimeout(r, 20));
+clickPath("notes/report.pdf");
+await new Promise((r) => setTimeout(r, 40));
+const pdfFrameBefore = findByTag(findByClass(roots["viewer-root"], "viewer")[0], "iframe")[0];
+typeIntoId("cmt-art_1", "s");
+await new Promise((r) => setTimeout(r, 10));
+const pdfFrameAfter = findByTag(findByClass(roots["viewer-root"], "viewer")[0], "iframe")[0];
+const pdfSurvivesTyping = !!pdfFrameBefore && pdfFrameBefore === pdfFrameAfter;
+// And selecting a different step, which rebuilds the whole inspector panel beside it, must
+// not touch the drawer either — only the drawer's own state (opening, closing, a fetch
+// landing) may move it.
+clickByText("each thing");
+await new Promise((r) => setTimeout(r, 20));
+const pdfSurvivesSelection =
+  findByTag(findByClass(roots["viewer-root"], "viewer")[0], "iframe")[0] === pdfFrameBefore;
+clickByText("did it");
+await new Promise((r) => setTimeout(r, 30));
+
 // MDX with components beside it: compiled and run inside a sandboxed frame at an opaque
 // origin, so a document's own code executes somewhere it cannot reach this page.
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
 clickPath("notes/post.mdx");
 await new Promise((r) => setTimeout(r, 60));
-const mdxV = findByClass(roots.app, "viewer")[0];
+const mdxV = findByClass(roots["viewer-root"], "viewer")[0];
 const mdxIframe = findByTag(mdxV, "iframe")[0];
 const mdxCompiled = !!mdxIframe && !!mdxIframe.srcdoc;
 // No allow-same-origin: components a harness wrote must not reach Chief's page or storage.
@@ -1085,7 +1117,7 @@ const mdxSelfContained = !!mdxIframe && !mdxIframe.src &&
 // here rather than read at the end, where the totals include the second document.
 const mdxModuleFetches = moduleFetches;
 const mdxAsked = mdxModuleFetches === 1 && runtimeFetches === 3;
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
 
 // The same format with nothing beside it: no modules, so no runtime, and it falls back to
@@ -1093,7 +1125,7 @@ await new Promise((r) => setTimeout(r, 20));
 // sibling showing nothing at all.
 clickPath("notes/named.mdx");
 await new Promise((r) => setTimeout(r, 40));
-const mdxDrawer = findByClass(roots.app, "viewer")[0];
+const mdxDrawer = findByClass(roots["viewer-root"], "viewer")[0];
 const mdxNodes = countClass(mdxDrawer, "mdx-node");
 const mdxImportsFolded = countClass(mdxDrawer, "md-module") === 1;
 const mdxProseKept = JSON.stringify(mdxDrawer).includes("The split is") &&
@@ -1104,7 +1136,7 @@ await new Promise((r) => setTimeout(r, 40));
 
 // The open file is in the URL, so it can be linked to and survives a reload.
 const hashWithFile = location.hash;
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
 const hashAfterClose = location.hash;
 
@@ -1112,7 +1144,7 @@ const hashAfterClose = location.hash;
 // top two levels open — enough to see the shape without the whole file springing at you.
 clickPath("data/metrics.json");
 await new Promise((r) => setTimeout(r, 40));
-const jsonDrawer = findByClass(roots.app, "viewer")[0];
+const jsonDrawer = findByClass(roots["viewer-root"], "viewer")[0];
 const jsonNodes = countTag(jsonDrawer, "details");
 const jsonOpenAtStart = findByTag(jsonDrawer, "details").filter((d) => d.open !== undefined && d.open !== null).length;
 // An empty object is a leaf, not a foldable node with nothing in it.
@@ -1120,9 +1152,9 @@ const jsonEmptyIsLeaf = countClass(jsonDrawer, "j-empty") === 1;
 const jsonTyped = countClass(jsonDrawer, "j-str") > 0 && countClass(jsonDrawer, "j-num") > 0 &&
                   countClass(jsonDrawer, "j-bool") > 0 && countClass(jsonDrawer, "j-null") === 1;
 // The built body is kept, so a poll cannot spring every folded branch back open.
-const keptNode = findByClass(roots.app, "viewer")[0].children.length > 0;
+const keptNode = findByClass(roots["viewer-root"], "viewer")[0].children.length > 0;
 await refreshTick();
-const jsonSurvives = countTag(findByClass(roots.app, "viewer")[0], "details") === jsonNodes;
+const jsonSurvives = countTag(findByClass(roots["viewer-root"], "viewer")[0], "details") === jsonNodes;
 const jsonHash = location.hash;
 
 // And a reload lands on it: the state is rebuilt from the hash alone, with nothing carried
@@ -1136,29 +1168,29 @@ const reloadFetches = fileRequests;
 // rather than retried — a pending id that survived would re-open on every poll forever —
 // and the URL heals itself back to the workflow.
 await reloadInto("#/workflow/wf_ok/art_nope");
-const staleIgnored = findByClass(roots.app, "viewer").length === 0;
+const staleIgnored = findByClass(roots["viewer-root"], "viewer").length === 0;
 const staleHealed = location.hash === "#/workflow/wf_ok";
 // Back to an open file for the resize below.
 clickPath("data/metrics.json");
 await new Promise((r) => setTimeout(r, 40));
 
 // Resizable from its left edge, like the inspector, and the width is remembered.
-const vwBefore = parseInt(findByClass(roots.app, "viewer")[0].style.width, 10);
-const vwGrip = findByClass(roots.app, "viewer")[0].children.find((c) => (c.class || "").includes("viewer-grip"));
+const vwBefore = parseInt(findByClass(roots["viewer-root"], "viewer")[0].style.width, 10);
+const vwGrip = findByClass(roots["viewer-root"], "viewer")[0].children.find((c) => (c.class || "").includes("viewer-grip"));
 [...handlers].reverse()
   .find((h) => h.type === "pointerdown" && h.node === vwGrip)
   .fn({ clientX: 900, preventDefault() {} });
 fireWindow("pointermove", { clientX: 700 });
-const vwDuringDrag = parseInt(findByClass(roots.app, "viewer")[0].style.width, 10);
+const vwDuringDrag = parseInt(findByClass(roots["viewer-root"], "viewer")[0].style.width, 10);
 fireWindow("pointerup", {});
 await new Promise((r) => setTimeout(r, 20));
-const vwAfter = parseInt(findByClass(roots.app, "viewer")[0].style.width, 10);
+const vwAfter = parseInt(findByClass(roots["viewer-root"], "viewer")[0].style.width, 10);
 const vwStored = Number(stored["chief.viewerWidth"]);
 
 // Closing releases the drawer entirely rather than leaving an empty one in the page.
-clickIn(findByClass(roots.app, "viewer")[0], "✕");
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
 await new Promise((r) => setTimeout(r, 20));
-const viewerClosed = findByClass(roots.app, "viewer").length === 0;
+const viewerClosed = findByClass(roots["viewer-root"], "viewer").length === 0;
 
 // The panel is resizable from its left edge. Dragged leftwards it grows, because the handle
 // is on that edge and the panel follows the pointer into the space it opens.
@@ -1292,6 +1324,7 @@ console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOu
 console.log(`inputs:      artifact-shown=${inputArtShown}, plain-shown=${inputMetaShown}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, mermaid=${viewerMermaid}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
+console.log(`             pdf frame survives typing elsewhere=${pdfSurvivesTyping}, survives selecting another step=${pdfSurvivesSelection}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
 console.log(`frame:        framed=${framed}, not fetched=${frameNotFetched}, page inset=${pageInset}, sandbox="${frame && frame.sandbox}"`);
 console.log(`mdx run:      compiled=${mdxCompiled}, sandbox="${mdxIframe && mdxIframe.sandbox}", self-contained=${mdxSelfContained}, fetches modules=${mdxModuleFetches} runtime=${runtimeFetches}`);
@@ -1475,7 +1508,7 @@ const fixedLinked = findByClass(mainNode(), "art-edit")
 // own route, resolved server-side against the origin_dir the graph records.
 clickIn(mainNode(), "configs/events-warehouse.yaml");
 await new Promise((r) => setTimeout(r, 30));
-const fixedDrawer = findByClass(roots.app, "viewer")[0];
+const fixedDrawer = findByClass(roots["viewer-root"], "viewer")[0];
 const fixedViewed = !!fixedDrawer && JSON.stringify(fixedDrawer).includes("warehouse: events");
 fixedDrawer && clickIn(fixedDrawer, "✕");
 await new Promise((r) => setTimeout(r, 20));
@@ -1679,8 +1712,8 @@ const ok =
   asked &&
   // Three artifacts, three paths, a copy control on each — copying works even for the ones
   // that cannot be opened or viewed.
-  paths.length === 5 &&
-  copyButtons === 5 &&
+  paths.length === 6 &&
+  copyButtons === 6 &&
   hrefs.includes("vscode://file/Users/you/work/songs/notes/personas.md") &&
   hrefs.includes("https://example.com/pr/1") &&
   artifactCopied === "/Users/you/work/songs/notes/personas.md" &&
@@ -1720,7 +1753,7 @@ const ok =
   noteResolved.body.resolved === true &&
   // All four are openable: the three files are read by the server, and the URL is framed —
   // which is the only way to see a page rendered by the project that owns its components.
-  viewButtons === 5 &&
+  viewButtons === 6 &&
   viewerOpened &&
   viewerRendered &&
   viewerMermaid &&
@@ -1734,6 +1767,8 @@ const ok =
   frameNotFetched &&
   pageInset === "520px" &&
   frameSandboxed &&
+  pdfSurvivesTyping &&
+  pdfSurvivesSelection &&
   !selfFrame.includes("allow-same-origin") &&
   crossFrame.includes("allow-same-origin") &&
   // MDX with co-located components: compiled into a sandboxed frame that fetches nothing.
