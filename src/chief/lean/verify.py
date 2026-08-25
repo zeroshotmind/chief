@@ -479,7 +479,9 @@ def verify_source(source: str, *, timeout: float = 120.0) -> VerifyResult:
     if not available():
         raise LeanUnavailable(
             "verifying a graph needs the Lean toolchain (`lake` on PATH) and the ProofGraph "
-            "package; neither is required to run a workflow that was already compiled"
+            "package; installing elan (https://leanprover-community.github.io/get_started.html) "
+            "provides the toolchain, and the pinned version follows from lean-toolchain on its "
+            "own. Neither is required to run a workflow that was already compiled"
         )
     package = package_dir()
     assert package is not None  # available() just checked

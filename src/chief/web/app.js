@@ -5095,7 +5095,8 @@ function proofGraphsScreen() {
         class: "accent-note", style: { fontSize: "13px" },
         text:
           "This Chief has no Lean toolchain, so graphs cannot be checked here. Nothing already " +
-          "compiled is affected.",
+          "compiled is affected. Installing elan enables checking; the pinned version follows " +
+          "on its own.",
       }),
     graphs.length === 0 &&
       el("p", {

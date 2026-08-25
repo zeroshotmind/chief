@@ -17,8 +17,17 @@ Graph.lean  ──lake env lean──▶  verified proof graph  ──compile─
 
 ## Using it
 
-Chief builds the library itself the first time it checks anything, so there is no setup step.
-To build it by hand — worth doing after changing the prelude:
+The one thing to install is **elan**, the Lean version manager — `brew install elan-init` on
+macOS, or the [official installer](https://leanprover-community.github.io/get_started.html)
+anywhere. Everything downstream follows from it on its own: elan reads `lean-toolchain` and
+fetches the pinned compiler the first time `lake` runs (the only slow step, once per
+machine), and there are no package dependencies to fetch — deliberately none, see
+`lakefile.toml`, which is why a cold build takes seconds rather than the multi-minute
+Mathlib wait. A server without elan still runs everything except verification, and says so
+rather than reporting graphs unsound.
+
+Chief builds the library itself the first time it checks anything, so there is no other
+setup step. To build it by hand — worth doing after changing the prelude:
 
 ```
 cd lean && lake build

@@ -106,7 +106,8 @@ the checked definition of a process, and compiles into an ordinary draft workflo
 want one. It says nothing about whether the work is any good; what it rules out is a process
 that was never going to hold together.
 **→ [lean/README.md](lean/README.md)**, and Lean is optional — without it everything else is
-unchanged.
+unchanged. Enabling it is one install (`elan`, the Lean version manager); the pinned
+toolchain and the build follow from there on their own.
 
 **→ [docs/using-chief.md](docs/using-chief.md)** covers all of it, and why each part behaves
 the way it does.
