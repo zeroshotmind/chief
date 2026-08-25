@@ -351,6 +351,10 @@ main.wide.graph { max-width: none; }
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
   margin-top: var(--space-2);
 }
+.pager {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
+  margin-top: var(--space-2); font-family: var(--font-mono);
+}
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chip {
   font: inherit; font-family: var(--font-mono); font-size: 12px; padding: 3px 10px;

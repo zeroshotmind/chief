@@ -1893,6 +1893,10 @@ const state = {
   runs: null, // null until the first load resolves
   workflows: null,
   amendmentsByRun: {},
+  // Review notes, one small request per workflow and per graph — same reasoning as
+  // amendmentsByRun, and what drives the "open notes" badge on the list rows below.
+  notesByWorkflow: {},
+  notesByGraph: {},
   // The effective plan, fetched only for runs stopped at a checkpoint — the inbox needs the
   // step's goal and the fields it asks for, and neither is on RunState.
   plansByRun: {},
@@ -1948,6 +1952,17 @@ const state = {
   // Newest activity first: the list is a place you come back to, and what moved since you
   // last looked is what you are coming back for.
   wfSort: { key: "updated", dir: "desc" },
+  // Which page of the (filtered, sorted) list is showing. Clamped at render rather than
+  // reset on every filter/sort change — narrowing the list while on page 3 lands you on
+  // its new last page instead of a blank one, with no extra state to keep in step.
+  wfPage: 1,
+
+  // The proof-graphs list, same shape and same reasoning as the workflow filters above.
+  pgQuery: "",
+  pgFilter: "all",
+  pgProject: null,
+  pgSort: { key: "updated", dir: "desc" },
+  pgPage: 1,
 };
 
 function setState(patch) {
@@ -2107,11 +2122,42 @@ async function loadRuns() {
   const plans = await Promise.all(waiting.map((r) => getRunDefinition(r.run_id).catch(() => null)));
   const plansByRun = { ...state.plansByRun };
   waiting.forEach((run, i) => (plansByRun[run.run_id] = plans[i]));
+
+  // Same reasoning as amendments, for review notes: a small request per workflow and per
+  // graph, so a list row can say a plan has open feedback without opening it to find out —
+  // today that is discoverable only once you are already looking at the plan's own nodes.
+  const graphs = graphList || [];
+  const noteLists = await Promise.all([
+    ...workflows.map((w) => listReviewNotes(w.workflow_id).catch(() => [])),
+    ...graphs.map((g) => listGraphNotes(g.graph_id).catch(() => [])),
+  ]);
+  const notesByWorkflow = {};
+  workflows.forEach((w, i) => (notesByWorkflow[w.workflow_id] = noteLists[i]));
+  const notesByGraph = {};
+  graphs.forEach((g, i) => (notesByGraph[g.graph_id] = noteLists[workflows.length + i]));
+
   return {
     runs, workflows, templates, toolchain, amendmentsByRun, plansByRun,
+    notesByWorkflow, notesByGraph,
     // Named apart from the local `plans` below, which is a run's effective definition.
     proofGraphs: graphList,
   };
+}
+
+/** How many of a subject's notes are still open — unresolved and not orphaned, since a note
+    whose step no longer exists is nobody's to act on until the plan changes again. Shared by
+    the list-row badges below and, on the detail screen, `openNoteCount` for a single node. */
+const openNotesIn = (notes) => (notes || []).filter((n) => !n.resolved && !n.orphaned).length;
+
+/** The pill a list row wears when it has feedback nobody has answered — the same 💬 a node
+    wears once you are already looking at the plan, moved up a level so the list itself says
+    which rows have something waiting rather than making you open each one to find out. */
+function openNotesBadge(notes) {
+  const n = openNotesIn(notes);
+  if (!n) return null;
+  return el("span", {
+    class: "tag", style: { color: "var(--color-accent-700)" }, text: `💬 ${n} open`,
+  });
 }
 
 async function refresh() {
@@ -2453,6 +2499,7 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       el("span", { class: "id text-muted", text: workflow.workflow_id }),
       runs.length > 1 &&
         el("span", { class: "tag", text: `${runs.length} executions` }),
+      openNotesBadge(state.notesByWorkflow[workflow.workflow_id]),
     ),
     el("span", { class: "status" }, badge(life)),
     el("span", {
@@ -2510,34 +2557,83 @@ const ATTENTION = { draft: 1, waiting_on_human: 1, paused_for_approval: 1 };
     everything, the other shows only the ones nobody has filed. */
 const UNFILED = "\u0000unfiled";
 
-/** One chip per project in use, plus the unfiled, plus an everything chip.
+/** One chip per project in use, plus the unfiled, plus an everything chip. Shared by the
+    workflow and proof-graph lists, which each pass how to read a project off their own row
+    shape and which state field remembers the choice.
 
-    Derived from the workflows on screen rather than from `GET /projects`: the counts have
-    to agree with the list under them, and a second source could only ever disagree. The row
-    is absent entirely until something is labelled, so nobody who does not use projects has
-    to look at a filter that does nothing. */
-function projectChips(rows) {
+    Derived from the rows on screen rather than from `GET /projects`: the counts have to
+    agree with the list under them, and a second source could only ever disagree. The row is
+    absent entirely until something is labelled, so nobody who does not use projects has to
+    look at a filter that does nothing. */
+function projectChips(rows, projectOf, stateKey) {
   const counts = new Map();
-  for (const r of rows) counts.set(r.workflow.project || UNFILED, (counts.get(r.workflow.project || UNFILED) || 0) + 1);
+  for (const r of rows) {
+    const p = projectOf(r) || UNFILED;
+    counts.set(p, (counts.get(p) || 0) + 1);
+  }
   const named = [...counts.keys()].filter((k) => k !== UNFILED).sort((a, b) => a.localeCompare(b));
   if (named.length === 0) return null;
 
+  const current = state[stateKey];
   const chip = (key, label) =>
     el("button", {
-      class: "chip" + (state.wfProject === key ? " on" : ""),
+      class: "chip" + (current === key ? " on" : ""),
       text: `${label} ${counts.get(key) || rows.length}`,
-      onClick: () => setState({ wfProject: state.wfProject === key ? null : key }),
+      onClick: () => setState({ [stateKey]: current === key ? null : key }),
     });
   return el(
     "div",
     { class: "chips chips-project" },
     el("button", {
-      class: "chip" + (state.wfProject === null ? " on" : ""),
+      class: "chip" + (current === null ? " on" : ""),
       text: `Every project ${rows.length}`,
-      onClick: () => setState({ wfProject: null }),
+      onClick: () => setState({ [stateKey]: null }),
     }),
     named.map((name) => chip(name, name)),
     counts.has(UNFILED) && chip(UNFILED, "Unfiled"),
+  );
+}
+
+// ── pagination ───────────────────────────────────────────────────────────────────────────
+//
+// One page size for every list, client-side: this app already fetches a screen's whole
+// dataset and filters/sorts it in the browser (REQ-44's single-user, self-hosted scale is
+// what makes that reasonable), so paginating is slicing the array it already has rather
+// than a second server contract with its own limit/offset and total-count envelope.
+
+const PAGE_SIZE = 20;
+
+/** The page of `rows` to show, and the page number clamped into range — narrowing a filter
+    while on page 3 lands you on the new last page rather than an empty one, with nothing
+    extra to reset when the filter changes. */
+function paginate(rows, stateKey) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(Math.max(1, state[stateKey] || 1), totalPages);
+  const start = (page - 1) * PAGE_SIZE;
+  return { slice: rows.slice(start, start + PAGE_SIZE), page, totalPages };
+}
+
+/** The strip beneath a paginated list: which rows are showing, and the way to move.
+    Absent entirely on a list that fits on one page, so nobody who never has more than a
+    handful of anything ever sees a pager that does nothing. */
+function pagerControls(page, totalPages, total, stateKey) {
+  if (totalPages <= 1) return null;
+  const start = (page - 1) * PAGE_SIZE + 1;
+  const end = Math.min(page * PAGE_SIZE, total);
+  const go = (p) => setState({ [stateKey]: Math.min(Math.max(1, p), totalPages) });
+  return el(
+    "div",
+    { class: "pager" },
+    el("span", { class: "text-muted", style: { fontSize: "12px" }, text: `${start}–${end} of ${total}` }),
+    el("button", {
+      class: "btn btn-ghost btn-sm", text: "‹ Prev", disabled: page <= 1 || null,
+      onClick: () => go(page - 1),
+    }),
+    el("span", { style: { fontSize: "12px" }, text: `Page ${page} of ${totalPages}` }),
+    el("button", {
+      class: "btn btn-ghost btn-sm", text: "Next ›", disabled: page >= totalPages || null,
+      onClick: () => go(page + 1),
+    }),
   );
 }
 
@@ -2632,6 +2728,7 @@ function workflowsScreen() {
     return x < y ? -sign : x > y ? sign : 0;
   };
   const sorted = [...shown].sort((a, b) => cmp(a, b) || a.workflow.title.localeCompare(b.workflow.title));
+  const { slice, page, totalPages } = paginate(sorted, "wfPage");
 
   const live = rows.filter((r) => r.workflow.status !== "archived");
   const waiting =
@@ -2674,7 +2771,7 @@ function workflowsScreen() {
             });
           }),
         ),
-        projectChips(rows),
+        projectChips(rows, (r) => r.workflow.project, "wfProject"),
         el("input", {
           // Rebuilt on every render, so its value comes from state and `render` puts the
           // caret back — otherwise the 15s poll would eat what you are typing.
@@ -2707,8 +2804,9 @@ function workflowsScreen() {
           ),
           el("span", { class: "row-del-spacer" }),
         ),
-        sorted.map((r) => workflowRow(r)),
+        slice.map((r) => workflowRow(r)),
       ),
+    pagerControls(page, totalPages, sorted.length, "wfPage"),
     workflows.length > 0 && shown.length === 0 &&
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "var(--space-3) 0 0" },
@@ -4410,8 +4508,9 @@ function notesFor(workflow, stepId) {
     : all.filter((n) => !n.step_id || n.orphaned);
 }
 
-/** How many open notes a node is carrying, for the badge on the graph. Zero everywhere but
-    the workflow screen, because that is the only screen that loads them. */
+/** How many open notes a node is carrying, for the badge on the graph. Zero on any other
+    screen: `state.workflowNotes` is fetched only for the workflow or proof graph currently
+    open, one at a time. */
 function openNoteCount(stepId) {
   const held = state.workflowNotes;
   if (!held) return 0;
@@ -5082,13 +5181,56 @@ function graphRow(graph) {
       { class: "title" },
       el("span", { text: graph.title }),
       el("span", { class: "id text-muted", text: graph.graph_id }),
+      openNotesBadge(state.notesByGraph[graph.graph_id]),
     ),
     el("span", { class: "status text-muted", text: meta.label }),
+    el("span", { class: "when", text: stats ? `${stats.nodes} steps` : "—" }),
     el("span", {
-      class: "when",
-      text: stats ? `${stats.nodes} steps · ${stats.contracts_refined} conditions` : "—",
+      class: "stamp c-added", text: stamp(graph.created_at),
+      title: graph.created_at ? new Date(graph.created_at).toLocaleString() : null,
+    }),
+    el("span", {
+      class: "stamp c-updated", text: stamp(graph.updated_at),
+      title: graph.updated_at ? `${relAgo(graph.updated_at)} · ${new Date(graph.updated_at).toLocaleString()}` : null,
     }),
   );
+}
+
+/** Priority order for sorting by status: the ones that need something from a person first
+    (unchecked or not holding up), then one whose badge no longer counts, then one waiting
+    to be turned into a workflow, then one already handed off — mirrors `graphMeta`'s own
+    priority so a row's rank agrees with the label it is showing. */
+function graphRank(graph) {
+  if (graph.status === "draft" || graph.status === "failed") return 0;
+  if (graph.stale) return 1;
+  if ((graph.compiled_to || []).length) return 3;
+  return 2; // verified, not stale, not yet compiled — ready to compile
+}
+
+const PG_FILTERS = [
+  { key: "all", label: "All", of: () => true },
+  { key: "attention", label: "Needs you", of: (g) => g.status === "draft" || g.status === "failed" },
+  {
+    key: "ready", label: "Ready to compile",
+    of: (g) => g.status === "verified" && !g.stale && (g.compiled_to || []).length === 0,
+  },
+  { key: "compiled", label: "Compiled", of: (g) => (g.compiled_to || []).length > 0 },
+  { key: "stale", label: "Stale", of: (g) => !!g.stale },
+];
+
+const PG_COLUMNS = [
+  { key: "title", label: "Proof Graph", cls: "title", dir: "asc", of: (g) => g.title.toLowerCase() },
+  { key: "lifecycle", label: "Status", cls: "status", dir: "asc", of: (g, ctx) => ctx.rank },
+  { key: "steps", label: "Steps", cls: "when", dir: "desc", of: (g, ctx) => (ctx.stats ? ctx.stats.nodes : -1) },
+  { key: "added", label: "Added", cls: "stamp", dir: "desc", of: (g) => g.created_at || "" },
+  { key: "updated", label: "Last updated", cls: "stamp", dir: "desc", of: (g) => g.updated_at || "" },
+];
+
+const PG_DEFAULT_COLUMN = PG_COLUMNS.find((c) => c.key === "updated");
+
+function sortGraphs(key, dir) {
+  const col = PG_COLUMNS.find((c) => c.key === key) || PG_DEFAULT_COLUMN;
+  setState({ pgSort: { key, dir: dir || col.dir } });
 }
 
 function proofGraphsScreen() {
@@ -5109,9 +5251,41 @@ function proofGraphsScreen() {
     );
   }
   const tc = state.toolchain;
+
+  // Same shape as the workflow list: everything a filter, a search or a column sorts on is
+  // derived once per graph, so a comparator never repeats `graphMeta`'s work.
+  const rows = graphs.map((g) => ({
+    graph: g, meta: graphMeta(g), stats: graphStatsOf(g), rank: graphRank(g),
+  }));
+
+  const filter = PG_FILTERS.find((f) => f.key === state.pgFilter) || PG_FILTERS[0];
+  const q = state.pgQuery.trim().toLowerCase();
+  const matches = (r) =>
+    !q ||
+    r.graph.title.toLowerCase().includes(q) ||
+    r.graph.graph_id.includes(q) ||
+    (r.graph.project || "").toLowerCase().includes(q);
+  const inProject = (r) =>
+    state.pgProject === null ||
+    (state.pgProject === UNFILED ? !r.graph.project : r.graph.project === state.pgProject);
+  const shown = rows.filter((r) => filter.of(r.graph) && inProject(r) && matches(r));
+
+  const { key, dir } = state.pgSort;
+  const col = PG_COLUMNS.find((c) => c.key === key) || PG_DEFAULT_COLUMN;
+  const sign = dir === "desc" ? -1 : 1;
+  const cmp = (a, b) => {
+    const [x, y] = [col.of(a.graph, a), col.of(b.graph, b)];
+    if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
+    return x < y ? -sign : x > y ? sign : 0;
+  };
+  const sorted = [...shown].sort((a, b) => cmp(a, b) || a.graph.title.localeCompare(b.graph.title));
+  const { slice, page, totalPages } = paginate(sorted, "pgPage");
+
   return el(
     "main",
-    { class: "narrow", "data-screen-label": "Proof Graphs" },
+    // Wide, matching the workflow list: a table wants the room a narrow reading column
+    // does not have.
+    { class: "wide", "data-screen-label": "Proof Graphs" },
     el(
       "header",
       { class: "screen-head" },
@@ -5138,6 +5312,29 @@ function proofGraphsScreen() {
           "compiled is affected. Installing elan enables checking; the pinned version follows " +
           "on its own.",
       }),
+    graphs.length > 0 &&
+      el(
+        "div",
+        { class: "list-controls" },
+        el(
+          "div",
+          { class: "chips" },
+          PG_FILTERS.map((f) => {
+            const count = rows.filter((r) => f.of(r.graph)).length;
+            return el("button", {
+              class: "chip" + (f.key === filter.key ? " on" : ""),
+              text: `${f.label} ${count}`,
+              onClick: () => setState({ pgFilter: f.key }),
+            });
+          }),
+        ),
+        projectChips(rows, (r) => r.graph.project, "pgProject"),
+        el("input", {
+          id: "pg-search", class: "field-search", type: "search",
+          placeholder: "Filter by name or id", value: state.pgQuery,
+          onInput: (e) => setState({ pgQuery: e.target.value }),
+        }),
+      ),
     graphs.length === 0 &&
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
@@ -5146,7 +5343,32 @@ function proofGraphsScreen() {
           "from each other, which is then machine-checked before anyone approves it. " +
           "See lean/README.md, or POST /graphs.",
       }),
-    el("div", { style: { display: "flex", flexDirection: "column" } }, graphs.map(graphRow)),
+    shown.length > 0 &&
+      el(
+        "div",
+        { class: "list-wrap" },
+        el(
+          "div",
+          { class: "list-head" },
+          PG_COLUMNS.map((c) =>
+            el("button", {
+              class: `col-head col-${c.key} ${c.cls}` + (c.key === key ? " on" : ""),
+              text: c.label + (c.key === key ? (dir === "desc" ? " ↓" : " ↑") : ""),
+              onClick: () =>
+                sortGraphs(c.key, c.key === key ? (dir === "asc" ? "desc" : "asc") : c.dir),
+            }),
+          ),
+        ),
+        slice.map((r) => graphRow(r.graph)),
+      ),
+    pagerControls(page, totalPages, sorted.length, "pgPage"),
+    graphs.length > 0 && shown.length === 0 &&
+      el("p", {
+        class: "text-muted", style: { fontSize: "13px", margin: "var(--space-3) 0 0" },
+        text: q
+          ? `No ${filter.label.toLowerCase()} graph matches “${state.pgQuery.trim()}”.`
+          : `No ${filter.label.toLowerCase()} graphs.`,
+      }),
     tc && tc.available &&
       el("p", {
         class: "text-muted mono",

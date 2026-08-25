@@ -1370,6 +1370,58 @@ const litOnce =
 const planRows = countClass(mainNode(), "run-row");
 const toolchainShown = JSON.stringify(mainNode()).includes("leanprover/lean4:v4.33.1");
 
+// A graph's own screen already puts a 💬 badge on every step carrying open feedback — but
+// that is only visible once you have opened this specific graph. The list row is where
+// "does anything here need me" has to be answerable without opening each one, so it wears
+// the same badge, counted from the small per-graph fetch loadRuns() now makes.
+const graphListBadged = JSON.stringify(mainNode()).includes("💬 2 open");
+
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 30));
+// Same story for a workflow's review notes: reviewer feedback on a draft is otherwise
+// invisible from the list, exactly the gap open amendments used to have before
+// `paused_for_approval` existed to badge a row on its own.
+const workflowListBadged = JSON.stringify(mainNode()).includes("💬 1 open");
+clickByText("Proof Graphs");
+await new Promise((r) => setTimeout(r, 30));
+
+// The graph list gets the same filter/search/sort the workflow list has always had, not a
+// bare row-per-graph dump. "Needs you" is the one graph that does not hold up; "All" is
+// everything again.
+clickByText("Needs you");
+await new Promise((r) => setTimeout(r, 20));
+const graphFilterNarrows =
+  countClass(mainNode(), "run-row") === 1 &&
+  JSON.stringify(mainNode()).includes("Docs index refresh") &&
+  !JSON.stringify(mainNode()).includes("Fraud model refresh");
+clickIn(mainNode(), "All 2");
+await new Promise((r) => setTimeout(r, 20));
+const graphFilterResets = countClass(mainNode(), "run-row") === 2;
+
+typeIntoId("pg-search", "fraud");
+await new Promise((r) => setTimeout(r, 20));
+const graphSearchNarrows =
+  countClass(mainNode(), "run-row") === 1 &&
+  JSON.stringify(mainNode()).includes("Fraud model refresh");
+typeIntoId("pg-search", "");
+await new Promise((r) => setTimeout(r, 20));
+
+// A column header sorts, and clicking the one already sorting flips direction — "Docs"
+// before "Fraud" ascending, the reverse descending.
+clickByText("Proof Graph");
+await new Promise((r) => setTimeout(r, 20));
+const titleAsc = findByClass(mainNode(), "run-row").map((n) => JSON.stringify(n));
+const graphSortAscending =
+  titleAsc.length === 2 && titleAsc[0].includes("Docs") && titleAsc[1].includes("Fraud");
+clickByText("Proof Graph");
+await new Promise((r) => setTimeout(r, 20));
+const titleDesc = findByClass(mainNode(), "run-row").map((n) => JSON.stringify(n));
+const graphSortDescending =
+  titleDesc.length === 2 && titleDesc[0].includes("Fraud") && titleDesc[1].includes("Docs");
+// Back to the default so the rest of this section's row-position assumptions still hold.
+clickByText("Last updated");
+await new Promise((r) => setTimeout(r, 20));
+
 clickByText("Fraud model refresh");
 await new Promise((r) => setTimeout(r, 30));
 record("nav Plan detail");
@@ -1662,7 +1714,36 @@ const pgRoundTrips =
   pgImportPost.body.lean_source === leanFile &&
   pgImportPost.body.title === "Fraud model refresh";
 
+// Pagination: a list long enough to need it. Pushed here, at the end, so every row-count
+// assumption earlier in this file keeps counting the workflows it was written against.
+for (let i = 0; i < 20; i++) {
+  WORKFLOWS.push({
+    created_at: `2026-05-01T09:${String(i).padStart(2, "0")}:00Z`,
+    updated_at: `2026-05-01T09:${String(i).padStart(2, "0")}:00Z`,
+    workflow_id: `wf_page_${i}`, title: `Page filler ${i}`, source: "generated",
+    generated_by: "claude-code", status: "approved", version: 1, steps: [],
+  });
+}
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 30));
+clickByText("All");
+await new Promise((r) => setTimeout(r, 20));
+const pagerText = JSON.stringify(mainNode());
+const pagerShownPage1 = pagerText.includes("Page 1 of") && countClass(mainNode(), "run-row") === 20;
+clickByText("Next ›");
+await new Promise((r) => setTimeout(r, 20));
+const page2Text = JSON.stringify(mainNode());
+const pagerAdvancesToPage2 =
+  page2Text.includes("Page 2 of") && countClass(mainNode(), "run-row") > 0 &&
+  // The rows on page 2 are not the ones page 1 already showed.
+  page2Text !== pagerText;
+clickByText("‹ Prev");
+await new Promise((r) => setTimeout(r, 20));
+const pagerReturnsToPage1 = JSON.stringify(mainNode()).includes("Page 1 of");
+
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
+console.log(`             list row badges: graph=${graphListBadged}, workflow=${workflowListBadged}`);
+console.log(`             graph list: filter narrows=${graphFilterNarrows} resets=${graphFilterResets}, search narrows=${graphSearchNarrows}, sort asc=${graphSortAscending} desc=${graphSortDescending}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
 console.log(`             fixed=${fixedShown} root-offered=${fixedRootOffered} linked-once-set=${fixedLinked} viewed-in-page=${fixedViewed}, notes: badges=${graphNoteBadges} thread=${graphNoteThread} empty-invites=${emptyThreadInvites}, nav-single=${litOnce}`);
@@ -1673,6 +1754,7 @@ console.log(`             pane graph-first=${graphFirst}, source=${sourceShown} 
 console.log(`             export .lean=${sourceExported}, copy source=${sourceCopied}, renamed=${graphRenamed}`);
 console.log(`portability: wf export=${wfExported} reimports=${wfRoundTrips}, tpl reimports=${tplRoundTrips}, graph .lean reimports=${pgRoundTrips}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
+console.log(`pagination:  page1=${pagerShownPage1}, next=${pagerAdvancesToPage2}, prev=${pagerReturnsToPage1}`);
 
 const ok =
   dialogOpened &&
@@ -1891,6 +1973,13 @@ const ok =
   fixedLinked &&
   fixedViewed &&
   litOnce &&
+  graphListBadged &&
+  workflowListBadged &&
+  graphFilterNarrows &&
+  graphFilterResets &&
+  graphSearchNarrows &&
+  graphSortAscending &&
+  graphSortDescending &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
   algIndented === 1 &&
@@ -1919,6 +2008,9 @@ const ok =
   // A plan with no graph has no toggle, and its diagnostics jump into the source.
   noToggleWithoutGraph &&
   sourceIsThere &&
-  lineMarked === 1;
+  lineMarked === 1 &&
+  pagerShownPage1 &&
+  pagerAdvancesToPage2 &&
+  pagerReturnsToPage1;
 console.log(ok ? "PASS" : `FAIL: expected ${expected.join(", ")}`);
 process.exit(ok ? 0 : 1);
