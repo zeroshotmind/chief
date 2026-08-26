@@ -139,6 +139,9 @@ const STEPS = [
     instance_params: [{ name: "shard", description: "which shard this branch handles", required: true }] },
   { id: "g", type: "task", goal: "scan {{ shard }}", harness: "claude-code", depends_on: [] },
   { id: "h", type: "task", goal: "verify {{ shard }}", harness: "claude-code", depends_on: ["g"] },
+  // An ordinary step, not a checkpoint, asking a person something mid-execution that the
+  // plan never declared.
+  { id: "i", type: "task", goal: "name the output file", harness: "claude-code", depends_on: [] },
 ];
 // created_at/updated_at are the store's stamps on the record, not fields a harness sends;
 // the list sorts by them, so the fixture carries them in a deliberately un-alphabetical
@@ -202,6 +205,13 @@ const RUN = {
         step_states: { g: { step_id: "g", status: "completed", summary: "south g done" },
                        h: { step_id: "h", status: "completed", summary: "south h done" } } },
     ] },
+    // An ordinary task, blocked mid-execution on its own question rather than on a
+    // checkpoint — the case the "?" tag and the Approvals question card exist for.
+    i: { step_id: "i", status: "blocked", summary: "working out what to call it",
+      started_at: new Date().toISOString(),
+      questions: [{ question_id: "qn_1", text: "what should the output file be named?",
+        fields: [], asked_at: new Date().toISOString(), response: null,
+        answered_at: null, answered_by: "human", via: null }] },
   },
 };
 const TEMPLATES = [
@@ -1319,7 +1329,7 @@ if (NO_TEMPLATES) {
   const ok404 =
     reached[0] === "Workflows" &&
     reached.includes("Workflow detail") &&
-    draftNodes === 8;
+    draftNodes === 9;
   console.log(ok404 ? "PASS (no templates: everything else still works)" : "FAIL (stuck)");
   process.exit(ok404 ? 0 : 1);
 }
@@ -1330,6 +1340,9 @@ const waitingNodes = countClass(mainNode(), "checkpoint");
 // No step here declares a group, so nothing is drawn round anything and the layout is the
 // one it always was — grouping must not move a plan that never asked for it.
 const ungroupedBoxes = countClass(mainNode(), "group-box");
+// An ordinary step waiting on its own question gets a "?" tag too, distinct from the
+// checkpoint's — same graph, a different reason to be stopped.
+const questionTagged = JSON.stringify(mainNode()).includes("? waiting on you →");
 
 clickByText("Approvals");
 await new Promise((r) => setTimeout(r, 30));
@@ -1342,6 +1355,15 @@ await new Promise((r) => setTimeout(r, 10));
 clickByText("Approve");
 await new Promise((r) => setTimeout(r, 40));
 const decision = posts.find((x) => x.url.includes("/resolutions/"));
+
+// The ad-hoc question sits in the same inbox, its own card: what was asked, a free-text
+// box since this one declared no fields, and answering only unblocks the step.
+const questionAsked = JSON.stringify(mainNode()).includes("what should the output file be named?");
+typeIntoId("qn-run_1:i-text", "highlights.mp3");
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Answer");
+await new Promise((r) => setTimeout(r, 40));
+const answered = posts.find((x) => x.url.includes("/answers/"));
 
 // Templates: the reusable plan, drawn through the same renderer.
 clickByText("Templates");
@@ -1389,6 +1411,7 @@ console.log(`draft graph: ${draftNodes} nodes, ${draftGates} loop gates, ${draft
 console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
 console.log(`parallel:    ${laneLabels} lane labels, goals filled=${laneGoalsFilled}, north panel=${northPanelFailed}/${northPanelTitleFilled}, south panel=${southPanelOk}/${southPanelTitleFilled}`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
+console.log(`question:    node-tagged=${questionTagged}, asked=${questionAsked}, sent=${JSON.stringify(answered && answered.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
 console.log(`instances:   labelled=${instLabelled}, declared=${paramDeclared}, body-filled=${paramsFilled}`);
@@ -1921,8 +1944,8 @@ const ok =
   expected.every((e, i) => e === actual[i]) &&
   // a + c + d + e + the loop's gate, all ordinary nodes in one flat graph — drafted or
   // running. The checkpoint is a node like any other; what marks it is its class.
-  draftNodes === 8 &&
-  runNodes === 10 &&
+  draftNodes === 9 &&
+  runNodes === 11 &&
   draftGates === 2 &&
   draftEdgeLabels === 2 &&
   draftClusters === 0 &&
@@ -1938,11 +1961,14 @@ const ok =
   southPanelOk &&
   southPanelTitleFilled &&
   // A template draws like any other plan, and its dialog asks for one field per parameter.
-  templateNodes === 8 &&
+  templateNodes === 9 &&
   paramFields === 2 &&
   // The plan says a person decides this one, and the graph says so without being asked.
   waitingNodes === 1 &&
   asked &&
+  questionTagged &&
+  questionAsked &&
+  answered && answered.body.question_id === "qn_1" && answered.body.response.text === "highlights.mp3" &&
   // Three artifacts, three paths, a copy control on each — copying works even for the ones
   // that cannot be opened or viewed.
   paths.length === 7 &&

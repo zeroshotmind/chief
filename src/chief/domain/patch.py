@@ -391,6 +391,11 @@ def _reset(state: StepState) -> None:
     # deleted or re-linked), but this step is asking for a fresh one, so the stale id is
     # dropped rather than left pointing at a run this attempt has nothing to do with.
     state.child_run_id = None
+    # And any question the previous attempt asked: the snapshot in `history` keeps the
+    # record of what was asked and answered, but a fresh attempt starts with nothing
+    # outstanding rather than reading as still blocked on a question this attempt never
+    # asked.
+    state.questions = []
     set_status(state, "pending")
 
 

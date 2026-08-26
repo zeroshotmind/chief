@@ -129,6 +129,29 @@ class Api:
             f"/v1/runs/{run_id}/resolutions/{path}", json={"decision": decision, **body}
         )
 
+    def ask(self, run_id: str, step_id: str, text: str = "what should this call?", **body: Any):
+        return self.client.post(
+            f"/v1/runs/{run_id}/steps/{step_id}/questions", json={"text": text, **body}
+        )
+
+    def answer(self, run_id: str, step_id: str, question_id: str, **body: Any):
+        body.setdefault("response", {"text": "go with the smaller one"})
+        return self.client.post(
+            f"/v1/runs/{run_id}/steps/{step_id}/questions/answer",
+            json={"question_id": question_id, **body},
+        )
+
+    def nested_ask(self, run_id: str, path: str, text: str = "what should this call?", **body: Any):
+        return self.client.post(
+            f"/v1/runs/{run_id}/questions/{path}", json={"text": text, **body}
+        )
+
+    def nested_answer(self, run_id: str, path: str, question_id: str, **body: Any):
+        body.setdefault("response", {"text": "go with the smaller one"})
+        return self.client.post(
+            f"/v1/runs/{run_id}/answers/{path}", json={"question_id": question_id, **body}
+        )
+
     def comment(self, run_id: str, artifact_id: str, body: str = "worth knowing", **kw: Any):
         return self.client.post(
             f"/v1/runs/{run_id}/artifacts/{artifact_id}/comments", json={"body": body, **kw}

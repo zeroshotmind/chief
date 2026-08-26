@@ -24,6 +24,7 @@ from ..ids import comment_id as new_comment_id
 from ..ids import instance_id as format_instance_id
 from ..ids import note_id as new_note_id
 from ..ids import now
+from ..ids import question_id as new_question_id
 from ..ids import proof_graph_id as new_graph_id
 from ..ids import run_id as new_run_id
 from ..ids import template_id as new_template_id
@@ -48,6 +49,8 @@ from ..models import (
     ProofGraphCreate,
     ProofGraphLabel,
     ProofGraphRevise,
+    QuestionAnswer,
+    QuestionAsk,
     ReviewNote,
     ReviewNoteCreate,
     ReviewNoteDecision,
@@ -55,6 +58,7 @@ from ..models import (
     RunPlan,
     RunState,
     StepInstance,
+    StepQuestion,
     StepState,
     StepUpdate,
     TemplateCreate,
@@ -1490,6 +1494,161 @@ class Chief:
                     "decided_by": resolution.decided_by,
                     "note": resolution.note,
                     "fields": sorted(resolution.response),
+                },
+            )
+        self._cascade_child_completion(run)
+        return run
+
+    @staticmethod
+    def _check_question_response(question: StepQuestion, response: dict[str, str]) -> None:
+        """The answer must match what the question actually asked for.
+
+        Same reasoning as a checkpoint's `_check_response`: a harness reads these back by
+        name, so an unnoticed mismatch would surface as a missing answer long after the
+        person who typed it has moved on. A question that declared no fields is free text,
+        and the one shape that means is a single 'text' key.
+        """
+        if not question.fields:
+            if set(response) != {"text"} or not response["text"].strip():
+                raise ValidationFailed(
+                    f"question '{question.question_id}' is free text; answer with a single "
+                    "'text' key",
+                    details={"question_id": question.question_id},
+                )
+            return
+        declared = {f.name: f for f in question.fields}
+        unknown = sorted(set(response) - set(declared))
+        if unknown:
+            raise ValidationFailed(
+                f"question '{question.question_id}' did not ask for {unknown}",
+                details={
+                    "question_id": question.question_id,
+                    "unknown": unknown,
+                    "declared": sorted(declared),
+                },
+            )
+        missing = sorted(
+            name
+            for name, spec in declared.items()
+            if spec.required and not response.get(name, "").strip()
+        )
+        if missing:
+            raise ValidationFailed(
+                f"question '{question.question_id}' requires {missing}",
+                details={"question_id": question.question_id, "missing": missing},
+            )
+
+    def ask_question(self, run_id: str, path: list[str], ask: QuestionAsk) -> RunState:
+        """Record a harness's mid-step question and block the step until a person answers.
+
+        Any step type can carry one, not just checkpoint: a checkpoint is a person-decision
+        the plan named in advance, at a step whose only job is to ask it. This is the other
+        direction — an ordinary step, partway through, finding it needs something only a
+        person knows. The step does not end here: `answer_question` sets it back to
+        `running`, and the harness is expected to keep working and report its own terminal
+        status, reading the answer back off `get_run`.
+        """
+        run, effective, paused = self._load_for_update(run_id)
+        self._check_addressable(effective, path)
+        step = effective.step(path[-1])
+        assert step is not None
+        if step.is_construct:
+            raise InvariantViolation(
+                f"step '{step.id}' is type '{step.type}'; its status is derived from its "
+                "instances, so blocking it directly would be overwritten on the next "
+                "recompute — ask from inside the instance's own body step instead",
+                details={"step_id": step.id},
+            )
+
+        _, state, _ = paths.resolve(run, path, create=True)
+        # Asking sets `blocked` immediately, so "already has an open question" and "not
+        # currently running" are the same live case — checked together so the message names
+        # the actual reason rather than a generic status mismatch.
+        if state.questions and state.questions[-1].response is None:
+            raise InvariantViolation(
+                f"step '{step.id}' already has an unanswered question; wait for it to be "
+                "answered before asking another",
+                details={"step_id": step.id, "question_id": state.questions[-1].question_id},
+            )
+        if state.status != "running":
+            raise InvalidTransition(
+                f"step '{step.id}' is '{state.status}', not 'running'; a question can only "
+                "be asked from inside a step that is actually executing",
+                details={"step_id": step.id, "status": state.status},
+            )
+
+        question = StepQuestion(
+            question_id=new_question_id(),
+            text=ask.text,
+            fields=list(ask.fields),
+            asked_at=now(),
+        )
+        state.questions.append(question)
+        set_status(state, "blocked")
+
+        recompute(run, effective, paused=paused)
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, run)
+            self.store.audit(
+                conn,
+                "step.question_asked",
+                workflow_id=run.workflow_id,
+                run_id=run_id,
+                detail={"path": path, "question_id": question.question_id, "text": ask.text},
+            )
+        return run
+
+    def answer_question(self, run_id: str, path: list[str], answer: QuestionAnswer) -> RunState:
+        """Record a person's answer to a blocked question and let the step continue.
+
+        Unlike `resolve_checkpoint` this does not decide the step's outcome — it only
+        unblocks it. The harness that asked is expected to pick the answer back up off
+        `get_run` and keep working; recording `running` rather than leaving the step
+        `blocked` is what actually happened once a person answered (a deliberate
+        simplification — Chief does not know whether the harness is still there to resume,
+        only that nothing is waiting on a person any more).
+        """
+        run, effective, paused = self._load_for_update(run_id)
+        self._check_addressable(effective, path)
+        step = effective.step(path[-1])
+        assert step is not None
+
+        _, state, _ = paths.resolve(run, path, create=True)
+        if state.status != "blocked" or not state.questions or state.questions[-1].response is not None:
+            raise InvalidTransition(
+                f"step '{step.id}' has no unanswered question",
+                details={"step_id": step.id, "status": state.status},
+            )
+        question = state.questions[-1]
+        if question.question_id != answer.question_id:
+            raise ValidationFailed(
+                f"step '{step.id}''s open question is '{question.question_id}', not "
+                f"'{answer.question_id}'",
+                details={"step_id": step.id, "question_id": question.question_id},
+            )
+        self._check_question_response(question, answer.response)
+
+        question.response = dict(answer.response)
+        question.answered_at = now()
+        question.answered_by = answer.answered_by
+        question.via = current_transport.get()
+        # The step's own summary is the harness's, not this answer's — an ordinary task
+        # already has one from reporting itself running, and overwriting it here would
+        # clobber what it said it was doing for a sentence about being unblocked.
+        set_status(state, "running")
+
+        recompute(run, effective, paused=paused)
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, run)
+            self.store.audit(
+                conn,
+                "step.question_answered",
+                workflow_id=run.workflow_id,
+                run_id=run_id,
+                detail={
+                    "path": path,
+                    "question_id": question.question_id,
+                    "answered_by": answer.answered_by,
                 },
             )
         self._cascade_child_completion(run)

@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 61 REST routes and requires them to correspond one-to-one. This doc
+against what is now 65 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by
@@ -127,6 +127,8 @@ says what it costs.
 | ○ `list_runs` | `list_runs` | |
 | ● `report_step_update` | `report_step_update` | `path: list[str]`, any depth. Requires a summary. |
 | — | `resolve_checkpoint` | Extension. A human decision, like approving a workflow: the run is blocked at a checkpoint and only a person's answer moves it. |
+| — | `ask_question` | Extension. A harness asking a person something mid-step, outside anything the plan declared — a checkpoint is a person-decision the plan names in advance, this is the other direction. Blocks the step without ending it. |
+| — | `answer_question` | Extension. A human decision like `resolve_checkpoint`; unblocks the step back to `running` rather than deciding its outcome. |
 | ● `register_step_instance` | `register_instance` | `path: list[str]`. Loop iteration or parallel branch. |
 | ● `report_instance_update` | `report_instance_update` | `path: list[str]` + `instance_id`. |
 | ○ `archive_workflow` | `archive_workflow` | Lifecycle. Included per §1's criterion — on instruction, indistinguishable from `approve_workflow`. |

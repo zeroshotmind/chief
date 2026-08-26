@@ -36,6 +36,8 @@ from ..models import (
     ProofGraphCreate,
     ProofGraphLabel,
     ProofGraphRevise,
+    QuestionAnswer,
+    QuestionAsk,
     ReviewNote,
     ReviewNoteCreate,
     ReviewNoteDecision,
@@ -457,6 +459,20 @@ def resolve_checkpoint(
     return service.resolve_checkpoint(run_id, [step_id], body)
 
 
+@router.post(
+    "/runs/{run_id}/steps/{step_id}/questions", response_model=RunState, status_code=status.HTTP_201_CREATED
+)
+def ask_question(run_id: str, step_id: str, body: QuestionAsk, service: Service) -> RunState:
+    """A harness asking a person something mid-step, outside anything the plan declared."""
+    return service.ask_question(run_id, [step_id], body)
+
+
+@router.post("/runs/{run_id}/steps/{step_id}/questions/answer", response_model=RunState)
+def answer_question(run_id: str, step_id: str, body: QuestionAnswer, service: Service) -> RunState:
+    """Record a person's answer to a blocked question."""
+    return service.answer_question(run_id, [step_id], body)
+
+
 # --- 2.2 (extension) generalised addressing for nested constructs --------------------------
 
 
@@ -488,6 +504,24 @@ def resolve_nested_checkpoint(
 ) -> RunState:
     """A checkpoint inside a loop or parallel body, addressed by state path."""
     return service.resolve_checkpoint(run_id, pathlib_.parse_path(state_path), body)
+
+
+@router.post(
+    "/runs/{run_id}/questions/{state_path:path}",
+    response_model=RunState,
+    status_code=status.HTTP_201_CREATED,
+)
+def ask_nested_question(run_id: str, state_path: str, body: QuestionAsk, service: Service) -> RunState:
+    """A question asked from inside a loop or parallel body, addressed by state path."""
+    return service.ask_question(run_id, pathlib_.parse_path(state_path), body)
+
+
+@router.post("/runs/{run_id}/answers/{state_path:path}", response_model=RunState)
+def answer_nested_question(
+    run_id: str, state_path: str, body: QuestionAnswer, service: Service
+) -> RunState:
+    """Answer a blocked question inside a loop or parallel body, addressed by state path."""
+    return service.answer_question(run_id, pathlib_.parse_path(state_path), body)
 
 
 #: Hosts this API answers file content on. A `Host` header naming anything else is a

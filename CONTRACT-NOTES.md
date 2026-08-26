@@ -913,3 +913,45 @@ lane-scoped. If a construct's body declares `group` paths, every lane's copy sti
 same path, so `groupingFor` draws one box spanning all branches rather than one box per
 branch. Grouped bodies inside a `parallel` are uncommon enough that this reads as an
 acceptable rough edge rather than a wrong picture — revisit if that changes.
+
+## 44. Ad-hoc questions — a mid-step primitive, not a checkpoint variant
+
+A `checkpoint` step is a person-decision the plan names in advance, at a step whose only job
+is to ask it. There was no way for an *ordinary* step, partway through execution, to say "I
+cannot continue without something only a person knows" — the plan cannot predeclare every
+such moment, and forcing one into a checkpoint would mean planning for a question before
+knowing what it is. `ask_question` / `answer_question` add that as its own primitive rather
+than generalizing checkpoint, because the two differ in the one way that matters: a checkpoint
+*is* the step's outcome (approve/reject decides completed/failed), while a question is a
+pause inside a step whose outcome is still the harness's to report. Any step type can carry
+one — `StepState.questions`, a list of `StepQuestion` (REQ-43's `via` field, mirrored) — with
+the step `blocked` exactly when the last entry is unanswered.
+
+Reused rather than invented: a question with no declared `fields` is free text under the
+single key `"text"`, and one with `fields` is validated exactly like a checkpoint's `response`
+(`_check_question_response` mirrors `_check_response`) — the same "an unnoticed typo becomes
+a missing answer later" reasoning applies to a harness reading its own question back.
+
+Two deliberate simplifications, matching the shape #43 (workflow_ref's cascade) and the
+sub-workflow design used for their own reuses of existing machinery:
+
+- **Answering sets the step back to `running`**, not "blocked, until the harness reports
+  something." Chief does not know whether the harness is still there to resume — only that
+  nothing is waiting on a person any more, and a graph reading "blocked" after someone just
+  answered would say the opposite of what happened. A harness that has actually exited will
+  simply never report again, same as if it had crashed mid-step with no question involved.
+- **One open question at a time.** `ask_question` refuses a second ask while the last is
+  unanswered, with the same check that doubles as "is this step even running" — asking sets
+  `blocked` immediately, so the two conditions are never distinguishable as separate live
+  states, only as separate reasons for the same one.
+
+`answer_question` is a full MCP tool, not REST-only — checked against the actual precedent
+(`resolve_checkpoint` is also an MCP tool, letting a harness relay a decision that arrived
+through some other channel) rather than assumed from "a human decision, so restrict the
+channel," which would have contradicted how checkpoint already ships.
+
+`ask_question` refuses a `loop`/`parallel` step directly, the same way `report_step_update`
+already refuses a status report on one: a construct's status is *derived* from its instances
+on every `recompute()`, so setting it `blocked` would be overwritten back to `running` by the
+very call that set it, leaving an unanswerable question attached to a step that reads as
+unblocked. Ask from inside the instance's own body step instead.

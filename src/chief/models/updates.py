@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .definition import CheckpointField
 from .runstate import ArtifactRef, InstanceKind
 
 #: ``skipped`` is deliberately absent: it is server-produced only (contract 1.4, 4).
@@ -109,6 +110,42 @@ class CheckpointResolution(BaseModel):
     response: dict[str, str] = Field(default_factory=dict)
     note: str | None = None
     decided_by: str = "human"
+
+
+class QuestionAsk(BaseModel):
+    """Body for a harness asking a person something mid-step, outside anything the plan
+    declared. Unlike reporting a checkpoint reached, this does not end the step — once
+    answered it goes back to `running` and you are expected to keep working and report your
+    own terminal status, reading the answer back off `get_run`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(
+        min_length=1,
+        description=(
+            "What you need from a person, in a sentence or two — plain language, not a form "
+            "field's label."
+        ),
+    )
+    fields: list[CheckpointField] = Field(
+        default_factory=list,
+        description=(
+            "Named answers you need, if the answer is more than one free-text sentence. "
+            "Leave empty and the answer arrives as free text under the key 'text'."
+        ),
+    )
+
+
+class QuestionAnswer(BaseModel):
+    """Body for answering a blocked question. `response` is validated against the question's
+    declared `fields` the same way a checkpoint's is — or, for a free-text question, must
+    supply exactly the key 'text'."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = Field(min_length=1)
+    response: dict[str, str] = Field(default_factory=dict)
+    answered_by: str = "human"
 
 
 class CommentCreate(BaseModel):

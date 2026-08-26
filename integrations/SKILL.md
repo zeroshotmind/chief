@@ -237,6 +237,23 @@ A rejection fails the step, and everything downstream is skipped. That is the po
 stops the branch. If the work should continue down a different route, that is an
 amendment.
 
+## When an ordinary step needs something only a person knows
+
+A checkpoint is a person-decision the plan named in advance. Most of the time you will hit
+something the plan did not — a step you have already reported `running`, partway through,
+turns out to need a name, a preference, a "which one" only the user can give. `ask_question`
+with `text` saying what you need, and `fields` if the answer should be more than one
+free-text sentence (same shape as a checkpoint's — omit it for free text). This **blocks the
+step without ending it**: unlike a checkpoint, nothing about the step's outcome is decided
+here.
+
+Then **stop and tell the user what you asked**, the same as reaching a checkpoint. When they
+answer — in the UI, or by telling you and you relaying it with `answer_question` — the step
+goes back to `running` and you keep working. Read the answer off `get_run`: it is on the
+step's `questions`, the entry whose `question_id` you asked with, under `response` (a single
+`text` key for free text, the declared field names otherwise). Do not guess at an answer or
+carry on without it while a question is open.
+
 ## When the plan stops fitting
 
 A step you cannot execute as written is the whole reason Chief exists. **Propose an
@@ -257,8 +274,9 @@ either way.
 
 ## What is not yours to decide
 
-`approve_workflow`, `approve_amendment`, `reject_amendment` and `resolve_checkpoint` are
-human decisions. Call them only when the user has asked you to **in this turn** — never to unblock yourself, and
+`approve_workflow`, `approve_amendment`, `reject_amendment`, `resolve_checkpoint` and
+`answer_question` are human decisions. Call them only when the user has asked you to **in
+this turn** — never to unblock yourself, and
 never as a step in a plan you are executing. Chief records which transport a decision
 arrived on, so an approval you made is distinguishable afterwards from one made in the UI.
 

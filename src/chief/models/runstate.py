@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .definition import WorkflowStep
+from .definition import CheckpointField, WorkflowStep
 
 StepStatus = Literal["pending", "running", "completed", "failed", "skipped", "blocked"]
 RunStatus = Literal["running", "paused_for_approval", "waiting_on_human", "completed", "failed"]
@@ -110,6 +110,39 @@ class CheckpointOutcome(BaseModel):
     via: str | None = None
 
 
+class StepQuestion(BaseModel):
+    """Something a harness asked a person mid-step, outside anything the plan declared.
+
+    A checkpoint is a person-decision the plan names in advance, at a step whose only job is
+    to ask it; this is a harness partway through an ordinary ``task`` finding it needs
+    something only a person knows, and saying so on the spot rather than guessing or stalling
+    silently. Unlike a checkpoint the step does not end here: answering sets the step back to
+    ``running`` and the harness is expected to keep working and report its own terminal
+    status, reading the answer back off this same field once it appears.
+
+    A step may accumulate several of these over its life — one active (unanswered) at a
+    time; asking again while the last is still open is refused. Kept as a list rather than
+    a single mutable field for the same reason ``instances`` is a list: the earlier ones are
+    what was actually asked and answered, not overwritten by whatever is asked next.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str
+    text: str = Field(min_length=1)
+    #: What the answer should look like. Empty means free text, under the key ``"text"`` in
+    #: ``response`` — reusing CheckpointField rather than inventing a second "what a person
+    #: is asked for" shape.
+    fields: list[CheckpointField] = Field(default_factory=list)
+    asked_at: str
+    #: Present once answered; its absence is what makes the step ``blocked``.
+    response: dict[str, str] | None = None
+    answered_at: str | None = None
+    answered_by: str = "human"
+    #: Which transport the answer arrived on, as with a checkpoint's decision (REQ-43).
+    via: str | None = None
+
+
 class StepInstance(BaseModel):
     """One loop iteration or parallel branch (REQ-10, REQ-11)."""
 
@@ -166,6 +199,12 @@ class StepState(BaseModel):
     # failure is later replayed away; a removal skip is permanent. Without this the two
     # are indistinguishable and a replayed dependency leaves the chain wedged.
     skip_cause: Literal["dependency", "removed"] | None = None
+    # Ad-hoc questions a harness asked mid-step — see StepQuestion. Any step type can carry
+    # these, not just checkpoint: a checkpoint is a person-decision the plan named in
+    # advance, this is a harness saying, from inside an ordinary step, that it needs
+    # something only a person knows. The step is ``blocked`` exactly when the last entry is
+    # unanswered.
+    questions: list[StepQuestion] = Field(default_factory=list)
 
     def instance(self, instance_id: str) -> StepInstance | None:
         for inst in self.instances or []:

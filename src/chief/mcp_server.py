@@ -1,6 +1,6 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Thirty tools against 61 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Thirty-two tools against 65 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
 and the approval-policy config, the audit query, artifact comments, draft review notes and
 both destructive deletes are deliberately REST-only — a session that can edit the policy
@@ -46,6 +46,8 @@ from .models import (
     ProofGraphCompile,
     ProofGraphCreate,
     ProofGraphRevise,
+    QuestionAnswer,
+    QuestionAsk,
     RunCreate,
     RunState,
     StepInstance,
@@ -73,6 +75,10 @@ instead of improvising; the run pauses until a human decides.
 
 A `checkpoint` step is one the plan says a person decides. Report it running to say you have
 reached it — the run blocks there — then wait for their answer rather than deciding it.
+
+If an ordinary step needs something from a person that the plan did not declare in advance —
+ask_question. It blocks the step without ending it: once answered you keep working on the
+same step and report your own terminal status, reading the answer off get_run.
 
 Artifacts in a run's state may carry `comments`: things a person said about that output,
 after the fact. Read them before building on the artifact they hang off — they are how you
@@ -116,6 +122,8 @@ HARNESS_OPERATIONS = [
     "list_runs",
     "report_step_update",
     "resolve_checkpoint",
+    "ask_question",
+    "answer_question",
     "register_step_instance",
     "report_instance_update",
     "propose_amendment",
@@ -464,6 +472,38 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         waiting on them and what is being asked, then read the answer back from get_run.
         """
         return service.resolve_checkpoint(run_id, path, body)
+
+    @tool()
+    @_guard
+    def ask_question(run_id: str, path: list[str], body: QuestionAsk) -> RunState:
+        """Ask a person something mid-step, when you cannot continue without it and it was
+        not something the plan declared in advance — that is what a `checkpoint` step is for.
+
+        Call this from inside a step you have already reported `running`. It blocks the step
+        until a person answers; unlike a checkpoint, the step itself does not end here. Once
+        answered the step goes back to `running` and you are expected to keep working and
+        report your own terminal status — read the answer back off `get_run`, under this
+        question's `question_id` in the step's `questions`.
+
+        Only one question may be open on a step at a time. Leave `fields` empty for a
+        free-text answer; declare them when you need more than one named value back.
+
+        Not on a `loop`/`parallel` step itself — its status is derived from its instances,
+        so ask from inside the instance's own body step instead.
+        """
+        return service.ask_question(run_id, path, body)
+
+    @tool()
+    @_guard
+    def answer_question(run_id: str, path: list[str], body: QuestionAnswer) -> RunState:
+        """Record a person's answer to a step's blocked question.
+
+        A human decision: call it only when the user has told you their answer in this turn,
+        and pass what they actually said — never to unblock yourself. Most answers come in
+        through the web UI; this exists for the same reason `resolve_checkpoint` does, to
+        relay an answer that arrived through some other channel.
+        """
+        return service.answer_question(run_id, path, body)
 
     @tool()
     @_guard

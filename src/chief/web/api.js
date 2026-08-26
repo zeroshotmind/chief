@@ -62,6 +62,13 @@ export const listAmendments = (runId) => request(`/runs/${runId}/amendments`);
 export const resolveCheckpoint = (runId, path, body) =>
   post(`/runs/${runId}/resolutions/${path.join("/")}`, body);
 
+/** Answer a step's blocked mid-execution question — an ordinary step asking for something
+    the plan did not declare in advance, unlike a checkpoint. Unblocks the step back to
+    `running` rather than deciding its outcome; the harness that asked is expected to read
+    the answer back off the run and keep working. */
+export const answerQuestion = (runId, path, body) =>
+  post(`/runs/${runId}/answers/${path.join("/")}`, body);
+
 /** Say something about an artifact, for whoever picks the work up. Addressed by artifact id
     rather than by state path: artifacts are read as one flat list of everything a run
     produced, and the id is the only handle that survives that flattening. */

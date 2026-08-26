@@ -36,7 +36,7 @@ import {
   decideAmendment, deleteTemplate, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
   decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
-  listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
+  listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint, answerQuestion,
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
@@ -205,6 +205,13 @@ function outcomeOf(state) {
 
 const outcomeColor = (o) =>
   o === "full" ? OK : o === "partial" ? WARN : o === "none" ? BAD : null;
+
+/** A step's most recent ad-hoc question, if it is still waiting on an answer. Any step type
+    can carry one — see StepQuestion — so this is checked by state, not by step type. */
+const hasOpenQuestion = (stepState) => {
+  const qs = stepState.questions || [];
+  return qs.length > 0 && qs[qs.length - 1].response == null;
+};
 
 const stepMeta = (status) => STEP_META[status] || STEP_META.pending;
 
@@ -1969,6 +1976,9 @@ const state = {
   // Half-typed checkpoint answers, keyed by run+path. In state for the same reason the list
   // search box is: the poll rebuilds the DOM, and anything held only in the DOM is lost.
   cpDrafts: {},
+  // Half-typed answers to ad-hoc questions, same reasoning and shape as cpDrafts, kept
+  // separate since a step's checkpoint decision and its own question are different acts.
+  qnDrafts: {},
   // Half-written artifact comments, keyed by artifact id, for the same reason cpDrafts
   // exists: the poll rebuilds the DOM and takes anything held only in it.
   cmtDrafts: {},
@@ -2125,7 +2135,14 @@ function blockedIn(run, steps) {
   const walk = (container, prefix) => {
     for (const [stepId, st] of Object.entries(container || {})) {
       const path = [...prefix, stepId];
-      if (st.status === "blocked") found.push({ run, path, stepId, step: byId.get(stepId), state: st });
+      if (st.status === "blocked") {
+        // A checkpoint's block *is* a decision waiting to be made; an ad-hoc question's
+        // block is a step waiting on an answer to keep going — different cards, different
+        // actions, so the kind is decided here rather than left for the screen to guess.
+        const step = byId.get(stepId);
+        const kind = hasOpenQuestion(st) && (!step || step.type !== "checkpoint") ? "question" : "checkpoint";
+        found.push({ run, path, stepId, step, state: st, kind });
+      }
       for (const inst of st.instances || []) walk(inst.step_states, [...path, inst.instance_id]);
     }
   };
@@ -2133,17 +2150,18 @@ function blockedIn(run, steps) {
   return found;
 }
 
-/** Everything waiting on a person, in one list: the amendments, then the checkpoints.
+/** Everything waiting on a person, in one list: the amendments, then the checkpoints and
+    ad-hoc questions.
 
-    Both are the same act — the run has stopped and will not move until you decide — so they
-    share one inbox rather than making you learn which of two screens a given wait shows up
-    on. A checkpoint whose plan has not loaded yet is still listed: knowing something is
-    waiting matters more than being able to answer it this second. */
+    All three are the same act — the run has stopped and will not move until you decide or
+    answer — so they share one inbox rather than making you learn which of several screens a
+    given wait shows up on. A blocked step whose plan has not loaded yet is still listed:
+    knowing something is waiting matters more than being able to answer it this second. */
 function allWaiting() {
   const out = allPending().map((p) => ({ kind: "amendment", ...p }));
   for (const run of state.runs || []) {
     const plan = state.plansByRun[run.run_id];
-    for (const c of blockedIn(run, plan && plan.steps)) out.push({ kind: "checkpoint", ...c });
+    for (const c of blockedIn(run, plan && plan.steps)) out.push(c);
   }
   return out;
 }
@@ -2950,6 +2968,105 @@ async function decideCheckpoint(runId, path, decision) {
   }
 }
 
+/** Same shape as a checkpoint's half-typed draft, kept under its own key: a step can carry
+    both a checkpoint (never, but see below) and its own question over its life, and the two
+    must not share one draft slot and overwrite each other's half-typed answer. */
+const qnKey = (runId, path) => `${runId}:${path.join("/")}`;
+
+function qnDraftFor(runId, path) {
+  return state.qnDrafts[qnKey(runId, path)] || { response: {}, error: null };
+}
+
+function setQnDraft(runId, path, patch) {
+  const key = qnKey(runId, path);
+  setState({ qnDrafts: { ...state.qnDrafts, [key]: { ...qnDraftFor(runId, path), ...patch } } });
+}
+
+async function answerQuestionUI(runId, path, questionId, response) {
+  try {
+    await answerQuestion(runId, path, { question_id: questionId, response, answered_by: "human" });
+    const rest = { ...state.qnDrafts };
+    delete rest[qnKey(runId, path)];
+    setState({ qnDrafts: rest });
+    await refresh();
+  } catch (err) {
+    setQnDraft(runId, path, { error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+/** A step waiting on an ad-hoc question it asked mid-execution — not a checkpoint, so there
+    is no approve/reject: answering it only unblocks the step, which keeps running and
+    reports its own outcome later. Free text is one box under the key 'text'; declared
+    fields render one box each, the same shape a checkpoint's do. */
+function questionCard({ run, path, stepId, step, state: stepState }) {
+  const question = (stepState.questions || [])[stepState.questions.length - 1];
+  const draft = qnDraftFor(run.run_id, path);
+  const fields = question.fields.length ? question.fields : [{ name: "text", label: "Your answer", required: true }];
+  const inst = path.length > 1 ? ` · ${path.slice(1).join(" / ")}` : "";
+  const answered = fields.every(
+    (f) => f.required === false || (draft.response[f.name] || "").trim(),
+  );
+  return el(
+    "section",
+    { class: "card" },
+    el("span", {
+      class: "card-kicker",
+      text: `${titleOf(run)} · ${stepId}${inst} · question`,
+    }),
+    el(
+      "p",
+      { style: { margin: "0", fontSize: "14px", whiteSpace: "pre-line" } },
+      inline(question.text),
+    ),
+    step &&
+      el("span", {
+        class: "text-muted", style: { fontSize: "12px" },
+        text: step.goal,
+      }),
+    el("span", {
+      class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" },
+      text: `${stepId} · ${run.run_id}` + (question.asked_at ? ` · asked ${relAgo(question.asked_at)}` : ""),
+    }),
+    el(
+      "div",
+      { class: "cp-fields" },
+      fields.map((f) =>
+        el(
+          "label",
+          { class: "cp-field" },
+          el("span", {
+            class: "cp-label",
+            text: (f.label || f.name) + (f.required === false ? " (optional)" : ""),
+          }),
+          el("input", {
+            id: `qn-${qnKey(run.run_id, path)}-${f.name}`,
+            class: "field-search", type: "text",
+            placeholder: f.hint || "", value: draft.response[f.name] || "",
+            onInput: (e) =>
+              setQnDraft(run.run_id, path, {
+                response: { ...draft.response, [f.name]: e.target.value },
+              }),
+          }),
+        ),
+      ),
+    ),
+    draft.error &&
+      el("span", { style: { fontSize: "12px", color: BAD }, text: draft.error }),
+    el(
+      "div",
+      { style: { display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-2)" } },
+      el("button", {
+        class: "btn btn-primary btn-sm", text: "Answer", disabled: answered ? null : "",
+        onClick: () => answerQuestionUI(run.run_id, path, question.question_id, draft.response),
+      }),
+      el("span", {
+        class: "text-muted", style: { fontSize: "11px", marginLeft: "auto" },
+        text: "The step keeps running once you answer — this only unblocks it.",
+      }),
+    ),
+  );
+}
+
 /** One checkpoint the run is stopped at: what it asks, what it wants written down, and the
     two buttons. Rejecting fails the step, which skips what depended on it — said plainly,
     because it is not obvious and it is not undoable. */
@@ -3047,6 +3164,7 @@ function approvalsScreen() {
         text: "Nothing awaiting a decision.",
       }),
     waiting.filter((w) => w.kind === "checkpoint").map(checkpointCard),
+    waiting.filter((w) => w.kind === "question").map(questionCard),
     waiting.filter((w) => w.kind === "amendment").map(({ run, amendment }) =>
       el(
         "section",
@@ -3381,12 +3499,24 @@ function stepPanel(step, stepState, def, laneMetadata) {
   // decided. Both go through the `body` rows the constructs already use, so the panel gains
   // no fourth way of laying out a list of labelled lines.
   const outcome = step.type === "checkpoint" ? stepState.checkpoint : null;
+  // A step's own ad-hoc question, mid-execution — any type but checkpoint, which has its
+  // own outcome above. Only the most recent one is ever open; earlier ones are answered and
+  // read the same way a decided checkpoint's fields do.
+  const questions = step.type === "checkpoint" ? [] : stepState.questions || [];
+  const latestQuestion = questions.length ? questions[questions.length - 1] : null;
+  const openQuestion = latestQuestion && latestQuestion.response == null ? latestQuestion : null;
+  const answeredQuestion = latestQuestion && latestQuestion.response != null ? latestQuestion : null;
+  const asFields = (q) => (q.fields.length ? q.fields.map((f) => ({ id: f.name, goal: f.label || f.hint || "free text" })) : [{ id: "text", goal: "free text" }]);
   const asks = step.type === "checkpoint" && !outcome
     ? (step.fields || []).map((f) => ({ id: f.name, goal: f.label || f.hint || "free text" }))
-    : [];
+    : openQuestion
+      ? asFields(openQuestion)
+      : [];
   const said = outcome
     ? Object.entries(outcome.response || {}).map(([name, value]) => ({ id: name, goal: value }))
-    : [];
+    : answeredQuestion
+      ? Object.entries(answeredQuestion.response || {}).map(([name, value]) => ({ id: name, goal: value }))
+      : [];
 
   return {
     // Which node this panel is about. The review-note thread hangs off it, the way a
@@ -3411,7 +3541,9 @@ function stepPanel(step, stepState, def, laneMetadata) {
         : meta,
     warn:
       stepState.status === "blocked"
-        ? "Waiting on you. This run does not move until it is decided — answer it in Approvals."
+        ? openQuestion
+          ? `Waiting on you: ${openQuestion.text} — answer it in Approvals.`
+          : "Waiting on you. This run does not move until it is decided — answer it in Approvals."
         : null,
     summary,
     summaryColor: stepState.status === "failed" ? BAD : "var(--color-neutral-600)",
@@ -4420,6 +4552,21 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
                 openRun(stepState.child_run_id);
               }
             : null,
+        }),
+      // Any step, not just a checkpoint, can be waiting on a question it asked mid-execution
+      // — the plan did not declare this one in advance, so there is no dedicated step type
+      // to key the tag off; an open question on the step's own state is what shows it.
+      step.type !== "checkpoint" &&
+        step.type !== "workflow_ref" &&
+        !step.ghost &&
+        hasOpenQuestion(stepState) &&
+        el("span", {
+          class: "node-tag waiting",
+          text: "? waiting on you →",
+          onClick: (e) => {
+            e.stopPropagation();
+            go("approvals");
+          },
         }),
       step.ghost && el("span", { class: "node-tag ghost", text: "proposed" }),
       !step.ghost &&
