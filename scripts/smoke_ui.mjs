@@ -893,11 +893,16 @@ await new Promise((r) => setTimeout(r, 20));
 // collapsed, whichever-instance-overlaid-last state the shared body used to show. Scoped to
 // the inspector itself: the node's own summary is "north h failed" too, so a page-wide
 // search would pass even if the panel opened the wrong branch's state.
-const northPanelFailed = JSON.stringify(findByClass(mainNode(), "inspector")[0]).includes("north h failed");
+const northInspector = JSON.stringify(findByClass(mainNode(), "inspector")[0]);
+const northPanelFailed = northInspector.includes("north h failed");
+// The panel's own title is the step's goal with this branch's parameter filled in — not the
+// raw placeholder the definition carries, which is what a person actually clicked in for.
+const northPanelTitleFilled = northInspector.includes("verify north") && !northInspector.includes("{{ shard }}");
 clickByText("verify south");
 await new Promise((r) => setTimeout(r, 20));
 const southPanelText = JSON.stringify(findByClass(mainNode(), "inspector")[0]);
 const southPanelOk = southPanelText.includes("south h done") && !southPanelText.includes("north h failed");
+const southPanelTitleFilled = southPanelText.includes("verify south") && !southPanelText.includes("{{ shard }}");
 // Deselect, restoring the no-selection view the tests below expect.
 clickByText("verify south");
 await new Promise((r) => setTimeout(r, 20));
@@ -1382,7 +1387,7 @@ console.log(`template graph: ${templateNodes} nodes, ${paramFields} parameter fi
 console.log("workflow dialog opened:", dialogOpened);
 console.log(`draft graph: ${draftNodes} nodes, ${draftGates} loop gates, ${draftEdgeLabels} branch labels`);
 console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
-console.log(`parallel:    ${laneLabels} lane labels, goals filled=${laneGoalsFilled}, north panel=${northPanelFailed}, south panel=${southPanelOk}`);
+console.log(`parallel:    ${laneLabels} lane labels, goals filled=${laneGoalsFilled}, north panel=${northPanelFailed}/${northPanelTitleFilled}, south panel=${southPanelOk}/${southPanelTitleFilled}`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
@@ -1929,7 +1934,9 @@ const ok =
   laneLabels === 4 &&
   laneGoalsFilled &&
   northPanelFailed &&
+  northPanelTitleFilled &&
   southPanelOk &&
+  southPanelTitleFilled &&
   // A template draws like any other plan, and its dialog asks for one field per parameter.
   templateNodes === 8 &&
   paramFields === 2 &&

@@ -3347,7 +3347,7 @@ function edgeDefs() {
 
 // ── run detail: inspector panels ─────────────────────────────────────────────────────────
 
-function stepPanel(step, stepState, def) {
+function stepPanel(step, stepState, def, laneMetadata) {
   const arts = stepArtifacts(stepState);
   const { arts: inputArts, contracts: inputContracts, meta: inputMeta } = splitInputs(step.inputs);
   const { contracts: outputContracts, meta: outputMeta } = splitInputs(step.outputs);
@@ -3396,8 +3396,13 @@ function stepPanel(step, stepState, def) {
       step.type === "checkpoint"
         ? `Checkpoint · ${outcome ? outcome.decision : stepState.status}`
         : `Step · ${stepState.status}`,
-    title: step.goal,
-    criteria: step.criteria || [],
+    // A step opened from a fanned branch fills its own branch's parameters — the node
+    // already reads this way on the graph, and the panel showing the placeholder back is
+    // what a person is asking about when they click it to see the value.
+    title: laneMetadata ? fillParams(step.goal, laneMetadata) : step.goal,
+    criteria: (step.criteria || []).map((c) =>
+      laneMetadata ? { ...c, text: fillParams(c.text, laneMetadata) } : c,
+    ),
     criteriaMet: stepState.criteria_met || {},
     metaLine:
       outcome
@@ -4447,7 +4452,7 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
       // for the real step with that one branch's own state, not the collapsed shared one.
       const lane = display.find((s) => `step:${s.id}` === selected && s._lane);
       const realStep = lane && def.steps.find((s) => s.id === lane._realId);
-      if (realStep) panel = stepPanel(realStep, stateOf(lane), def);
+      if (realStep) panel = stepPanel(realStep, stateOf(lane), def, lane._lane.metadata);
     }
   } else if (selected?.startsWith("am:")) {
     const amendment = pending.find((a) => `am:${a.amendment_id}` === selected);
