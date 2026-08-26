@@ -134,6 +134,12 @@ export const labelWorkflow = (workflowId, patch) =>
 export const listTemplates = () => request("/templates");
 export const archiveTemplate = (templateId) => post(`/templates/${templateId}/archive`, {});
 
+/** Permanent, and not the same act as archiving: the shape itself is gone. A workflow
+    already made from it carries its own steps and its own lineage record, so nothing
+    downstream breaks. The audit trail stays. No MCP tool — see the route. */
+export const deleteTemplate = (templateId) =>
+  request(`/templates/${templateId}`, { method: "DELETE" });
+
 /** Build a draft workflow from a template. The server refuses a missing required parameter
     or an unknown name, so the caller must surface the error rather than assume it took. */
 export const instantiateTemplate = (templateId, parameters, title) =>

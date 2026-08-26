@@ -505,6 +505,25 @@ class Chief:
             self.store.audit(conn, "template.archived", detail={"template_id": template_id})
         return template
 
+    def delete_template(self, template_id: str) -> dict[str, Any]:
+        """Remove a template permanently. Distinct from archiving, same reasoning as
+        ``delete_workflow``: archiving keeps the record and stops it being offered; this is
+        for the shape that should never have been saved.
+
+        A workflow already made from this template is untouched — it carries its own steps
+        and its own `from_template` lineage record, not a live reference back here — so
+        nothing downstream breaks. The audit trail survives, with a new entry for this.
+        """
+        template = self.store.get_template(template_id)
+        with self.store.transaction() as conn:
+            self.store.delete_template(conn, template_id)
+            self.store.audit(
+                conn,
+                "template.deleted",
+                detail={"template_id": template_id, "title": template.title},
+            )
+        return {"template_id": template_id, "title": template.title, "deleted": True}
+
     def instantiate_template(
         self, template_id: str, body: TemplateInstantiate
     ) -> WorkflowDefinition:

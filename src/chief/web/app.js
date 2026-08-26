@@ -33,7 +33,7 @@
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
   createTemplate, createTemplateFromWorkflow, createWorkflow,
-  decideAmendment, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
+  decideAmendment, deleteTemplate, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
   decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint,
@@ -235,7 +235,17 @@ function bodyStepsOf(step, def) {
     node type, because Chief records what the harness did rather than enforcing a bound.
 
     Recursive, since a body step may itself be a construct. Display-only: the returned steps
-    are copies with synthesised `depends_on`; the definition is never touched. */
+    are copies with synthesised `depends_on`; the definition is never touched.
+
+    A `parallel` construct with more than one registered branch is the one case where a
+    single shared body would be a lie: the branches are concurrent, not a sequence of
+    attempts, so each registered instance gets its own copy of the body — its own nodes,
+    fanning out from the same entry deps and rejoining at the gate — coloured and labelled
+    by that branch alone. A `loop` stays a single inlined body regardless of iteration
+    count: its instances *are* a sequence in time, so "the current body, older ones as
+    history at the gate" already tells the truth. Zero or one registered branch also stays
+    a single body — a draft, a template, or a run that hasn't reached the construct yet has
+    nothing to fan out. */
 function flattenConstructs(steps, ctx) {
   const out = [];
   const expand = (step, inheritedDeps) => {
@@ -248,6 +258,41 @@ function flattenConstructs(steps, ctx) {
     const inBody = new Set(body.map((s) => s.id));
     const entries = body.filter((s) => !(s.depends_on || []).some((d) => inBody.has(d)));
     const exits = body.filter((s) => !body.some((o) => (o.depends_on || []).includes(s.id)));
+
+    const instances = step.type === "parallel" ? (ctx.stateOf(step).instances || []) : [];
+    if (instances.length > 1) {
+      const allExitIds = [];
+      for (const instance of instances) {
+        // Prefixed with this construct's own (possibly already-suffixed) id, not built
+        // fresh from the real child id — a nested parallel inside an already-fanned branch
+        // must compose its ids with the outer branch's, or two different outer branches
+        // fanning the same nested construct would mint identical ids for their inner
+        // branches and silently collide in the layout.
+        const laneId = (id) => `${step.id}::${id}@${instance.instance_id}`;
+        const laneLabel =
+          `Branch ${instance.index + 1}` +
+          (instanceParamLabel(step, instance) ? ` · ${instanceParamLabel(step, instance)}` : "");
+        for (const child of body) {
+          const inner = (child.depends_on || []).filter((d) => inBody.has(d)).map(laneId);
+          const isEntry = entries.includes(child);
+          expand(
+            {
+              ...child,
+              id: laneId(child.id),
+              depends_on: isEntry ? [...deps, ...inner] : inner,
+              _lane: instance, _realId: child.id, _laneLabel: laneLabel,
+            },
+            isEntry ? [...deps, ...inner] : inner,
+          );
+        }
+        allExitIds.push(...exits.map((s) => laneId(s.id)));
+      }
+      out.push({
+        ...step, gate: true, entryIds: entries.map((s) => s.id), depends_on: allExitIds,
+      });
+      return;
+    }
+
     for (const child of body) {
       const inner = (child.depends_on || []).filter((d) => inBody.has(d));
       expand(child, entries.includes(child) ? [...deps, ...inner] : inner);
@@ -706,7 +751,10 @@ function jsonValue(value, depth) {
 }
 
 const isText = (type) =>
-  type.startsWith("text/") || type === "application/json" || type === "text/csv";
+  // HTML starts with "text/" too, but it does not belong here: it needs the sandboxed
+  // frame below, not a `<pre>` dump of its markup.
+  (type.startsWith("text/") && type !== "text/html") ||
+  type === "application/json" || type === "text/csv";
 
 /** The file itself, rendered by what Chief said it may be shown as. */
 /** The frame has no stylesheet of its own, so it carries just enough to be readable. It is
@@ -918,6 +966,24 @@ function viewerBody(viewer) {
   if (file.mediaType === "application/pdf") {
     // The browser's own viewer, on a blob this page owns.
     return keep(el("iframe", { class: "viewer-frame", src: viewerObjectUrl, title: file.name }));
+  }
+  if (file.mediaType === "text/html") {
+    // Hardcoded rather than run through `frameSandbox`: that helper answers "is this URL
+    // cross-origin from Chief", which is the wrong question here — a blob built from an
+    // artifact's own bytes is same-origin with Chief by construction (blob: URLs always
+    // carry the origin of the page that created them) no matter whose markup it holds, so
+    // the same-origin/cross-origin distinction never applies. What always applies is that
+    // this is content Chief received, not content it wrote — same treatment `mdxFrame`
+    // gives a document's compiled components. Script in it runs; it cannot read this
+    // page's DOM, cookies or storage.
+    return keep(el("iframe", {
+      class: "viewer-frame", src: viewerObjectUrl, title: file.name,
+      // The same base flags `frameSandbox` grants any framed page — forms and native
+      // dialogs are ordinary things a rendered report or dashboard may use — with
+      // `allow-same-origin` never on the table, for the reason above.
+      sandbox: "allow-scripts allow-forms allow-popups allow-modals",
+      referrerpolicy: "no-referrer",
+    }));
   }
   return keep(el(
     "div",
@@ -1963,6 +2029,13 @@ const state = {
   pgProject: null,
   pgSort: { key: "updated", dir: "desc" },
   pgPage: 1,
+
+  // The templates list, same shape again.
+  tplQuery: "",
+  tplFilter: "active",
+  tplProject: null,
+  tplSort: { key: "updated", dir: "desc" },
+  tplPage: 1,
 };
 
 function setState(patch) {
@@ -2263,26 +2336,60 @@ function openDialog(amendment, approve) {
 /** The workflow-lifecycle decisions (REQ-32). Same dialog, because the thing that matters
     about it is not the wording but that the server's answer is believed rather than
     assumed — the status may have moved under us since the list was loaded. */
-/** Asking before erasing a plan and everything it ran.
+/** Asking before erasing something permanently, for whichever of the three kinds is being
+    deleted. One dialog rather than three, because the question is the same shape every
+    time — what goes, what survives, and no reason to record, unlike archiving — and only
+    the copy and the call underneath it differ. */
+const DELETE_KINDS = {
+  workflow: {
+    title: "Delete workflow",
+    id: (w) => w.workflow_id,
+    warn:
+      "and its full history — steps, iterations, artifacts, approvals — will be " +
+      "permanently removed. This cannot be undone.",
+    note:
+      "Files on disk are not touched, and the audit log keeps a record of the deletion. " +
+      "A template saved from this workflow is kept.",
+    action: (w) => deleteWorkflow(w.workflow_id),
+    listView: "workflows",
+  },
+  template: {
+    title: "Delete template",
+    id: (t) => t.template_id,
+    warn: "will be permanently removed. This cannot be undone.",
+    note:
+      "A workflow already made from this template carries its own steps and its own " +
+      "lineage record, so it is untouched. The audit log keeps a record of the deletion.",
+    action: (t) => deleteTemplate(t.template_id),
+    listView: "templates",
+  },
+  graph: {
+    title: "Delete proof graph",
+    id: (g) => g.graph_id,
+    warn: "— its Lean source and the verdict on it — will be permanently removed. This cannot be undone.",
+    note:
+      "A workflow already compiled from this graph is an ordinary workflow in its own " +
+      "right, so it is untouched. The audit log keeps a record of the deletion.",
+    action: (g) => deleteProofGraph(g.graph_id),
+    listView: "graphs",
+  },
+};
 
-    Its own dialog rather than a third `action` on the one above, because the question is a
-    different shape: archiving asks for a reason to record, and there will be no record here
-    to attach one to. What this owes the reader instead is an accurate list of what goes and
-    what does not — which is why the copy names the audit trail and the files on disk. */
-function openDeleteDialog(workflow) {
+function openDeleteDialog(kind, item) {
   setState({
     dialog: {
       subject: "delete",
-      workflow,
+      kind, item,
       busy: false,
       error: null,
-      key: `del:${workflow.workflow_id}`,
+      key: `del:${kind}:${DELETE_KINDS[kind].id(item)}`,
     },
   });
 }
 
 function deleteDialogNode() {
-  const { workflow, busy, error } = state.dialog;
+  const { kind, item, busy, error } = state.dialog;
+  const spec = DELETE_KINDS[kind];
   return el(
     "div",
     { class: "dialog-backdrop", onClick: () => !busy && setState({ dialog: null }) },
@@ -2292,22 +2399,16 @@ function deleteDialogNode() {
         class: "confirm-pop", role: "dialog", "aria-modal": "true",
         onClick: (event) => event.stopPropagation(),
       },
-      el("span", { class: "section-label", text: "Delete workflow" }),
+      el("span", { class: "section-label", text: spec.title }),
       el(
         "p",
         {},
-        el("strong", { text: workflow.title }),
+        el("strong", { text: item.title }),
         // Said plainly and in full. A confirmation that undersells what it removes is worse
         // than none, because it buys agreement the person did not actually give.
-        " and its full history — steps, iterations, artifacts, approvals — will be " +
-          "permanently removed. This cannot be undone.",
+        ` ${spec.warn}`,
       ),
-      el("p", {
-        class: "text-muted", style: { fontSize: "12px" },
-        text:
-          "Files on disk are not touched, and the audit log keeps a record of the deletion. " +
-          "A template saved from this workflow is kept.",
-      }),
+      el("p", { class: "text-muted", style: { fontSize: "12px" }, text: spec.note }),
       error && el("p", { style: { fontSize: "12px", color: "var(--bad)" }, text: error }),
       el(
         "div",
@@ -2318,16 +2419,16 @@ function deleteDialogNode() {
         }),
         el("button", {
           class: "btn btn-secondary btn-danger btn-sm",
-          text: busy ? "Deleting…" : "Delete workflow", disabled: busy,
+          text: busy ? "Deleting…" : spec.title, disabled: busy,
           onClick: async () => {
             state.dialog.busy = true;
             render();
             try {
-              await deleteWorkflow(workflow.workflow_id);
+              await spec.action(item);
               setState({ dialog: null });
               // Back to the list either way: the screen behind this one may have been the
-              // workflow that no longer exists.
-              go("workflows");
+              // thing that no longer exists.
+              go(spec.listView);
               await refresh();
             } catch (err) {
               state.dialog.busy = false;
@@ -2522,7 +2623,7 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       "aria-label": `Delete ${workflow.title}`,
       onClick: (event) => {
         event.stopPropagation();
-        openDeleteDialog(workflow);
+        openDeleteDialog("workflow", workflow);
       },
     }),
   );
@@ -3792,14 +3893,46 @@ function templateRow(template) {
       el("span", { text: template.title }),
       el("span", { class: "id text-muted", text: template.template_id }),
     ),
-    el("span", {
-      class: "status text-muted",
-      text: template.parameters.length
-        ? template.parameters.map((p) => p.name).join(", ")
-        : "no parameters",
-    }),
+    el("span", { class: "status text-muted", text: archived ? "archived" : "active" }),
     el("span", { class: "when", text: `${template.steps.length} steps` }),
+    el("span", {
+      class: "stamp c-added", text: stamp(template.created_at),
+      title: template.created_at ? new Date(template.created_at).toLocaleString() : null,
+    }),
+    el("span", {
+      class: "stamp c-updated", text: stamp(template.updated_at),
+      title: template.updated_at ? `${relAgo(template.updated_at)} · ${new Date(template.updated_at).toLocaleString()}` : null,
+    }),
+    el("button", {
+      class: "row-del", text: "✕", title: `Delete ${template.title}…`,
+      "aria-label": `Delete ${template.title}`,
+      onClick: (event) => {
+        event.stopPropagation();
+        openDeleteDialog("template", template);
+      },
+    }),
   );
+}
+
+const TPL_FILTERS = [
+  { key: "active", label: "Active", of: (t) => t.status !== "archived" },
+  { key: "archived", label: "Archived", of: (t) => t.status === "archived" },
+  { key: "all", label: "All", of: () => true },
+];
+
+const TPL_COLUMNS = [
+  { key: "title", label: "Template", cls: "title", dir: "asc", of: (t) => t.title.toLowerCase() },
+  { key: "status", label: "Status", cls: "status", dir: "asc", of: (t) => (t.status === "archived" ? 1 : 0) },
+  { key: "steps", label: "Steps", cls: "when", dir: "desc", of: (t) => t.steps.length },
+  { key: "added", label: "Added", cls: "stamp", dir: "desc", of: (t) => t.created_at || "" },
+  { key: "updated", label: "Last updated", cls: "stamp", dir: "desc", of: (t) => t.updated_at || "" },
+];
+
+const TPL_DEFAULT_COLUMN = TPL_COLUMNS.find((c) => c.key === "updated");
+
+function sortTemplates(key, dir) {
+  const col = TPL_COLUMNS.find((c) => c.key === key) || TPL_DEFAULT_COLUMN;
+  setState({ tplSort: { key, dir: dir || col.dir } });
 }
 
 function templatesScreen() {
@@ -3820,11 +3953,36 @@ function templatesScreen() {
     );
   }
   const active = templates.filter((t) => t.status === "active");
-  const archived = templates.filter((t) => t.status === "archived");
+
+  const filter = TPL_FILTERS.find((f) => f.key === state.tplFilter) || TPL_FILTERS[0];
+  const q = state.tplQuery.trim().toLowerCase();
+  const matches = (t) =>
+    !q ||
+    t.title.toLowerCase().includes(q) ||
+    t.template_id.includes(q) ||
+    (t.project || "").toLowerCase().includes(q) ||
+    t.parameters.some((p) => p.name.toLowerCase().includes(q));
+  const inProject = (t) =>
+    state.tplProject === null ||
+    (state.tplProject === UNFILED ? !t.project : t.project === state.tplProject);
+  const shown = templates.filter((t) => filter.of(t) && inProject(t) && matches(t));
+
+  const { key, dir } = state.tplSort;
+  const col = TPL_COLUMNS.find((c) => c.key === key) || TPL_DEFAULT_COLUMN;
+  const sign = dir === "desc" ? -1 : 1;
+  const cmp = (a, b) => {
+    const [x, y] = [col.of(a), col.of(b)];
+    if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
+    return x < y ? -sign : x > y ? sign : 0;
+  };
+  const sorted = [...shown].sort((a, b) => cmp(a, b) || a.title.localeCompare(b.title));
+  const { slice, page, totalPages } = paginate(sorted, "tplPage");
 
   return el(
     "main",
-    { class: "narrow", "data-screen-label": "Templates" },
+    // Wide, matching the other two lists: a table wants the room a narrow reading column
+    // does not have.
+    { class: "wide", "data-screen-label": "Templates" },
     el(
       "header",
       { class: "screen-head" },
@@ -3840,25 +3998,61 @@ function templatesScreen() {
         onClick: importTemplateFile,
       }),
     ),
+    templates.length > 0 &&
+      el(
+        "div",
+        { class: "list-controls" },
+        el(
+          "div",
+          { class: "chips" },
+          TPL_FILTERS.map((f) => {
+            const count = templates.filter((t) => f.of(t)).length;
+            return el("button", {
+              class: "chip" + (f.key === filter.key ? " on" : ""),
+              text: `${f.label} ${count}`,
+              onClick: () => setState({ tplFilter: f.key }),
+            });
+          }),
+        ),
+        projectChips(templates, (t) => t.project, "tplProject"),
+        el("input", {
+          id: "tpl-search", class: "field-search", type: "search",
+          placeholder: "Filter by name, id or parameter", value: state.tplQuery,
+          onInput: (e) => setState({ tplQuery: e.target.value }),
+        }),
+      ),
     templates.length === 0 &&
       el("p", {
         class: "text-muted", style: { fontSize: "13px", margin: "0" },
         text: "No templates yet. Save one from a workflow that worked, or POST /templates.",
       }),
-    el("div", { style: { display: "flex", flexDirection: "column" } }, active.map(templateRow)),
-    archived.length > 0 &&
+    shown.length > 0 &&
       el(
-        "section",
-        { style: { display: "flex", flexDirection: "column" } },
-        el("h5", {
-          style: {
-            margin: "var(--space-4) 0 var(--space-1)", fontSize: "11px", textTransform: "uppercase",
-            letterSpacing: "0.06em", color: "var(--color-neutral-500)",
-          },
-          text: `Archived · ${archived.length}`,
-        }),
-        ...archived.map(templateRow),
+        "div",
+        { class: "list-wrap" },
+        el(
+          "div",
+          { class: "list-head" },
+          TPL_COLUMNS.map((c) =>
+            el("button", {
+              class: `col-head col-${c.key} ${c.cls}` + (c.key === key ? " on" : ""),
+              text: c.label + (c.key === key ? (dir === "desc" ? " ↓" : " ↑") : ""),
+              onClick: () =>
+                sortTemplates(c.key, c.key === key ? (dir === "asc" ? "desc" : "asc") : c.dir),
+            }),
+          ),
+          el("span", { class: "row-del-spacer" }),
+        ),
+        slice.map((t) => templateRow(t)),
       ),
+    pagerControls(page, totalPages, sorted.length, "tplPage"),
+    templates.length > 0 && shown.length === 0 &&
+      el("p", {
+        class: "text-muted", style: { fontSize: "13px", margin: "var(--space-3) 0 0" },
+        text: q
+          ? `No ${filter.label.toLowerCase()} template matches “${state.tplQuery.trim()}”.`
+          : `No ${filter.label.toLowerCase()} templates.`,
+      }),
   );
 }
 
@@ -3944,6 +4138,10 @@ function templateDetailScreen() {
             class: "btn btn-secondary btn-sm", text: "Archive…",
             onClick: () => openTemplateArchiveDialog(template),
           }),
+          el("button", {
+            class: "btn btn-secondary btn-danger btn-sm", text: "Delete…",
+            onClick: () => openDeleteDialog("template", template),
+          }),
         ),
     ),
     splitView(viewport, panel || templatePanel(template, topSteps)),
@@ -4009,8 +4207,15 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
     }
   };
   overlay(stepStates);
-  const stateOf = (step) =>
-    step.ghost ? { status: "pending" } : effective[step.id] || { status: "pending" };
+  // A fanned-out branch node looks up its own state in the instance it was drawn for,
+  // keyed by the real (un-suffixed) step id — the instance's own step_states, not the
+  // shared `effective` map every other node reads, is what makes lane 2 show lane 2's
+  // outcome instead of whichever branch happened to overlay last.
+  const stateOf = (step) => {
+    if (step.ghost) return { status: "pending" };
+    if (step._lane) return (step._lane.step_states || {})[step._realId] || { status: "pending" };
+    return effective[step.id] || { status: "pending" };
+  };
   // What every depth of the recursive renderer needs.
   const ctx = { plannedBody, stateOf, pending, selected };
 
@@ -4120,8 +4325,10 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
       (step.ghost && selected === `am:${step.amendment.amendment_id}`);
     const pendingHere =
       !step.ghost &&
-      pending.find((a) => a.operations.some((o) => o.target_step_id === step.id));
-    const pastHere = !step.ghost && past.find((a) => a.operations.some((o) => o.target_step_id === step.id));
+      pending.find((a) => a.operations.some((o) => o.target_step_id === (step._realId || step.id)));
+    const pastHere =
+      !step.ghost &&
+      past.find((a) => a.operations.some((o) => o.target_step_id === (step._realId || step.id)));
     const outcome = outcomeOf(stepState);
     const artCount = stepArtifacts(stepState).length;
 
@@ -4136,6 +4343,12 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
 
     const showSummary =
       !step.ghost && ["completed", "failed", "running"].includes(stepState.status) && stepState.summary;
+    // A fanned branch node reads its own goal with that branch's parameters filled in —
+    // read-time only, per fillParams's own contract, so the definition stays untouched.
+    const goalText = step._lane ? fillParams(step.goal, step._lane.metadata) : step.goal;
+    // Notes hang off the real step id, not a per-branch synthetic one — a branch is a copy
+    // of the body for drawing, not a second step with its own comment thread.
+    const noteId = step._realId || step.id;
 
     const node = el(
       "div",
@@ -4145,12 +4358,13 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           left: `${pos[step.id].x}px`, top: `${pos[step.id].y}px`,
           width: `${nodeW}px`, height: `${pos[step.id].h}px`,
         },
-        title: step.goal,
+        title: goalText,
         onClick: () =>
           step.ghost
             ? setState({ selected: `am:${step.amendment.amendment_id}` })
             : setState({ selected: isSelected ? "none" : `step:${step.id}` }),
       },
+      step._laneLabel && el("span", { class: "node-lane", text: step._laneLabel }),
       el(
         "span",
         { class: "node-head" },
@@ -4163,7 +4377,7 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           class:
             "node-goal" +
             (step.ghost ? " ghosted" : ["pending", "skipped"].includes(stepState.status) ? " dimmed" : ""),
-          text: showSummary ? stepState.summary : step.goal,
+          text: showSummary ? stepState.summary : goalText,
         }),
       ),
       artCount > 0 && el("span", { class: "node-arts", text: `⌗ ${artCount}` }),
@@ -4171,8 +4385,8 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
       // without opening every one of them. Click goes through to the node as usual — the
       // thread is in the inspector the click opens.
       !step.ghost &&
-        openNoteCount(step.id) > 0 &&
-        el("span", { class: "node-notes", text: `💬 ${openNoteCount(step.id)}` }),
+        openNoteCount(noteId) > 0 &&
+        el("span", { class: "node-notes", text: `💬 ${openNoteCount(noteId)}` }),
       // The one node a person can act on from here. It says who it is waiting for, and the
       // inbox is where it gets answered — the graph shows the plan, it is not a form.
       step.type === "checkpoint" &&
@@ -4227,6 +4441,14 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
     // def.steps, not topSteps: a body node inside a construct is selectable too.
     const step = def.steps.find((s) => `step:${s.id}` === selected);
     if (step) panel = stepPanel(step, stateOf(step), def);
+    else {
+      // No match against a real step id means this is a fanned branch's synthetic id
+      // (`realId@instanceId`) — look it up in the flattened display, then open the panel
+      // for the real step with that one branch's own state, not the collapsed shared one.
+      const lane = display.find((s) => `step:${s.id}` === selected && s._lane);
+      const realStep = lane && def.steps.find((s) => s.id === lane._realId);
+      if (realStep) panel = stepPanel(realStep, stateOf(lane), def);
+    }
   } else if (selected?.startsWith("am:")) {
     const amendment = pending.find((a) => `am:${a.amendment_id}` === selected);
     if (amendment) panel = amendmentPanel(amendment, true, def, stepStates);
@@ -4408,7 +4630,7 @@ function workflowDetailScreen() {
           }),
           el("button", {
             class: "btn btn-secondary btn-danger btn-sm", text: "Delete…",
-            onClick: () => openDeleteDialog(workflow),
+            onClick: () => openDeleteDialog("workflow", workflow),
           }),
           // Keeping a plan that worked. Parameterising it means saying which literals become
           // knobs, which this screen has no way to ask — so the copy is unparameterised and
@@ -5193,6 +5415,14 @@ function graphRow(graph) {
       class: "stamp c-updated", text: stamp(graph.updated_at),
       title: graph.updated_at ? `${relAgo(graph.updated_at)} · ${new Date(graph.updated_at).toLocaleString()}` : null,
     }),
+    el("button", {
+      class: "row-del", text: "✕", title: `Delete ${graph.title}…`,
+      "aria-label": `Delete ${graph.title}`,
+      onClick: (event) => {
+        event.stopPropagation();
+        openDeleteDialog("graph", graph);
+      },
+    }),
   );
 }
 
@@ -5358,6 +5588,7 @@ function proofGraphsScreen() {
                 sortGraphs(c.key, c.key === key ? (dir === "asc" ? "desc" : "asc") : c.dir),
             }),
           ),
+          el("span", { class: "row-del-spacer" }),
         ),
         slice.map((r) => graphRow(r.graph)),
       ),
@@ -5707,6 +5938,11 @@ function graphDetailScreen() {
         text: state.graphCopied === graph.graph_id ? "Copied" : "Copy source",
         title: "Puts the Lean source on the clipboard, for pasting into a message or a file",
         onClick: () => copyGraphSource(graph),
+      }),
+      el("button", {
+        class: "btn btn-secondary btn-danger btn-sm", style: { marginLeft: "auto" },
+        text: "Delete…",
+        onClick: () => openDeleteDialog("graph", graph),
       }),
     ),
     (graph.compiled_to || []).length > 0 &&

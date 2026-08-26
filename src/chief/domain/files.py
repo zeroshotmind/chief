@@ -47,6 +47,12 @@ RENDERABLE = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
     ".webp": "image/webp", ".bmp": "image/bmp", ".avif": "image/avif",
     ".pdf": "application/pdf",
+    # The real IANA type, unlike `.mdx` above, and safely so: the response body is always
+    # octet-stream regardless of what is named here (see `artifact_content`), so this never
+    # controls what hits the wire — only what the UI is told it may render, and it renders
+    # HTML in a sandboxed frame with no `allow-same-origin`, never inline on Chief's own
+    # origin. See `viewerBody` in app.js.
+    ".html": "text/html", ".htm": "text/html",
 }
 
 
@@ -67,11 +73,14 @@ class ArtifactFile:
 def media_type(path: Path) -> str:
     """What this file may be rendered as.
 
-    An allowlist, not a guess. ``mimetypes`` would happily return ``text/html`` for a
-    ``.html`` artifact, and a document served as HTML from Chief's own origin could script
-    the page that fetched it — the UI reads the run you are looking at. Anything outside the
-    list is ``application/octet-stream``, which no browser renders as anything: the UI shows
-    it as a file with a size and a download, and an ``.html`` artifact is read as source.
+    An allowlist, not a guess. ``mimetypes`` would happily return ``image/svg+xml`` for an
+    ``.svg`` artifact, and SVG can carry a ``<script>`` same as HTML can — this list is what
+    keeps that a download rather than something the browser executes. HTML *is* on the
+    list, deliberately: unlike serving it same-origin, the UI renders it in a sandboxed
+    frame with no ``allow-same-origin``, so a script in it can run but cannot read Chief's
+    own DOM, cookies, or storage. Anything outside the list is ``application/octet-stream``,
+    which no browser renders as anything: the UI shows it as a file with a size and a
+    download.
     """
     suffix = path.suffix.lower()
     if suffix in RENDERABLE:

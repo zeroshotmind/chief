@@ -67,6 +67,11 @@ REST_ONLY = {
     # decision the harness may only make on an instruction in the turn; this one has no
     # legitimate agent-initiated form at all, so it does not get a tool.
     "delete_workflow",
+    # Same reasoning, for a reusable shape and a checked graph: erasing either is further
+    # down the road `approve_workflow` already restricts, and neither has a legitimate
+    # agent-initiated form.
+    "delete_template",
+    "delete_proof_graph",
 }
 
 

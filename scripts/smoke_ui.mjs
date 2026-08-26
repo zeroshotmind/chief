@@ -131,6 +131,14 @@ const STEPS = [
   // The step the run stops on. A person decides it, and is asked one thing in writing.
   { id: "e", type: "checkpoint", goal: "ship it?", harness: "human", depends_on: ["a"],
     fields: [{ name: "budget", label: "How much may it spend?", hint: "$", required: true }] },
+  // A parallel construct: on a draft or a template it collapses to a single inlined body
+  // like the loop above, but a run with more than one registered branch has to draw each
+  // branch as its own path — the branches are concurrent, and one shared copy colored by
+  // whichever reported last would say otherwise.
+  { id: "f", type: "parallel", goal: "scan the shards", harness: "claude-code", depends_on: [], body: ["g", "h"],
+    instance_params: [{ name: "shard", description: "which shard this branch handles", required: true }] },
+  { id: "g", type: "task", goal: "scan {{ shard }}", harness: "claude-code", depends_on: [] },
+  { id: "h", type: "task", goal: "verify {{ shard }}", harness: "claude-code", depends_on: ["g"] },
 ];
 // created_at/updated_at are the store's stamps on the record, not fields a harness sends;
 // the list sorts by them, so the fixture carries them in a deliberately un-alphabetical
@@ -178,9 +186,22 @@ const RUN = {
       // one artifact kind that actually reloads if its DOM node is ever detached and put
       // back, which is exactly what typing elsewhere on the page used to do to it.
       { artifact_id: "art_6", type: "file", description: "Report", ref: "notes/report.pdf", data: null, comments: [] },
+      // HTML, rendered rather than downloaded — sandboxed, never same-origin with Chief.
+      { artifact_id: "art_7", type: "file", description: "Page", ref: "notes/page.html", data: null, comments: [] },
     ] },
     b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { paper: "arxiv:2401.11111", seed: 7, deep: { a: 1 } } }] },
     e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
+    // Two registered branches, each with its own body states — the fan-out this step is
+    // meant to exercise. One branch failed on its second step; the other finished clean, so
+    // the two lanes read differently at a glance rather than only in the inspector.
+    f: { step_id: "f", status: "running", instances: [
+      { instance_id: "p0", kind: "branch", index: 0, status: "failed", summary: "north", metadata: { shard: "north" },
+        step_states: { g: { step_id: "g", status: "completed", summary: "north g done" },
+                       h: { step_id: "h", status: "failed", summary: "north h failed" } } },
+      { instance_id: "p1", kind: "branch", index: 1, status: "completed", summary: "south", metadata: { shard: "south" },
+        step_states: { g: { step_id: "g", status: "completed", summary: "south g done" },
+                       h: { step_id: "h", status: "completed", summary: "south h done" } } },
+    ] },
   },
 };
 const TEMPLATES = [
@@ -244,6 +265,10 @@ const FILE_BODIES = {
   art_6: {
     bytes: Uint8Array.from([0x25, 0x50, 0x44, 0x46]), // "%PDF" — content is irrelevant here
     type: "application/pdf", name: "report.pdf",
+  },
+  art_7: {
+    text: "<h1>hello</h1><script>document.title = 'ran'</script>",
+    type: "text/html", name: "page.html",
   },
 };
 // Two proof graphs: one that holds up and one that does not, which is what the graphs
@@ -852,6 +877,31 @@ const runClusters = countClass(mainNode(), "node-cluster");
 // The cycle survives execution: body steps stay drawn, the gate carries the instances.
 const runGates = countClass(mainNode(), "gate");
 
+// The parallel construct's two registered branches: four fanned nodes (two body steps ×
+// two branches), each carrying its own lane label, rather than one shared body coloured by
+// whichever branch happened to overlay last.
+const laneLabels = countClass(mainNode(), "node-lane");
+// Each lane reads its own goal with its own parameter filled in, and its own state — the
+// "north" branch failed on its second step, "south" finished clean, and that has to show
+// up as two differently-coloured nodes rather than one node with a single verdict.
+const laneGoalsFilled =
+  JSON.stringify(mainNode()).includes("scan north") &&
+  JSON.stringify(mainNode()).includes("scan south");
+clickByText("verify north");
+await new Promise((r) => setTimeout(r, 20));
+// The panel this opens is the real step's, scoped to the branch that was clicked — not the
+// collapsed, whichever-instance-overlaid-last state the shared body used to show. Scoped to
+// the inspector itself: the node's own summary is "north h failed" too, so a page-wide
+// search would pass even if the panel opened the wrong branch's state.
+const northPanelFailed = JSON.stringify(findByClass(mainNode(), "inspector")[0]).includes("north h failed");
+clickByText("verify south");
+await new Promise((r) => setTimeout(r, 20));
+const southPanelText = JSON.stringify(findByClass(mainNode(), "inspector")[0]);
+const southPanelOk = southPanelText.includes("south h done") && !southPanelText.includes("north h failed");
+// Deselect, restoring the no-selection view the tests below expect.
+clickByText("verify south");
+await new Promise((r) => setTimeout(r, 20));
+
 // Artifacts: a path you can act on. The relative ref resolves against the stored folder and
 // becomes an editor link; the http one is left exactly as the harness reported it. Both get
 // a copy button, because copying works even when nothing can open the file.
@@ -909,10 +959,10 @@ await new Promise((r) => setTimeout(r, 20));
 // workflow recorded rather than anything held in here.
 const editLinks = findByClass(mainNode(), "art-edit");
 const unlinked = editLinks.length === 1 && editLinks[0].href === "https://example.com/pr/1";
-const stillOpenable = countClass(mainNode(), "art-open") === 6;
+const stillOpenable = countClass(mainNode(), "art-open") === 7;
 // The copy button does not go away with the link: what the harness reported is still worth
 // having on the clipboard.
-const stillCopyable = countClass(mainNode(), "art-copy") === 6;
+const stillCopyable = countClass(mainNode(), "art-copy") === 7;
 
 // Markdown, rendered rather than dumped as one run-on line: a heading, a hard break where
 // the harness put a newline, emphasis, a code span, a list, and maths as MathML.
@@ -1099,6 +1149,22 @@ const pdfSurvivesSelection =
 clickByText("did it");
 await new Promise((r) => setTimeout(r, 30));
 
+// HTML: rendered rather than downloaded, in a sandboxed frame — one with no
+// `allow-same-origin`, unconditionally: a blob built from an artifact's own bytes is
+// Chief's own origin by construction, so granting it would let the artifact's script read
+// Chief's actual page rather than merely running.
+clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
+await new Promise((r) => setTimeout(r, 20));
+clickPath("notes/page.html");
+await new Promise((r) => setTimeout(r, 30));
+const htmlDrawer = findByClass(roots["viewer-root"], "viewer")[0];
+const htmlFrame = findByTag(htmlDrawer, "iframe")[0];
+const htmlRendered = !!htmlFrame && htmlFrame.src.startsWith("blob:");
+const htmlSandboxed =
+  !!htmlFrame &&
+  htmlFrame.sandbox.includes("allow-scripts") &&
+  !htmlFrame.sandbox.includes("allow-same-origin");
+
 // MDX with components beside it: compiled and run inside a sandboxed frame at an opaque
 // origin, so a document's own code executes somewhere it cannot reach this page.
 clickIn(findByClass(roots["viewer-root"], "viewer")[0], "✕");
@@ -1248,7 +1314,7 @@ if (NO_TEMPLATES) {
   const ok404 =
     reached[0] === "Workflows" &&
     reached.includes("Workflow detail") &&
-    draftNodes === 5;
+    draftNodes === 8;
   console.log(ok404 ? "PASS (no templates: everything else still works)" : "FAIL (stuck)");
   process.exit(ok404 ? 0 : 1);
 }
@@ -1316,6 +1382,7 @@ console.log(`template graph: ${templateNodes} nodes, ${paramFields} parameter fi
 console.log("workflow dialog opened:", dialogOpened);
 console.log(`draft graph: ${draftNodes} nodes, ${draftGates} loop gates, ${draftEdgeLabels} branch labels`);
 console.log(`run graph:   ${runNodes} nodes, ${runClusters} instance clusters`);
+console.log(`parallel:    ${laneLabels} lane labels, goals filled=${laneGoalsFilled}, north panel=${northPanelFailed}, south panel=${southPanelOk}`);
 console.log(`checkpoint:  ${waitingNodes} node, asked=${asked}, sent=${JSON.stringify(decision && decision.body)}`);
 console.log(`artifacts:   ${paths.length} paths, ${copyButtons} copy buttons, ${viewButtons} openable, copied=${copied}`);
 console.log(`             ${JSON.stringify(hrefs)}`);
@@ -1324,6 +1391,7 @@ console.log(`criteria:    met-on-run=${critShown}, outstanding-on-draft=${critOu
 console.log(`inputs:      artifact-shown=${inputArtShown}, plain-shown=${inputMetaShown}`);
 console.log(`metadata:    step shown=${stepMetaShown}, folds=${stepMetaFolds}, artifact facts inline=${artFactsInline}, instance inline=${instInline}, full json in drawer=${instDeepInDrawer}`);
 console.log(`viewer:      ${viewButtons} openable paths, opened=${viewerOpened}, rendered=${viewerRendered}, mermaid=${viewerMermaid}, titled=${viewerTitle}, closed=${viewerClosed}, fetches=${fileRequests}`);
+console.log(`             html: rendered=${htmlRendered}, sandboxed=${htmlSandboxed}, sandbox="${(htmlFrame && htmlFrame.sandbox) || ""}"`);
 console.log(`             pdf frame survives typing elsewhere=${pdfSurvivesTyping}, survives selecting another step=${pdfSurvivesSelection}`);
 console.log(`url:          open=${hashWithFile} closed=${hashAfterClose} json=${jsonHash}, reload reopens=${reopened} in ${reloadFetches} fetch, stale id dropped=${staleIgnored} and healed=${staleHealed}`);
 console.log(`frame:        framed=${framed}, not fetched=${frameNotFetched}, page inset=${pageInset}, sandbox="${frame && frame.sandbox}"`);
@@ -1421,6 +1489,74 @@ const graphSortDescending =
 // Back to the default so the rest of this section's row-position assumptions still hold.
 clickByText("Last updated");
 await new Promise((r) => setTimeout(r, 20));
+
+// The template list gets the same treatment. A second, archived template — pushed here
+// rather than up top, so every earlier assertion keeps counting the one template it was
+// written against — gives the Active/Archived/All chips and the sort something to show.
+TEMPLATES.push({
+  template_id: "tpl_2", title: "Zeta backup", description: "cold-storage copy",
+  parameters: [], steps: [], status: "archived", version: 1, derived_from_workflow_id: null,
+  project: null, created_at: "2026-01-01T09:00:00Z", updated_at: "2026-01-01T09:00:00Z",
+});
+clickByText("Templates");
+await new Promise((r) => setTimeout(r, 30));
+const tplActiveOnly =
+  countClass(mainNode(), "run-row") === 1 && JSON.stringify(mainNode()).includes("Triage");
+clickByText("All");
+await new Promise((r) => setTimeout(r, 20));
+const tplAllShowsBoth = countClass(mainNode(), "run-row") === 2;
+typeIntoId("tpl-search", "zeta");
+await new Promise((r) => setTimeout(r, 20));
+const tplSearchNarrows =
+  countClass(mainNode(), "run-row") === 1 &&
+  JSON.stringify(mainNode()).includes("Zeta backup");
+typeIntoId("tpl-search", "");
+await new Promise((r) => setTimeout(r, 20));
+clickByText("Template");
+await new Promise((r) => setTimeout(r, 20));
+const tplTitleAsc = findByClass(mainNode(), "run-row").map((n) => JSON.stringify(n));
+const tplSortAscending =
+  tplTitleAsc.length === 2 && tplTitleAsc[0].includes("Triage") && tplTitleAsc[1].includes("Zeta");
+clickByText("Template");
+await new Promise((r) => setTimeout(r, 20));
+const tplTitleDesc = findByClass(mainNode(), "run-row").map((n) => JSON.stringify(n));
+const tplSortDescending =
+  tplTitleDesc.length === 2 && tplTitleDesc[0].includes("Zeta") && tplTitleDesc[1].includes("Triage");
+clickByText("Last updated");
+await new Promise((r) => setTimeout(r, 20));
+
+// Deleting a template and a proof graph: the same row control, the same confirmation, the
+// same refusal to send anything until it is accepted — exercised once each rather than
+// copying the workflow-delete test three ways.
+clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+const tplDeleteAsksFirst = roots["dialog-root"].children.length > 0;
+clickButton("Cancel");
+await new Promise((r) => setTimeout(r, 20));
+clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+clickButton("Delete template");
+await new Promise((r) => setTimeout(r, 30));
+const tplDeleteSent = posts.find(
+  (x) => x.method === "DELETE" && /\/v1\/templates\/tpl_\w+$/.test(x.url),
+);
+const tplDeleted = !!tplDeleteSent;
+
+clickByText("Proof Graphs");
+await new Promise((r) => setTimeout(r, 30));
+clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+const graphDeleteAsksFirst = roots["dialog-root"].children.length > 0;
+clickButton("Cancel");
+await new Promise((r) => setTimeout(r, 20));
+clickByClass("row-del");
+await new Promise((r) => setTimeout(r, 20));
+clickButton("Delete proof graph");
+await new Promise((r) => setTimeout(r, 30));
+const graphDeleteSent = posts.find(
+  (x) => x.method === "DELETE" && /\/v1\/proof-graphs\/pg_\w+$/.test(x.url),
+);
+const graphDeleted = !!graphDeleteSent;
 
 clickByText("Fraud model refresh");
 await new Promise((r) => setTimeout(r, 30));
@@ -1744,6 +1880,8 @@ const pagerReturnsToPage1 = JSON.stringify(mainNode()).includes("Page 1 of");
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             list row badges: graph=${graphListBadged}, workflow=${workflowListBadged}`);
 console.log(`             graph list: filter narrows=${graphFilterNarrows} resets=${graphFilterResets}, search narrows=${graphSearchNarrows}, sort asc=${graphSortAscending} desc=${graphSortDescending}`);
+console.log(`             template list: active-only=${tplActiveOnly}, all=${tplAllShowsBoth}, search=${tplSearchNarrows}, sort asc=${tplSortAscending} desc=${tplSortDescending}`);
+console.log(`             delete: template asks=${tplDeleteAsksFirst} sent=${tplDeleted}, graph asks=${graphDeleteAsksFirst} sent=${graphDeleted}`);
 console.log(`             contracts=${contractCards} shown=${contractShown}, produces=${promisesShown}, given/needs=${givenAndNeeds}, weakening=${weakeningVisible}, not-json=${notInJsonDrawer}`);
 console.log(`             algorithm lines=${algLines}, rendered+legend=${algShown}, indented=${algIndented}, schema=${schemaShown} nested=${schemaNested}`);
 console.log(`             fixed=${fixedShown} root-offered=${fixedRootOffered} linked-once-set=${fixedLinked} viewed-in-page=${fixedViewed}, notes: badges=${graphNoteBadges} thread=${graphNoteThread} empty-invites=${emptyThreadInvites}, nav-single=${litOnce}`);
@@ -1778,24 +1916,30 @@ const ok =
   expected.every((e, i) => e === actual[i]) &&
   // a + c + d + e + the loop's gate, all ordinary nodes in one flat graph — drafted or
   // running. The checkpoint is a node like any other; what marks it is its class.
-  draftNodes === 5 &&
-  runNodes === 5 &&
-  draftGates === 1 &&
+  draftNodes === 8 &&
+  runNodes === 10 &&
+  draftGates === 2 &&
   draftEdgeLabels === 2 &&
   draftClusters === 0 &&
   // The run's iteration history lives on the gate: one cluster, on the gate node.
-  runClusters === 1 &&
-  runGates === 1 &&
+  runClusters === 2 &&
+  runGates === 2 &&
+  // The parallel construct's two registered branches fan out into their own nodes, each
+  // labelled and reading its own filled parameter and its own state.
+  laneLabels === 4 &&
+  laneGoalsFilled &&
+  northPanelFailed &&
+  southPanelOk &&
   // A template draws like any other plan, and its dialog asks for one field per parameter.
-  templateNodes === 5 &&
+  templateNodes === 8 &&
   paramFields === 2 &&
   // The plan says a person decides this one, and the graph says so without being asked.
   waitingNodes === 1 &&
   asked &&
   // Three artifacts, three paths, a copy control on each — copying works even for the ones
   // that cannot be opened or viewed.
-  paths.length === 6 &&
-  copyButtons === 6 &&
+  paths.length === 7 &&
+  copyButtons === 7 &&
   hrefs.includes("vscode://file/Users/you/work/songs/notes/personas.md") &&
   hrefs.includes("https://example.com/pr/1") &&
   artifactCopied === "/Users/you/work/songs/notes/personas.md" &&
@@ -1835,7 +1979,7 @@ const ok =
   noteResolved.body.resolved === true &&
   // All four are openable: the three files are read by the server, and the URL is framed —
   // which is the only way to see a page rendered by the project that owns its components.
-  viewButtons === 6 &&
+  viewButtons === 7 &&
   viewerOpened &&
   viewerRendered &&
   viewerMermaid &&
@@ -1851,6 +1995,8 @@ const ok =
   frameSandboxed &&
   pdfSurvivesTyping &&
   pdfSurvivesSelection &&
+  htmlRendered &&
+  htmlSandboxed &&
   !selfFrame.includes("allow-same-origin") &&
   crossFrame.includes("allow-same-origin") &&
   // MDX with co-located components: compiled into a sandboxed frame that fetches nothing.
@@ -1980,6 +2126,15 @@ const ok =
   graphSearchNarrows &&
   graphSortAscending &&
   graphSortDescending &&
+  tplActiveOnly &&
+  tplAllShowsBoth &&
+  tplSearchNarrows &&
+  tplSortAscending &&
+  tplSortDescending &&
+  tplDeleteAsksFirst &&
+  tplDeleted &&
+  graphDeleteAsksFirst &&
+  graphDeleted &&
   // The step's algorithm: numbered pseudocode with its indentation, externals as a legend.
   algShown &&
   algIndented === 1 &&

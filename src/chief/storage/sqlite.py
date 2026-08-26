@@ -633,6 +633,12 @@ class Store:
             rows = self._all("SELECT document FROM templates ORDER BY created_at, template_id", ())
         return [WorkflowTemplate.model_validate_json(r["document"]) for r in rows]
 
+    def delete_template(self, conn: sqlite3.Connection, template_id: str) -> None:
+        """A template owns nothing else in the schema — a workflow made from one carries a
+        `from_template` record pointing *at* it, not the other way round — so there is no
+        cascade here, unlike ``delete_workflow``."""
+        conn.execute("DELETE FROM templates WHERE template_id = ?", (template_id,))
+
     # --- proof graphs -------------------------------------------------------------------
 
     def create_proof_graph(self, conn: sqlite3.Connection, graph: ProofGraph) -> None:

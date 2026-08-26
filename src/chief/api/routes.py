@@ -336,6 +336,15 @@ def archive_template(template_id: str, service: Service) -> WorkflowTemplate:
     return service.archive_template(template_id)
 
 
+@router.delete("/templates/{template_id}")
+def delete_template(template_id: str, service: Service) -> dict[str, Any]:
+    """Remove a template permanently. Not on the MCP surface, for the same reason
+    ``delete_workflow`` is not: there is no agent session that legitimately needs to erase a
+    reusable shape on its own initiative — MCP-SURFACE.md 3.
+    """
+    return service.delete_template(template_id)
+
+
 @router.post(
     "/templates/{template_id}/workflows",
     response_model=WorkflowDefinition,

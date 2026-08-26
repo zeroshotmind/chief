@@ -536,7 +536,9 @@ Not implemented. Run-level failure is always fail-fast, matching the doc as writ
     with `nosniff` and an attachment disposition; the type the browser may render it as
     travels in `X-Chief-Media-Type`, and the UI applies it to a blob it makes itself. An
     `.html` or `.svg` artifact served under its own type would be script executing at Chief's
-    origin, next to the run being read. `.html` is readable — as source.
+    origin, next to the run being read. `.html` is now rendered rather than downloaded — in a
+    sandboxed frame that can run its script but not reach Chief's page, never under its own
+    type on the wire. See #42.
 
     **A `Host` header outside loopback is refused**, the same DNS-rebinding defence the MCP
     transport already carries, applied to this route alone so nothing that works today can
@@ -848,3 +850,66 @@ instruction in the turn (MCP-SURFACE.md §3). Permanently erasing a plan and the
 what it did is strictly further down that road, and there is no agent session that
 legitimately needs it. It is REST and the web UI only — the first entry in `REST_ONLY` that
 is excluded for being destructive rather than for being self-approval or housekeeping.
+
+## 42. HTML — reversing the other half of #34
+
+#34 refused `.html`/`.svg` on the type allowlist and said `.html` "is readable — as source".
+That second half was never quite true even at the time (an unlisted type falls through to
+`application/octet-stream`, which the UI shows as a download, not as source), and it is not
+the answer any more: HTML is now on the allowlist, and the UI renders it.
+
+The reasoning #34 gave for refusing it in the first place still holds completely — serving a
+file under its own type from Chief's origin, with a script tag in it, would be that script
+running next to the run being read. Nothing about the route changed to make that safe. What
+changed is that rendering no longer requires taking that risk: the same move #36 made for a
+framed URL and #37 made for MDX's compiled components — a sandboxed iframe with
+`allow-scripts` but never `allow-same-origin` — applies just as well to a blob built from an
+artifact's own bytes. The route still answers with opaque bytes and a header naming what the
+UI *may* render it as (#34's invariant, unchanged); the UI builds a blob from those bytes and
+frames it, sandboxed, so the artifact's script can run but cannot read Chief's own DOM,
+cookies or storage.
+
+One thing worth being precise about: the sandbox here is **hardcoded**, not derived from
+`frameSandbox`'s same-origin/cross-origin check the way a framed URL's is. That check answers
+"is this URL a different site from Chief", and a blob URL built from artifact bytes is never
+a different site — by spec it always carries the origin of the page that created it, which is
+Chief's own. Running it through `frameSandbox` would therefore *grant* `allow-same-origin`
+(the same-origin branch), which is exactly backwards: the question that matters for artifact
+content is not "whose origin is this" but "did Chief author this", and the answer is always
+no. `.svg` stays off the allowlist — not because the reasoning differs, but because nobody
+has asked for it yet, and every entry on the allowlist is a promise this file makes about
+what the UI does with it.
+
+## 43. A parallel construct's registered branches draw as separate paths, not one shared body
+
+Before this, `loop` and `parallel` were drawn identically once a run reached them: the body
+inlined once as ordinary nodes, coloured by whichever registered instance's states the
+overlay picked (the newest one — see `planGraph`'s `overlay`), with every other instance only
+inspectable one at a time via the gate's dot-cluster and its side panel. That is the right
+picture for a loop: iterations are a sequence in time, so "the current body, older ones as
+history at the gate" is what actually happened. It was the wrong picture for a parallel
+branch — branches are concurrent by definition, and collapsing them onto one shared copy said
+"one thing happened here" about work that was several things happening at once, each of which
+might have gone differently (REQ-10, REQ-11).
+
+`parallel` now fans out: once more than one branch is registered, `flattenConstructs` draws
+each instance's own copy of the body — its own nodes, its own edges from the same entry deps,
+rejoining at the same gate — rather than the single shared copy. Each fanned node carries a
+synthetic id (`realStepId@instanceId`, display-only, never touching the definition or
+`StepState`) so the layout can place it, a `_lane` reference to the `StepInstance` it belongs
+to so `stateOf` reads that instance's own `step_states` instead of the shared overlay, and a
+lane label built from `instanceParamLabel`. Selecting a fanned node resolves back to the real
+step and opens `stepPanel` with that one instance's state — the id resolves through the
+flattened display list, not `def.steps`, since the synthetic id was never a real step id.
+
+Zero or one registered branch stays a single inlined body, same as today: a draft, a template,
+and a run that hasn't reached the construct yet have nothing to fan — REQ-32's "the whole plan
+visible before it runs" still needs exactly one copy of the body to draw. `loop` is
+deliberately untouched; fanning it out would draw iteration 4 concurrently with iteration 1,
+which is not what a loop is.
+
+One known gap, accepted rather than solved here: a fanned branch's `group` boxing is not
+lane-scoped. If a construct's body declares `group` paths, every lane's copy still carries the
+same path, so `groupingFor` draws one box spanning all branches rather than one box per
+branch. Grouped bodies inside a `parallel` are uncommon enough that this reads as an
+acceptable rough edge rather than a wrong picture — revisit if that changes.

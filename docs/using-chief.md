@@ -108,10 +108,10 @@ python scripts/seed_stress.py --base http://127.0.0.1:8080/v1
 ## Reading an artifact's file
 
 **Click the path** and it opens in a drawer down the right. A URL artifact is **framed** —
-your dev server renders it, Chief only shows it — and a file — markdown through the
-is read by the server: markdown
-through the renderer, images inline, PDFs in the browser's own viewer, **JSON as a tree you
-can fold**, code and logs as text, anything else as a size and a download. Clicking the name of a thing to
+your dev server renders it, Chief only shows it — and a file is read by the server: markdown
+through the renderer, HTML in a sandboxed frame of its own, images inline, PDFs in the
+browser's own viewer, **JSON as a tree you can fold**, code and logs as text, anything else
+as a size and a download. Clicking the name of a thing to
 see the thing is what a reader tries first, so that is what it does; the editor deep link is
 the small **↗** beside it, since most of the time the question is "what is in this" rather
 than "let me change it".
@@ -142,7 +142,8 @@ That is the one place Chief touches the filesystem, and it is deliberately narro
 - **Nothing is served under its own type.** The response is always opaque bytes; the type the
   browser may apply travels in a header and the page applies it itself. An `.html` or `.svg`
   artifact served under its own type from Chief's origin would be script running next to the
-  run you are reading.
+  run you are reading — which is why HTML renders in a sandboxed frame instead: the script in
+  it runs, but it cannot reach Chief's own page, cookies or storage (CONTRACT-NOTES.md #42).
 - **A `Host` header that is not loopback is refused**, which blocks DNS rebinding — a page on
   the open web pointing its own domain at `127.0.0.1` so a fetch looks same-origin. If you
   reach the UI under a name rather than `localhost`, allow it explicitly:

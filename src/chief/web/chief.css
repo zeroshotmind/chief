@@ -643,6 +643,14 @@ details[open] > .meta-summary::before { content: "▾ "; }
   position: absolute; bottom: 7px; left: 9px; font-size: 10px;
   color: var(--color-accent-700); white-space: nowrap;
 }
+/* Which registered branch a fanned parallel node is: top-left, so it never collides with
+   the checkpoint/ghost tag that already owns the top-right corner. */
+.node-lane {
+  position: absolute; top: -11px; left: 8px; background: var(--color-surface);
+  font-family: var(--font-mono); font-size: 10px; color: var(--color-neutral-500);
+  padding: 0 4px; white-space: nowrap; max-width: calc(100% - 16px);
+  overflow: hidden; text-overflow: ellipsis;
+}
 .node-tag {
   position: absolute; top: -11px; right: 8px; background: var(--color-surface);
   font-family: inherit; font-size: 10px; padding: 2px 8px; border-radius: 999px;

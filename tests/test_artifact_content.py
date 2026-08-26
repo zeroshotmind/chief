@@ -90,12 +90,18 @@ def test_the_response_says_what_it_may_be_rendered_as_without_being_it(api, tree
     assert "attachment" in response.headers["content-disposition"]
 
 
-def test_html_is_never_offered_as_html(api, tree):
-    """The case the allowlist exists for. `page.html` is readable — as source."""
+def test_html_is_readable_but_the_wire_type_never_changes(api, tree):
+    """HTML is on the allowlist and the UI renders it — in a sandboxed frame with no
+    `allow-same-origin`, so a script in it can run but cannot reach Chief's own page. What
+    this route promises does not bend for that: the response is still opaque bytes, the
+    header is still only a hint, and the markup — script tag included — travels untouched,
+    because sanitising it here would just be a second, weaker copy of what the sandbox
+    already guarantees."""
     run_id, artifact_id = run_with(api, tree, "out/page.html")
     response = fetch(api, run_id, artifact_id)
     assert response.status_code == 200
-    assert response.headers["x-chief-media-type"] == "application/octet-stream"
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["x-chief-media-type"] == "text/html"
     assert b"<script>" in response.content
 
 
