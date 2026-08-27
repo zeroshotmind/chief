@@ -69,6 +69,16 @@ export const resolveCheckpoint = (runId, path, body) =>
 export const answerQuestion = (runId, path, body) =>
   post(`/runs/${runId}/answers/${path.join("/")}`, body);
 
+/** Mark or clear a step as not usable for the final result. `body.reason` set marks it;
+    omitted or null clears it. Does not touch the recorded result — see CONTRACT-NOTES #45. */
+export const markStepStale = (runId, path, body) =>
+  post(`/runs/${runId}/stale/${path.join("/")}`, body);
+
+/** Same, for one loop iteration or parallel branch. `path` addresses the construct; the
+    instance id is the run's own id for that branch. */
+export const markInstanceStale = (runId, path, instanceId, body) =>
+  post(`/runs/${runId}/instance-stale/${[...path, instanceId].join("/")}`, body);
+
 /** Say something about an artifact, for whoever picks the work up. Addressed by artifact id
     rather than by state path: artifacts are read as one flat list of everything a run
     produced, and the id is the only handle that survives that flattening. */

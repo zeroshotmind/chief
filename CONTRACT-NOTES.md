@@ -955,3 +955,44 @@ already refuses a status report on one: a construct's status is *derived* from i
 on every `recompute()`, so setting it `blocked` would be overwritten back to `running` by the
 very call that set it, leaving an unanswerable question attached to a step that reads as
 unblocked. Ask from inside the instance's own body step instead.
+
+## 45. Stale marks — a filterable label, deliberately inert
+
+`skipped` says a step did not run; nothing said "it ran, and is not part of what counts" —
+the case a parallel construct's losing branches are the clearest example of. `mark_step_stale`
+/ `mark_instance_stale` add `StaleMark`, a pure annotation on `StepState`/`StepInstance`: no
+completed-step gate (marking a *finished* branch is the primary case — same reasoning
+`comment_on_artifact` already established for annotating a result rather than changing one),
+no `recompute()` (nothing derived changes), one endpoint per target with `reason: null`
+clearing the mark rather than a separate mark/unmark pair (`label_workflow`'s "send `project:
+null` to clear" precedent).
+
+Both routes are full MCP tools, not REST-only. The discriminating question — checked, not
+assumed from `comment_on_artifact`'s and `label_workflow`'s precedent, both of which are
+one-way channels (a person speaking *to* a harness) that do not fit what "we feel this isn't
+applicable," said to a harness mid-session, actually is — is whether a harness can legitimately
+do this on an explicit instruction in the turn. It can, the same way `resolve_checkpoint` and
+`answer_question` can relay a human decision; SKILL.md carries the same "never on your own
+initiative" line those two do.
+
+`mark_step_stale` explicitly does *not* refuse a `loop`/`parallel` step the way `ask_question`
+does — there is nothing to overwrite here, since the mark is never touched by `recompute()`,
+so marking a whole construct stale (not just one of its branches) is a legitimate, supported
+case.
+
+The graph draws a stale node dimmed, hatched, and struck through — visible at a glance without
+relying on any one of the three alone (a screenshot in grayscale still shows the hatch and the
+strike). A "⊘ stale only" chip (shown only when the run has at least one mark) is the filter:
+it fades every non-stale node rather than removing it. Removing nodes from the layout was
+rejected the same way for the filter as for the base rendering — filtering steps out before
+`flattenConstructs` would drop their edges cleanly (the edge loop already guards on `pos[id]`
+existing), but depth computation would then close the resulting gap and redraw the remaining
+steps as a contiguous chain, which reads as a different plan than the one that ran. Fading
+keeps every edge anchored where it was, so toggling the filter never reshapes the graph.
+
+UI marking is scoped to unambiguous targets only: a genuinely top-level step (not nested in
+any construct's body, not a fanned branch's synthetic display id) and a construct's own
+instances, addressed by the real `(construct_id, instance_id)` pair. A step nested inside a
+specific instance's body is not offered a mark control from the graph — its state path is
+real and addressable through the API/MCP tool, just not through a click, the same deliberate
+scope cut `#43`'s per-lane grouping left as a known gap rather than a wrong picture.

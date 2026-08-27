@@ -148,6 +148,18 @@ class QuestionAnswer(BaseModel):
     answered_by: str = "human"
 
 
+class StaleUpdate(BaseModel):
+    """Mark or clear a step/instance as not usable for the final result.
+
+    Send `reason` to mark it; omit it (or send it as null) to clear the mark. One call, not
+    a separate mark/unmark pair — the same shape as re-filing a workflow's project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = None
+    marked_by: str = "human"
+
+
 class CommentCreate(BaseModel):
     """Body for commenting on an artifact.
 

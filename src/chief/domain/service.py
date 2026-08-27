@@ -57,6 +57,8 @@ from ..models import (
     RunCreate,
     RunPlan,
     RunState,
+    StaleMark,
+    StaleUpdate,
     StepInstance,
     StepQuestion,
     StepState,
@@ -1652,6 +1654,65 @@ class Chief:
                 },
             )
         self._cascade_child_completion(run)
+        return run
+
+    @staticmethod
+    def _apply_stale(target: StepState | StepInstance, update: StaleUpdate) -> str:
+        """Set or clear `target.stale`, returning the audit event name.
+
+        No completed-step gate: the primary case is marking a *finished* branch as not the
+        one you are taking, the same reasoning `comment_on_artifact` already carved out for
+        annotating a result rather than changing one. No `recompute()` either — the mark
+        touches no derived field, only the run's own `updated_at`, stamped by the caller.
+        """
+        reason = (update.reason or "").strip()
+        if reason:
+            target.stale = StaleMark(
+                reason=reason, marked_by=update.marked_by, marked_at=now(),
+                via=current_transport.get(),
+            )
+            return "stale.marked"
+        target.stale = None
+        return "stale.cleared"
+
+    def mark_step_stale(self, run_id: str, path: list[str], update: StaleUpdate) -> RunState:
+        """Mark or clear a step as not usable for the final result — a judgement call, not
+        a change to what happened. See StaleMark."""
+        run, effective, _ = self._load_for_update(run_id)
+        self._check_addressable(effective, path)
+        step = effective.step(path[-1])
+        assert step is not None
+        _, state, _ = paths.resolve(run, path, create=True)
+        event = self._apply_stale(state, update)
+        run.updated_at = now()
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, run)
+            self.store.audit(
+                conn, event, workflow_id=run.workflow_id, run_id=run_id,
+                detail={"path": path, "reason": update.reason},
+            )
+        return run
+
+    def mark_instance_stale(
+        self, run_id: str, path: list[str], instance_id: str, update: StaleUpdate
+    ) -> RunState:
+        """Mark or clear a loop iteration or parallel branch as not usable for the final
+        result. The main case this exists for: a parallel construct's branches are
+        concurrent attempts, and once one is chosen the others stay on the run but should
+        read as set aside rather than as live candidates."""
+        run, effective, _ = self._load_for_update(run_id)
+        self._check_addressable(effective, path)
+        step = effective.step(path[-1])
+        assert step is not None
+        instance = paths.resolve_instance(run, path, instance_id)
+        event = self._apply_stale(instance, update)
+        run.updated_at = now()
+        with self.store.transaction() as conn:
+            self.store.save_run(conn, run)
+            self.store.audit(
+                conn, event, workflow_id=run.workflow_id, run_id=run_id,
+                detail={"path": path, "instance_id": instance_id, "reason": update.reason},
+            )
         return run
 
     def register_instance(

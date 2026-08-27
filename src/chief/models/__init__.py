@@ -55,6 +55,7 @@ from .runstate import (
     RunPlan,
     RunState,
     RunStatus,
+    StaleMark,
     StepInstance,
     StepQuestion,
     StepState,
@@ -76,6 +77,7 @@ from .updates import (
     InstanceUpdate,
     QuestionAnswer,
     QuestionAsk,
+    StaleUpdate,
     StepUpdate,
 )
 
@@ -106,6 +108,8 @@ __all__ = [
     "InstanceUpdate",
     "QuestionAsk",
     "QuestionAnswer",
+    "StaleUpdate",
+    "StaleMark",
     "Diagnostic",
     "PatchOp",
     "PatchOperation",

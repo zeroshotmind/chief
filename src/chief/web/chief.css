@@ -609,6 +609,22 @@ details[open] > .meta-summary::before { content: "▾ "; }
   border: 1px dashed var(--color-accent); opacity: 0.92;
   background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
 }
+/* Not usable for the final result — dimmed and hatched, the same shorthand a struck-through
+   line item uses on paper, plus the "⊘" next to the goal so it reads without relying on the
+   pattern alone (and survives a screenshot in grayscale, or a reader who can't see it). */
+.node.stale {
+  opacity: 0.55;
+  background-image: repeating-linear-gradient(
+    135deg, transparent, transparent 6px,
+    color-mix(in srgb, var(--color-neutral-500) 14%, transparent) 6px,
+    color-mix(in srgb, var(--color-neutral-500) 14%, transparent) 7px
+  );
+}
+.node-stale-mark { font-size: 11px; color: var(--color-neutral-500); line-height: 1; }
+/* "stale only" filter: fades everything that isn't marked, rather than removing it — the
+   edges stay put, so the graph still reads as the same plan with most of it turned down. */
+.node.filter-fade { opacity: 0.16; }
+.stale-filter { margin-bottom: var(--space-2); }
 .node-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .node-goal {
   flex: 1; min-width: 0; font-size: 12px; line-height: 1.35;
@@ -616,6 +632,7 @@ details[open] > .meta-summary::before { content: "▾ "; }
 }
 .node-goal.dimmed { color: var(--color-neutral-500); }
 .node-goal.ghosted { color: var(--color-accent-700); }
+.node-goal.stale-text { color: var(--color-neutral-500); text-decoration: line-through; text-decoration-thickness: 1px; }
 .node-cluster { display: inline-flex; align-items: center; gap: 3px; margin-left: 14px; }
 .node-cluster .dot { width: 5px; height: 5px; }
 .node-cluster .label { font-size: 10px; color: var(--color-neutral-500); margin-left: 3px; }
@@ -1053,6 +1070,12 @@ math[display="block"] { display: block; margin: var(--space-1) auto; }
   font-size: 11px; color: var(--color-neutral-500);
 }
 .cmt-add:hover { color: var(--color-accent-700); }
+.stale-mark { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
+.stale-badge {
+  font-size: 11px; color: var(--color-neutral-600); background: var(--color-neutral-100);
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+}
+.stale-compose { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
 .art-copy.ok { color: var(--ok); }
 
 /* Review notes, drawn as the comment thread they are — same rule, same typography as an

@@ -152,6 +152,30 @@ class Api:
             f"/v1/runs/{run_id}/answers/{path}", json={"question_id": question_id, **body}
         )
 
+    def mark_stale(self, run_id: str, step_id: str, reason: str | None = "not the approach we took", **kw: Any):
+        return self.client.post(
+            f"/v1/runs/{run_id}/steps/{step_id}/stale", json={"reason": reason, **kw}
+        )
+
+    def nested_mark_stale(self, run_id: str, path: str, reason: str | None = "not the approach we took", **kw: Any):
+        return self.client.post(f"/v1/runs/{run_id}/stale/{path}", json={"reason": reason, **kw})
+
+    def mark_instance_stale(
+        self, run_id: str, step_id: str, instance_id: str,
+        reason: str | None = "not the branch we took", **kw: Any,
+    ):
+        return self.client.post(
+            f"/v1/runs/{run_id}/steps/{step_id}/instances/{instance_id}/stale",
+            json={"reason": reason, **kw},
+        )
+
+    def nested_mark_instance_stale(
+        self, run_id: str, path: str, reason: str | None = "not the branch we took", **kw: Any,
+    ):
+        return self.client.post(
+            f"/v1/runs/{run_id}/instance-stale/{path}", json={"reason": reason, **kw}
+        )
+
     def comment(self, run_id: str, artifact_id: str, body: str = "worth knowing", **kw: Any):
         return self.client.post(
             f"/v1/runs/{run_id}/artifacts/{artifact_id}/comments", json={"body": body, **kw}

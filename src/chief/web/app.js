@@ -37,6 +37,7 @@ import {
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
   decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
   listReviewNotes, listRuns, listTemplates, listWorkflows, resolveCheckpoint, answerQuestion,
+  markStepStale, markInstanceStale,
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
@@ -212,6 +213,11 @@ const hasOpenQuestion = (stepState) => {
   const qs = stepState.questions || [];
   return qs.length > 0 && qs[qs.length - 1].response == null;
 };
+
+/** Not usable for the final result — its own mark, or (for a fanned branch's node) the
+    whole branch's. A body step inside an unmarked branch still reads as live even if one
+    of its siblings is individually marked; the branch mark is the one that dims the lane. */
+const isStale = (step, stepState) => !!(stepState.stale || (step._lane && step._lane.stale));
 
 const stepMeta = (status) => STEP_META[status] || STEP_META.pending;
 
@@ -1979,6 +1985,12 @@ const state = {
   // Half-typed answers to ad-hoc questions, same reasoning and shape as cpDrafts, kept
   // separate since a step's checkpoint decision and its own question are different acts.
   qnDrafts: {},
+  // Half-typed stale-mark reasons, keyed by run+path(+instance) — same reasoning as cpDrafts.
+  staleDrafts: {},
+  // Fades every non-stale node in the graph, so a run with several dead branches can be
+  // scanned for the ones still worth reading. Global rather than per-run: there is only
+  // ever one graph on screen at a time.
+  staleOnly: false,
   // Half-written artifact comments, keyed by artifact id, for the same reason cpDrafts
   // exists: the poll rebuilds the DOM and takes anything held only in it.
   cmtDrafts: {},
@@ -2994,6 +3006,81 @@ async function answerQuestionUI(runId, path, questionId, response) {
   }
 }
 
+/** A stale mark's half-typed reason, and the box open/closed — same shape as a comment's
+    draft. Keyed by run+path, with the instance id appended when marking a branch rather
+    than a step, so the two controls on one construct's panel do not share a box. */
+const staleKey = (runId, path, instanceId) =>
+  `${runId}:${path.join("/")}${instanceId ? `:${instanceId}` : ""}`;
+
+const staleDraftFor = (key) => state.staleDrafts[key] || { open: false, reason: "", error: null };
+
+function setStaleDraft(key, patch) {
+  setState({ staleDrafts: { ...state.staleDrafts, [key]: { ...staleDraftFor(key), ...patch } } });
+}
+
+async function markStaleUI(runId, path, instanceId, reason) {
+  const key = staleKey(runId, path, instanceId);
+  try {
+    if (instanceId) await markInstanceStale(runId, path, instanceId, { reason, marked_by: "human" });
+    else await markStepStale(runId, path, { reason, marked_by: "human" });
+    const rest = { ...state.staleDrafts };
+    delete rest[key];
+    setState({ staleDrafts: rest });
+    await refresh();
+  } catch (err) {
+    setStaleDraft(key, { error: err instanceof ApiError ? err.message : String(err) });
+  }
+}
+
+/** A "Mark stale…"/reason box, or the mark itself with a "Clear" button — the one control
+    both a step's own panel and a construct's per-instance row use, so marking a step and
+    marking a branch read as the same act with a different target. */
+function staleControl(mark, key, onMark, onClear) {
+  const draft = staleDraftFor(key);
+  if (mark) {
+    return el(
+      "div",
+      { class: "stale-mark" },
+      el("span", { class: "stale-badge", text: "⊘ stale" }),
+      el("span", { class: "text-muted", style: { fontSize: "12px" }, text: mark.reason }),
+      el("button", {
+        class: "btn btn-ghost", style: { fontSize: "11px" },
+        text: "Clear", onClick: onClear,
+      }),
+    );
+  }
+  if (!draft.open) {
+    return el("button", {
+      class: "btn btn-ghost", style: { fontSize: "11px" },
+      text: "Mark stale…", onClick: () => setStaleDraft(key, { open: true }),
+    });
+  }
+  return el(
+    "div",
+    { class: "stale-compose" },
+    el("input", {
+      class: "field-search", type: "text", value: draft.reason,
+      placeholder: "Why isn't this the one? (required)",
+      onInput: (e) => setStaleDraft(key, { reason: e.target.value, error: null }),
+      onKeyDown: (e) => e.key === "Enter" && onMark(draft.reason),
+    }),
+    draft.error && el("span", { style: { fontSize: "12px", color: BAD }, text: draft.error }),
+    el(
+      "div",
+      { style: { display: "flex", gap: "var(--space-1)" } },
+      el("button", {
+        class: "btn btn-secondary btn-sm", text: "Mark",
+        disabled: draft.reason.trim() ? null : "",
+        onClick: () => onMark(draft.reason),
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", text: "Cancel",
+        onClick: () => setStaleDraft(key, { open: false, reason: "", error: null }),
+      }),
+    ),
+  );
+}
+
 /** A step waiting on an ad-hoc question it asked mid-execution — not a checkpoint, so there
     is no approve/reject: answering it only unblocks the step, which keeps running and
     reports its own outcome later. Free text is one box under the key 'text'; declared
@@ -3465,7 +3552,7 @@ function edgeDefs() {
 
 // ── run detail: inspector panels ─────────────────────────────────────────────────────────
 
-function stepPanel(step, stepState, def, laneMetadata) {
+function stepPanel(step, stepState, def, laneMetadata, runId = null) {
   const arts = stepArtifacts(stepState);
   const { arts: inputArts, contracts: inputContracts, meta: inputMeta } = splitInputs(step.inputs);
   const { contracts: outputContracts, meta: outputMeta } = splitInputs(step.outputs);
@@ -3481,6 +3568,12 @@ function stepPanel(step, stepState, def, laneMetadata) {
   }
   const instances = stepState.instances || [];
   const body = bodyStepsOf(step, def);
+  // Marking a step stale needs its state path, and a synthetic id from a fanned branch or a
+  // step nested inside an unfanned construct's body is not a real, addressable one — only a
+  // genuinely top-level step's own id is. Scoped this way rather than resolved generally:
+  // the ambiguous cases stay markable through the API, just not from this click.
+  const isTopLevel = !laneMetadata && !(def.steps || []).some((s) => (s.body || []).includes(step.id));
+  const staleControlKey = isTopLevel && runId ? staleKey(runId, [step.id]) : null;
   const meta =
     `${step.id} · ${step.harness}` +
     (step.type !== "task"
@@ -3547,10 +3640,20 @@ function stepPanel(step, stepState, def, laneMetadata) {
         : null,
     summary,
     summaryColor: stepState.status === "failed" ? BAD : "var(--color-neutral-600)",
+    // Mark or clear this step itself. Only offered where the id is genuinely addressable —
+    // see `isTopLevel` above; a branch's own mark is offered per-row below instead.
+    staleWidget: staleControlKey
+      ? staleControl(
+          stepState.stale, staleControlKey,
+          (reason) => markStaleUI(runId, [step.id], null, reason),
+          () => markStaleUI(runId, [step.id], null, null),
+        )
+      : null,
     instances: instances.map((instance) => {
       const im = stepMeta(instance.status);
       const failedBody = Object.values(instance.step_states || {}).find((b) => b.status === "failed");
       const which = instanceParamLabel(step, instance);
+      const instKey = runId ? staleKey(runId, [step.id], instance.instance_id) : null;
       return {
         // The declared parameters come first when there are any: "Branch 3 · sparsify" is
         // what a person is looking for, and "Branch 3" alone is what made wf_ablate's three
@@ -3561,6 +3664,16 @@ function stepPanel(step, stepState, def, laneMetadata) {
         summaryColor: instance.status === "failed" ? BAD : "var(--color-neutral-500)",
         color: im.color, pulse: pulseOf(im),
         metadata: instance.metadata,
+        stale: instance.stale,
+        // A branch's own mark/clear control — this is the primary case the whole feature
+        // exists for: several ran, one is being kept, the rest read as set aside.
+        staleWidget: instKey
+          ? staleControl(
+              instance.stale, instKey,
+              (reason) => markStaleUI(runId, [step.id], instance.instance_id, reason),
+              () => markStaleUI(runId, [step.id], instance.instance_id, null),
+            )
+          : null,
         // Only the body steps that actually name a parameter: rendering the rest would
         // repeat the shared body under every branch for no gain.
         filled: body
@@ -3771,6 +3884,7 @@ function inspector(panel) {
         text: panel.metaLine,
       }),
       panel.warn && el("div", { class: "accent-note", text: panel.warn }),
+      panel.staleWidget,
       panel.summary &&
         el(
           "span",
@@ -3846,6 +3960,7 @@ function inspector(panel) {
             el("span", { class: "summary", style: { color: instance.summaryColor }, text: instance.summary }),
             metadataBlock(instance.metadata, "compact", `${instance.label} · metadata`),
           ),
+          instance.staleWidget && el("div", { style: { marginTop: "var(--space-1)" } }, instance.staleWidget),
           // The body as this instance actually reads it, with its own values in place —
           // the whole point of declaring the parameters. Only shown for the steps that name
           // one, so a construct whose body is generic looks exactly as it did.
@@ -4306,7 +4421,7 @@ function templatePanel(template, topSteps) {
     run — where step states colour the nodes and pending amendments add ghosts — and a
     workflow that has never run, where there are neither and every node reads as pending.
     Returns the pieces rather than a screen: the two callers frame it differently. */
-function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
+function planGraph({ def, stepStates = {}, pending = [], past = [], runId = null }) {
   // Body steps are drawn inside their construct's node, not as top-level nodes.
   const topSteps = def.steps.filter((s) => !def.steps.some((p) => (p.body || []).includes(s.id)));
   const selected = state.selected ?? (pending.length ? `am:${pending[0].amendment_id}` : null);
@@ -4453,6 +4568,7 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   }
 
   // ── nodes ──
+  let staleCount = 0;
   const nodes = all.map((step) => {
     if (step.gate) return gateNode(step, pos[step.id], nodeW, ctx);
     const stepState = stateOf(step);
@@ -4477,6 +4593,17 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
     else if (pendingHere) classes.push("pend");
     else if (stepState.status === "blocked") classes.push("waiting");
     else if (stepState.status === "failed") classes.push("fail");
+    // Additive, not exclusive with the above: a step can be failed *and* stale, and both
+    // should show — a failed attempt that also isn't the one being taken is still failed.
+    const stale = !step.ghost && isStale(step, stepState);
+    if (stale) {
+      classes.push("stale");
+      staleCount++;
+    } else if (state.staleOnly) {
+      // Filtering to stale branches fades the rest rather than removing them — an edge
+      // pointing at a vanished node would read as a broken graph, not a filtered one.
+      classes.push("filter-fade");
+    }
 
     const showSummary =
       !step.ghost && ["completed", "failed", "running"].includes(stepState.status) && stepState.summary;
@@ -4495,7 +4622,9 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           left: `${pos[step.id].x}px`, top: `${pos[step.id].y}px`,
           width: `${nodeW}px`, height: `${pos[step.id].h}px`,
         },
-        title: goalText,
+        title: stale
+          ? `${goalText} — stale: ${(stepState.stale || step._lane.stale).reason}`
+          : goalText,
         onClick: () =>
           step.ghost
             ? setState({ selected: `am:${step.amendment.amendment_id}` })
@@ -4510,10 +4639,12 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
           step.ghost ? "none" : pulseOf(sm),
           "7px",
         ),
+        stale && el("span", { class: "node-stale-mark", text: "⊘" }),
         el("span", {
           class:
             "node-goal" +
-            (step.ghost ? " ghosted" : ["pending", "skipped"].includes(stepState.status) ? " dimmed" : ""),
+            (step.ghost ? " ghosted" : ["pending", "skipped"].includes(stepState.status) ? " dimmed" : "") +
+            (stale ? " stale-text" : ""),
           text: showSummary ? stepState.summary : goalText,
         }),
       ),
@@ -4592,14 +4723,14 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   if (selected?.startsWith("step:")) {
     // def.steps, not topSteps: a body node inside a construct is selectable too.
     const step = def.steps.find((s) => `step:${s.id}` === selected);
-    if (step) panel = stepPanel(step, stateOf(step), def);
+    if (step) panel = stepPanel(step, stateOf(step), def, null, runId);
     else {
       // No match against a real step id means this is a fanned branch's synthetic id
       // (`realId@instanceId`) — look it up in the flattened display, then open the panel
       // for the real step with that one branch's own state, not the collapsed shared one.
       const lane = display.find((s) => `step:${s.id}` === selected && s._lane);
       const realStep = lane && def.steps.find((s) => s.id === lane._realId);
-      if (realStep) panel = stepPanel(realStep, stateOf(lane), def, lane._lane.metadata);
+      if (realStep) panel = stepPanel(realStep, stateOf(lane), def, lane._lane.metadata, runId);
     }
   } else if (selected?.startsWith("am:")) {
     const amendment = pending.find((a) => `am:${a.amendment_id}` === selected);
@@ -4660,7 +4791,20 @@ function planGraph({ def, stepStates = {}, pending = [], past = [] }) {
   );
   measured = viewport;
 
-  return { viewport, panel, topSteps };
+  // Only offered when there is something to find — an empty run has nothing to filter to.
+  const staleFilter = staleCount
+    ? el(
+        "div",
+        { class: "stale-filter" },
+        el("button", {
+          class: "chip" + (state.staleOnly ? " on" : ""),
+          text: `⊘ stale only (${staleCount})`,
+          onClick: () => setState({ staleOnly: !state.staleOnly }),
+        }),
+      )
+    : null;
+
+  return { viewport, panel, topSteps, staleFilter };
 }
 
 /** A workflow, at whatever point in its life it has reached.
@@ -4681,12 +4825,13 @@ function workflowDetailScreen() {
   const draft = workflow.status === "draft";
 
   const amendments = detail ? detail.amendments : [];
-  const { viewport, panel, topSteps } = planGraph({
+  const { viewport, panel, topSteps, staleFilter } = planGraph({
     // The run's own definition once it exists: it carries any amendment already applied.
     def: detail ? detail.def : workflow,
     stepStates: detail ? detail.state.step_states || {} : {},
     pending: pendingOf(amendments),
     past: amendments.filter((a) => a.status !== "pending_approval"),
+    runId: detail ? run.run_id : null,
   });
   const progress = detail ? progressOf(workflow, detail.state) : null;
 
@@ -4840,7 +4985,7 @@ function workflowDetailScreen() {
     // node selected that is the plan overview, which is exactly the right home for a note
     // about the plan rather than about any one step.
     splitView(
-      viewport,
+      el("div", {}, staleFilter, viewport),
       Object.assign(
         panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
         { noteWorkflow: workflow },
@@ -5262,11 +5407,12 @@ function detailScreen() {
   const run = detail.state;
   const def = detail.def;
   const meta = RUN_META[run.status] || RUN_META.running;
-  const { viewport, panel, topSteps } = planGraph({
+  const { viewport, panel, topSteps, staleFilter } = planGraph({
     def,
     stepStates: run.step_states || {},
     pending: pendingOf(detail.amendments),
     past: detail.amendments.filter((a) => a.status !== "pending_approval"),
+    runId: state.runId,
   });
 
   return el(
@@ -5297,7 +5443,7 @@ function detailScreen() {
             : ""),
       }),
     ),
-    splitView(viewport, panel || overviewPanel(run, detail, topSteps)),
+    splitView(el("div", {}, staleFilter, viewport), panel || overviewPanel(run, detail, topSteps)),
   );
 }
 

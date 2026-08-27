@@ -143,6 +143,28 @@ class StepQuestion(BaseModel):
     via: str | None = None
 
 
+class StaleMark(BaseModel):
+    """A step or instance marked as not usable for the final result — a judgement call, not
+    a change to what happened.
+
+    A finished branch can be entirely successful and still be the one you are not taking:
+    an approach that turned out not to fit, an iteration superseded by a later one, a path
+    kept for the record but not for the answer. `skipped` already says "this did not run";
+    this says "this ran, and is not part of what counts" — a distinction execution status
+    cannot carry on its own. Purely a label: nothing about the recorded result, the run's
+    derived status, or completion changes because of it. Present or absent, not a history —
+    the point is filtering what is current, not auditing every time someone reconsidered.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1)
+    marked_by: str = "human"
+    marked_at: str
+    #: Which transport the mark arrived on, as with a checkpoint's decision (REQ-43).
+    via: str | None = None
+
+
 class StepInstance(BaseModel):
     """One loop iteration or parallel branch (REQ-10, REQ-11)."""
 
@@ -167,6 +189,11 @@ class StepInstance(BaseModel):
     # (REQ-42). Mirrors StepState.history; the contract defines history only on StepState,
     # which leaves instance-scoped replays with nowhere to preserve the old result.
     history: list[dict[str, Any]] = Field(default_factory=list)
+    # Present when this branch or iteration is not usable for the final result — see
+    # StaleMark. The main use this field exists for: a parallel construct's branches are
+    # concurrent attempts, and once one is chosen the others stay on the run (nothing about
+    # execution deletes a branch) but should read as set aside, not as live candidates.
+    stale: StaleMark | None = None
 
 
 class StepState(BaseModel):
@@ -205,6 +232,8 @@ class StepState(BaseModel):
     # something only a person knows. The step is ``blocked`` exactly when the last entry is
     # unanswered.
     questions: list[StepQuestion] = Field(default_factory=list)
+    # Present when this step is not usable for the final result — see StaleMark.
+    stale: StaleMark | None = None
 
     def instance(self, instance_id: str) -> StepInstance | None:
         for inst in self.instances or []:

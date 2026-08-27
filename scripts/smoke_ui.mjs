@@ -193,7 +193,11 @@ const RUN = {
       { artifact_id: "art_7", type: "file", description: "Page", ref: "notes/page.html", data: null, comments: [] },
     ] },
     b: { step_id: "b", status: "running", instances: [{ instance_id: "i0", kind: "iteration", index: 0, status: "completed", summary: "one", step_states: {}, metadata: { paper: "arxiv:2401.11111", seed: 7, deep: { a: 1 } } }] },
-    e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [] },
+    // Fixture-marked from the start (rather than through the click flow below, which
+    // exercises step "a" and instance "f/p0" instead) — this is what gives the "stale only"
+    // filter something to find without depending on the click flow's refresh round trip.
+    e: { step_id: "e", status: "blocked", summary: "reached the checkpoint", started_at: new Date().toISOString(), artifacts: [],
+      stale: { reason: "superseded before this run started", marked_by: "human", marked_at: new Date().toISOString(), via: null } },
     // Two registered branches, each with its own body states — the fan-out this step is
     // meant to exercise. One branch failed on its second step; the other finished clean, so
     // the two lanes read differently at a glance rather than only in the inspector.
@@ -1905,6 +1909,56 @@ clickByText("‹ Prev");
 await new Promise((r) => setTimeout(r, 20));
 const pagerReturnsToPage1 = JSON.stringify(mainNode()).includes("Page 1 of");
 
+// Stale marks: a step can be labelled not usable for the final result without changing
+// anything about its recorded result. Run at the very end, on the running workflow already
+// exercised above, so nothing earlier has to account for it.
+clickByText("Workflows");
+await new Promise((r) => setTimeout(r, 30));
+clickByText("Approved one");
+await new Promise((r) => setTimeout(r, 40));
+// A step's own mark: click it, reveal the compose box, type a reason, mark it.
+clickByText("did it");
+await new Promise((r) => setTimeout(r, 20));
+clickByText("Mark stale…");
+await new Promise((r) => setTimeout(r, 10));
+const staleInput = [...handlers].reverse().find((h) => h.type === "input" && h.node.placeholder === "Why isn't this the one? (required)");
+staleInput.fn({ target: { value: "superseded by a later pass" } });
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Mark");
+await new Promise((r) => setTimeout(r, 30));
+const staleMarked = posts.find(
+  (x) => x.url.endsWith("/stale/a") && x.body && x.body.reason === "superseded by a later pass",
+);
+
+// A branch's own mark, from the parallel construct's gate panel — the case the feature
+// mainly exists for: several ran, one is kept, the others are set aside. Two branches, so
+// two offers — one per row, not one for the construct.
+clickByText("scan the shards");
+await new Promise((r) => setTimeout(r, 20));
+const instBlocks = findByClass(mainNode(), "inst-block");
+const branchMarkOffered =
+  instBlocks.length >= 2 &&
+  instBlocks.filter((b) => JSON.stringify(b).includes("Mark stale…")).length >= 2;
+clickByText("Mark stale…");
+await new Promise((r) => setTimeout(r, 10));
+const branchInput = [...handlers].reverse().find((h) => h.type === "input" && h.node.placeholder === "Why isn't this the one? (required)");
+branchInput.fn({ target: { value: "not the branch we kept" } });
+await new Promise((r) => setTimeout(r, 10));
+clickByText("Mark");
+await new Promise((r) => setTimeout(r, 30));
+const instanceStaleMarked = posts.find(
+  (x) => x.url.includes("/instance-stale/f/") && x.body && x.body.reason === "not the branch we kept",
+);
+
+// The filter: turned on, everything but the marked branches fades; turned off, it's gone.
+clickByText("⊘ stale only");
+await new Promise((r) => setTimeout(r, 20));
+const fadesNonStale = countClass(mainNode(), "filter-fade") > 0;
+const staleStillFull = findByClass(mainNode(), "stale").every((n) => !JSON.stringify(n).includes("filter-fade"));
+clickByText("⊘ stale only");
+await new Promise((r) => setTimeout(r, 20));
+const filterClears = countClass(mainNode(), "filter-fade") === 0;
+
 console.log(`plans:       ${planRows} rows, toolchain=${toolchainShown}, graph=${planNodes} nodes, claims=${claimsShown}`);
 console.log(`             list row badges: graph=${graphListBadged}, workflow=${workflowListBadged}`);
 console.log(`             graph list: filter narrows=${graphFilterNarrows} resets=${graphFilterResets}, search narrows=${graphSearchNarrows}, sort asc=${graphSortAscending} desc=${graphSortDescending}`);
@@ -1921,6 +1975,8 @@ console.log(`             export .lean=${sourceExported}, copy source=${sourceCo
 console.log(`portability: wf export=${wfExported} reimports=${wfRoundTrips}, tpl reimports=${tplRoundTrips}, graph .lean reimports=${pgRoundTrips}`);
 console.log(`             diagnostics=${diagnostics}, goal=${goalShown}, blamed=${blamedStep}, no-toggle=${noToggleWithoutGraph}, lines=${sourceIsThere}, jumped=${lineMarked}`);
 console.log(`pagination:  page1=${pagerShownPage1}, next=${pagerAdvancesToPage2}, prev=${pagerReturnsToPage1}`);
+console.log(`stale:       step marked=${!!staleMarked}, branch offer=${branchMarkOffered}, branch marked=${!!instanceStaleMarked}`);
+console.log(`             filter: fades=${fadesNonStale}, stale unfaded=${staleStillFull}, clears=${filterClears}`);
 
 const ok =
   dialogOpened &&
@@ -2199,6 +2255,12 @@ const ok =
   lineMarked === 1 &&
   pagerShownPage1 &&
   pagerAdvancesToPage2 &&
-  pagerReturnsToPage1;
+  pagerReturnsToPage1 &&
+  !!staleMarked &&
+  branchMarkOffered &&
+  !!instanceStaleMarked &&
+  fadesNonStale &&
+  staleStillFull &&
+  filterClears;
 console.log(ok ? "PASS" : `FAIL: expected ${expected.join(", ")}`);
 process.exit(ok ? 0 : 1);

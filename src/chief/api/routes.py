@@ -44,6 +44,7 @@ from ..models import (
     RunCreate,
     RunPlan,
     RunState,
+    StaleUpdate,
     StepInstance,
     StepUpdate,
     TemplateCreate,
@@ -412,6 +413,13 @@ def report_step_update(run_id: str, step_id: str, body: StepUpdate, service: Ser
     return service.report_step_update(run_id, [step_id], body)
 
 
+@router.post("/runs/{run_id}/steps/{step_id}/stale", response_model=RunState)
+def mark_step_stale(run_id: str, step_id: str, body: StaleUpdate, service: Service) -> RunState:
+    """Mark or clear a step as not usable for the final result. Send `reason` to mark it,
+    omit it (or send null) to clear."""
+    return service.mark_step_stale(run_id, [step_id], body)
+
+
 @router.post(
     "/runs/{run_id}/steps/{step_id}/instances",
     response_model=StepInstance,
@@ -434,6 +442,17 @@ def report_instance_update(
     run_id: str, step_id: str, instance_id: str, body: InstanceUpdate, service: Service
 ) -> RunState:
     return service.report_instance_update(run_id, [step_id], instance_id, body)
+
+
+@router.post(
+    "/runs/{run_id}/steps/{step_id}/instances/{instance_id}/stale", response_model=RunState
+)
+def mark_instance_stale(
+    run_id: str, step_id: str, instance_id: str, body: StaleUpdate, service: Service
+) -> RunState:
+    """Mark or clear a loop iteration or parallel branch as not usable for the final
+    result."""
+    return service.mark_instance_stale(run_id, [step_id], instance_id, body)
 
 
 @router.post(
@@ -522,6 +541,23 @@ def answer_nested_question(
 ) -> RunState:
     """Answer a blocked question inside a loop or parallel body, addressed by state path."""
     return service.answer_question(run_id, pathlib_.parse_path(state_path), body)
+
+
+@router.post("/runs/{run_id}/stale/{state_path:path}", response_model=RunState)
+def mark_nested_step_stale(
+    run_id: str, state_path: str, body: StaleUpdate, service: Service
+) -> RunState:
+    """Mark or clear a step inside a loop or parallel body, addressed by state path."""
+    return service.mark_step_stale(run_id, pathlib_.parse_path(state_path), body)
+
+
+@router.post("/runs/{run_id}/instance-stale/{state_path:path}", response_model=RunState)
+def mark_nested_instance_stale(
+    run_id: str, state_path: str, body: StaleUpdate, service: Service
+) -> RunState:
+    """``state_path`` ends on the instance id, e.g. ``step_06/inst_01/step_09/inst_00``."""
+    tokens = pathlib_.parse_path(state_path)
+    return service.mark_instance_stale(run_id, tokens[:-1], tokens[-1], body)
 
 
 #: Hosts this API answers file content on. A `Host` header naming anything else is a

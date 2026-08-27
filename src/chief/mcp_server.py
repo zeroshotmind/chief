@@ -1,6 +1,6 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Thirty-two tools against 65 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Thirty-four tools against 69 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
 and the approval-policy config, the audit query, artifact comments, draft review notes and
 both destructive deletes are deliberately REST-only — a session that can edit the policy
@@ -50,6 +50,7 @@ from .models import (
     QuestionAsk,
     RunCreate,
     RunState,
+    StaleUpdate,
     StepInstance,
     StepUpdate,
     TemplateCreate,
@@ -124,6 +125,8 @@ HARNESS_OPERATIONS = [
     "resolve_checkpoint",
     "ask_question",
     "answer_question",
+    "mark_step_stale",
+    "mark_instance_stale",
     "register_step_instance",
     "report_instance_update",
     "propose_amendment",
@@ -504,6 +507,33 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
         relay an answer that arrived through some other channel.
         """
         return service.answer_question(run_id, path, body)
+
+    @tool()
+    @_guard
+    def mark_step_stale(run_id: str, path: list[str], body: StaleUpdate) -> RunState:
+        """Mark or clear a step as not usable for the final result — a judgement call, not
+        a change to what happened. Send `reason` to mark it, omit it to clear.
+
+        Call this only on an explicit instruction in this turn — "mark that branch stale",
+        "we're not using this one" — never on your own initiative to declare your own work
+        not usable. Marking a *finished* step is the normal case: it does not change the
+        recorded result, criteria, or the run's status, only whether it counts toward the
+        final answer.
+        """
+        return service.mark_step_stale(run_id, path, body)
+
+    @tool()
+    @_guard
+    def mark_instance_stale(
+        run_id: str, path: list[str], instance_id: str, body: StaleUpdate
+    ) -> RunState:
+        """Mark or clear a loop iteration or parallel branch as not usable for the final
+        result — same call as `mark_step_stale`, addressed at one instance of a construct
+        rather than at a step. The case this exists for: several parallel branches ran,
+        one was chosen, and the others should read as set aside rather than as live
+        candidates. Only on an explicit instruction in this turn.
+        """
+        return service.mark_instance_stale(run_id, path, instance_id, body)
 
     @tool()
     @_guard

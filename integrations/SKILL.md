@@ -254,6 +254,19 @@ step's `questions`, the entry whose `question_id` you asked with, under `respons
 `text` key for free text, the declared field names otherwise). Do not guess at an answer or
 carry on without it while a question is open.
 
+## When a finished step or branch is not the one you're keeping
+
+A parallel construct's branches ran concurrently and are all still on the run once they
+finish — nothing deletes the ones that were not chosen. If the user says which one to keep,
+or you can tell yourself which approach won, `mark_instance_stale` (or `mark_step_stale` for
+an ordinary step, or the whole construct) with a `reason`. This does not change anything about
+what was recorded — status, summary, artifacts are untouched — it only labels the branch as
+not part of the final answer, and it can be cleared later by sending `reason: null`.
+
+Like `resolve_checkpoint` and `answer_question`, this is a human judgement call: call it on an
+explicit instruction in the turn ("mark branch 2 stale", "we're not using the sparse version"),
+never on your own initiative to declare your own work not usable.
+
 ## When the plan stops fitting
 
 A step you cannot execute as written is the whole reason Chief exists. **Propose an
@@ -274,9 +287,9 @@ either way.
 
 ## What is not yours to decide
 
-`approve_workflow`, `approve_amendment`, `reject_amendment`, `resolve_checkpoint` and
-`answer_question` are human decisions. Call them only when the user has asked you to **in
-this turn** — never to unblock yourself, and
+`approve_workflow`, `approve_amendment`, `reject_amendment`, `resolve_checkpoint`,
+`answer_question`, `mark_step_stale` and `mark_instance_stale` are human decisions. Call them
+only when the user has asked you to **in this turn** — never to unblock yourself, and
 never as a step in a plan you are executing. Chief records which transport a decision
 arrived on, so an approval you made is distinguishable afterwards from one made in the UI.
 

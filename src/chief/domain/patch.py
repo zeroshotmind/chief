@@ -396,6 +396,9 @@ def _reset(state: StepState) -> None:
     # outstanding rather than reading as still blocked on a question this attempt never
     # asked.
     state.questions = []
+    # A stale mark says the previous attempt's result is not the one being taken; a fresh
+    # attempt has not been judged yet and should not read as already set aside.
+    state.stale = None
     set_status(state, "pending")
 
 
@@ -406,6 +409,7 @@ def _reset_instance(instance: StepInstance) -> None:
     instance.summary = None
     instance.artifacts = []
     instance.metadata = {}
+    instance.stale = None
     for entry in instance.step_states.values():
         _reset(entry)
     set_status(instance, "pending")
