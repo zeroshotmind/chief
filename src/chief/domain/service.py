@@ -110,6 +110,7 @@ class Chief:
             status="draft",
             version=1,
             steps=body.steps,
+            groups=body.groups,
             project=body.project,
             origin_dir=body.origin_dir,
         )
@@ -141,6 +142,14 @@ class Chief:
         before = len(defn.steps)
         defn.title = body.title
         defn.steps = body.steps
+        defn.groups = body.groups
+        is_human = body.source == "human"
+        if is_human:
+            # A person editing the draft by hand is a distinct version from whatever the
+            # harness last wrote, and the audit trail needs a number to point at. See
+            # ``WorkflowRevise`` for why this is the one case a revision bumps ``version``.
+            defn.version += 1
+            defn.source = "human"
         # The same validation the plan passed on creation: a revision is a whole plan, not a
         # patch, so nothing carries over that could make an invalid graph acceptable.
         validate_definition(defn)
@@ -152,6 +161,7 @@ class Chief:
                 workflow_id=workflow_id,
                 detail={
                     "reason": body.reason,
+                    "source": body.source or "agent",
                     "steps_before": before,
                     "steps_after": len(defn.steps),
                 },

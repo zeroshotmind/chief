@@ -32,7 +32,7 @@
 
 import {
   ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
-  createTemplate, createTemplateFromWorkflow, createWorkflow,
+  createTemplate, createTemplateFromWorkflow, createWorkflow, reviseDraft,
   decideAmendment, deleteTemplate, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
   decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
@@ -1194,6 +1194,14 @@ function inspectorHandle() {
 const splitView = (viewport, panel) =>
   el("div", { class: "graph-split" }, viewport, inspectorHandle(), inspector(panel));
 
+/** The same plan-and-panel-with-a-grip layout `splitView` composes, for edit mode's own
+    inspector (`editAside`), which — unlike every read-mode panel builder — already returns
+    the finished `<aside>` element rather than a plain data object for `inspector()` to
+    render. Kept separate rather than taught to `splitView` so read mode's own path through
+    `inspector()` is untouched. */
+const editSplitView = (viewport, aside) =>
+  el("div", { class: "graph-split" }, viewport, inspectorHandle(), aside);
+
 /** Anything with a scheme is somewhere else — http, but also mailto: or a git+ssh remote. */
 const isUrlRef = (ref) => /^[a-z][a-z0-9+.-]*:/i.test(ref || "");
 const isFileRef = (ref) => !!ref && !isUrlRef(ref);
@@ -1969,6 +1977,16 @@ const state = {
   // leave one plan's feedback attached to another's.
   workflowNotes: null,
   selected: null, // "step:<id>" | "am:<id>" | "pam:<id>" | "none"
+  // Manual editing of a draft's plan — see the "manual plan editing" section below. Null
+  // when not editing. `isNew` marks the blank-canvas flow, before the first save has ever
+  // created the workflow.
+  edit: null,
+  // The blank-canvas "New workflow" screen's own half-typed state, separate from `edit`
+  // because nothing has been created yet for `edit` to describe.
+  newWorkflow: null,
+  // Set right after a manual edit is saved, so the read-mode screen it lands back on can
+  // show "Saved as vN …" once. Cleared on the next navigation away from that workflow.
+  savedNotice: null,
   runs: null, // null until the first load resolves
   workflows: null,
   amendmentsByRun: {},
@@ -2073,7 +2091,7 @@ function setState(patch) {
 // you are* is in the hash: selection, dialogs and fetched documents are session state, and
 // putting them in the URL would make every click a history entry.
 
-const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1, graphs: 1 };
+const LIST_VIEWS = { workflows: 1, approvals: 1, templates: 1, graphs: 1, "new-workflow": 1 };
 const ROUTED = {
   workflow: "workflowId", detail: "runId", template: "templateId", graph: "graphId",
 };
@@ -2881,6 +2899,12 @@ function workflowsScreen() {
       }),
       el("button", {
         class: "btn btn-ghost btn-sm", style: { fontSize: "12px", marginLeft: "auto" },
+        text: "New workflow…",
+        title: "A plan you write yourself, saved as a draft with source “human”",
+        onClick: () => setState({ view: "new-workflow", newWorkflow: null }),
+      }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", style: { fontSize: "12px" },
         text: "Import from a file",
         title: "Registers an exported workflow file here, as a new draft",
         onClick: importWorkflowFile,
@@ -4807,16 +4831,1125 @@ function planGraph({ def, stepStates = {}, pending = [], past = [], runId = null
   return { viewport, panel, topSteps, staleFilter };
 }
 
+// ── manual plan editing (draft only) ────────────────────────────────────────────────────
+//
+// A person editing a draft's plan directly — add, remove or rewire steps, group them into
+// phases — with no amendment and no review note (per revise_draft: editing a draft that
+// nobody has run yet is not the thing amendments protect). Saved through the same
+// `revise_draft`/`PUT /workflows/{id}` a harness uses, with `source: "human"`, which is the
+// one case that also bumps `version` — see WorkflowRevise. Nothing here executes anything;
+// Chief never does, and a draft cannot yet have a run.
+//
+// Everything the person does lives only in `state.edit` until Save: `editMutate` is the one
+// gate every change goes through, so undo/redo stay honest and nothing reaches the server
+// early. `read` mode elsewhere in this file (`planGraph`, `stepPanel`, `groupPanel`,
+// `workflowPanel`, `layout`, `flattenConstructs`) is untouched — this section only adds a
+// second, editable way to draw and act on the same kind of plan.
+
+const EDIT_PINS_PREFIX = "chief.edit.pins.";
+
+function readEditPins(workflowId) {
+  try {
+    return JSON.parse(localStorage.getItem(EDIT_PINS_PREFIX + workflowId) || "{}");
+  } catch {
+    return {};
+  }
+}
+function writeEditPins(workflowId, pins) {
+  if (!workflowId) return;
+  try {
+    localStorage.setItem(EDIT_PINS_PREFIX + workflowId, JSON.stringify(pins));
+  } catch {
+    /* still applies for this session */
+  }
+}
+
+function shortStepId(type, steps) {
+  const prefix =
+    type === "checkpoint" ? "cp" : type === "loop" ? "loop" : type === "parallel" ? "par" :
+    type === "workflow_ref" ? "sub" : "s";
+  let n = 1;
+  while (steps.some((s) => s.id === `${prefix}${n}`)) n++;
+  return `${prefix}${n}`;
+}
+
+const cloneWf = (v) => JSON.parse(JSON.stringify(v));
+
+function startEdit(workflow) {
+  const wf = {
+    title: workflow.title,
+    steps: cloneWf(workflow.steps),
+    groups: cloneWf(workflow.groups || []),
+  };
+  setState({
+    edit: {
+      workflowId: workflow.workflow_id, isNew: false,
+      wf, base: cloneWf(wf),
+      version: workflow.version, generatedBy: workflow.generated_by,
+      history: [], future: [], selected: [], editingGoal: null,
+      pins: readEditPins(workflow.workflow_id), manual: false,
+      link: null, edgeSel: null, groupSel: null, phaseDraft: "",
+      notice: null, saving: false,
+    },
+    savedNotice: null,
+  });
+}
+
+function exitEdit() {
+  setState({ edit: null });
+}
+
+/** The one gate every plan change goes through, so undo/redo stay honest. `fn` mutates a
+    clone of the working plan in place; returning `false` aborts (used to refuse a cyclic
+    edge or an already-nested wrap without touching history). */
+function editMutate(fn) {
+  const ed = state.edit;
+  if (!ed) return;
+  const wf = cloneWf(ed.wf);
+  const result = fn(wf);
+  if (result === false) return;
+  setState({ edit: { ...state.edit, wf, history: [...ed.history, ed.wf], future: [], notice: null } });
+}
+
+function editUndo() {
+  const ed = state.edit;
+  if (!ed || !ed.history.length) return;
+  const prev = ed.history[ed.history.length - 1];
+  setState({
+    edit: {
+      ...ed, wf: prev, history: ed.history.slice(0, -1),
+      future: [ed.wf, ...ed.future], editingGoal: null,
+    },
+  });
+}
+function editRedo() {
+  const ed = state.edit;
+  if (!ed || !ed.future.length) return;
+  const next = ed.future[0];
+  setState({
+    edit: {
+      ...ed, wf: next, future: ed.future.slice(1),
+      history: [...ed.history, ed.wf], editingGoal: null,
+    },
+  });
+}
+
+/** Adding an edge from `from` to `to` (`to` depends on `from`) is a cycle if `from` already
+    (transitively) depends on `to`. */
+function editWouldCycle(steps, from, to) {
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const seen = new Set();
+  const stack = [from];
+  while (stack.length) {
+    const id = stack.pop();
+    if (id === to) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const s = byId.get(id);
+    if (s) stack.push(...(s.depends_on || []));
+  }
+  return false;
+}
+
+function editAddEdge(from, to) {
+  if (from === to) return;
+  editMutate((wf) => {
+    const t = wf.steps.find((s) => s.id === to);
+    if (!t || t.depends_on.includes(from)) return false;
+    if (editWouldCycle(wf.steps, from, to)) {
+      setState({
+        edit: {
+          ...state.edit,
+          notice: `${to} → ${from} would make a cycle: ${from} already comes after ${to}. `
+            + "Use a loop for work that repeats.",
+        },
+      });
+      return false;
+    }
+    t.depends_on.push(from);
+  });
+}
+
+function editRemoveEdge() {
+  const ed = state.edit;
+  if (!ed || !ed.edgeSel) return;
+  const { from, to } = ed.edgeSel;
+  editMutate((wf) => {
+    const t = wf.steps.find((s) => s.id === to);
+    if (!t) return false;
+    t.depends_on = t.depends_on.filter((d) => d !== from);
+  });
+  setState({ edit: { ...state.edit, edgeSel: null } });
+}
+
+function editAddStep(type) {
+  const ed = state.edit;
+  if (!ed) return;
+  const sel = ed.selected;
+  let newId = null;
+  editMutate((wf) => {
+    const id = shortStepId(type, wf.steps);
+    const harness = type === "checkpoint" ? "human" : (wf.steps[0] && wf.steps[0].harness) || "claude-code";
+    const step = {
+      id, type, goal: "", harness,
+      depends_on: sel.filter((x) => wf.steps.some((s) => s.id === x)),
+      criteria: [], group: "", _new: true,
+    };
+    if (type === "loop" || type === "parallel") step.body = [];
+    if (type === "loop") step.exit_when = "";
+    wf.steps.push(step);
+    newId = id;
+  });
+  if (newId) setState({ edit: { ...state.edit, selected: [newId], editingGoal: newId } });
+}
+
+function editWrap(type) {
+  const ed = state.edit;
+  if (!ed || ed.selected.length < 1) return;
+  const sel = ed.selected;
+  let newId = null;
+  editMutate((wf) => {
+    const inSel = new Set(sel);
+    const members = wf.steps.filter((s) => inSel.has(s.id));
+    if (members.some((m) => wf.steps.some((p) => (p.body || []).includes(m.id)))) {
+      setState({ edit: { ...state.edit, notice: "One of these is already inside a construct." } });
+      return false;
+    }
+    const id = shortStepId(type, wf.steps);
+    const outerDeps = [...new Set(members.flatMap((m) => m.depends_on).filter((d) => !inSel.has(d)))];
+    for (const m of members) m.depends_on = m.depends_on.filter((d) => inSel.has(d));
+    for (const s of wf.steps) {
+      if (!inSel.has(s.id) && s.depends_on.some((d) => inSel.has(d))) {
+        s.depends_on = [...new Set(s.depends_on.filter((d) => !inSel.has(d)).concat(id))];
+      }
+    }
+    const c = {
+      id, type,
+      goal: type === "loop" ? "Repeat until the exit condition holds" : "Run the branches, then join",
+      harness: members[0].harness || "claude-code",
+      depends_on: outerDeps, body: sel.slice(), criteria: [], group: members[0].group || "",
+      _new: true,
+    };
+    if (type === "loop") c.exit_when = "";
+    wf.steps.push(c);
+    newId = id;
+  });
+  if (newId) setState({ edit: { ...state.edit, selected: [newId] } });
+}
+
+/** Deleting a step reconnects: its dependents inherit what it depended on. Deleting a
+    construct keeps its body steps as ordinary steps, hanging off what the construct
+    depended on. */
+function editRemoveSteps(ids) {
+  const ed = state.edit;
+  if (!ed) return;
+  editMutate((wf) => {
+    const gone = new Set(ids);
+    const byId = new Map(wf.steps.map((s) => [s.id, s]));
+    for (const s of wf.steps) {
+      if (gone.has(s.id)) continue;
+      if (s.depends_on.some((d) => gone.has(d))) {
+        const inherited = s.depends_on
+          .filter((d) => gone.has(d))
+          .flatMap((d) => (byId.get(d) || { depends_on: [] }).depends_on)
+          .filter((d) => !gone.has(d));
+        s.depends_on = [...new Set(s.depends_on.filter((d) => !gone.has(d)).concat(inherited))];
+      }
+      if (s.body) s.body = s.body.filter((b) => !gone.has(b));
+    }
+    for (const id of ids) {
+      const c = byId.get(id);
+      if (c && c.body) {
+        for (const b of c.body) {
+          const bs = byId.get(b);
+          if (bs && !gone.has(b) && !bs.depends_on.length) bs.depends_on = c.depends_on.slice();
+        }
+      }
+    }
+    wf.steps = wf.steps.filter((s) => !gone.has(s.id));
+  });
+  const pins = { ...state.edit.pins };
+  ids.forEach((i) => delete pins[i]);
+  writeEditPins(state.edit.workflowId, pins);
+  setState({ edit: { ...state.edit, selected: [], editingGoal: null, pins } });
+}
+
+/** Mutate the one selected step. Every field in the edit form goes through this. */
+function editSel(fn) {
+  const ed = state.edit;
+  if (!ed) return;
+  const id = ed.selected[0];
+  if (!id) return;
+  editMutate((wf) => {
+    const s = wf.steps.find((x) => x.id === id);
+    if (!s) return false;
+    fn(s, wf);
+  });
+}
+
+/** Inline goal typing: coalesced into one undo entry per editing session, so ten keystrokes
+    do not cost ten ⌘Z presses — the same reasoning `mutate` exists for, applied to a field
+    that fires on every keystroke rather than on every discrete act. */
+let editGoalSession = null;
+function editGoalInput(id, value) {
+  const ed = state.edit;
+  if (!ed) return;
+  const wf = cloneWf(ed.wf);
+  const s = wf.steps.find((x) => x.id === id);
+  if (!s) return;
+  const history = editGoalSession === id ? ed.history : [...ed.history, ed.wf];
+  editGoalSession = id;
+  s.goal = value;
+  setState({ edit: { ...ed, wf, history, future: [] } });
+}
+
+function editApplyPhase() {
+  const ed = state.edit;
+  if (!ed) return;
+  const name = (ed.phaseDraft || "").trim();
+  if (!name) return;
+  const sel = new Set(ed.selected);
+  editMutate((wf) => {
+    for (const s of wf.steps) if (sel.has(s.id)) s.group = name;
+  });
+  setState({ edit: { ...state.edit, phaseDraft: "" } });
+}
+
+function editProblems(wf) {
+  const problems = [];
+  for (const s of wf.steps) {
+    if (!s.goal.trim()) problems.push({ id: s.id, text: "has no goal" });
+    if (!s.harness) problems.push({ id: s.id, text: "has no harness" });
+    if ((s.type === "loop" || s.type === "parallel") && !(s.body || []).length) {
+      problems.push({ id: s.id, text: `${s.type} with an empty body` });
+    }
+  }
+  return problems;
+}
+
+function editChangeRows(ed) {
+  const b = new Map(ed.base.steps.map((s) => [s.id, s]));
+  const c = new Map(ed.wf.steps.map((s) => [s.id, s]));
+  const rows = [];
+  for (const s of ed.wf.steps) {
+    const o = b.get(s.id);
+    if (!o) {
+      rows.push({ op: "add", color: OK, text: `${s.id} · ${s.type}${s.goal ? ` — ${s.goal}` : ""}` });
+      continue;
+    }
+    const diffs = [];
+    if (o.goal !== s.goal) diffs.push("goal");
+    if (o.type !== s.type) diffs.push(`type → ${s.type}`);
+    if (o.harness !== s.harness) diffs.push(`harness → ${s.harness}`);
+    if (JSON.stringify(o.depends_on) !== JSON.stringify(s.depends_on))
+      diffs.push(`depends on ${s.depends_on.join(", ") || "nothing"}`);
+    if (JSON.stringify(o.criteria) !== JSON.stringify(s.criteria)) diffs.push("criteria");
+    if ((o.group || "") !== (s.group || "")) diffs.push(`phase → ${s.group || "none"}`);
+    if ((o.exit_when || "") !== (s.exit_when || "")) diffs.push("exit condition");
+    if (JSON.stringify(o.body || []) !== JSON.stringify(s.body || []))
+      diffs.push(`body ${(s.body || []).join(", ")}`);
+    if (diffs.length) rows.push({ op: "edit", color: ACC, text: `${s.id} · ${diffs.join(" · ")}` });
+  }
+  for (const s of ed.base.steps) if (!c.has(s.id)) rows.push({ op: "remove", color: BAD, text: `${s.id} — ${s.goal}` });
+  const bg = new Map((ed.base.groups || []).map((g) => [g.path, g.description || ""]));
+  for (const g of ed.wf.groups || [])
+    if ((bg.get(g.path) || "") !== (g.description || ""))
+      rows.push({ op: "edit", color: ACC, text: `phase ${g.path} · description` });
+  return rows;
+}
+
+async function saveEdit() {
+  const ed = state.edit;
+  if (!ed) return;
+  setState({ edit: { ...ed, saving: true } });
+  const steps = ed.wf.steps.map((s) => {
+    const { _new, ...rest } = s;
+    return rest;
+  });
+  try {
+    if (ed.isNew) {
+      const created = await createWorkflow({
+        title: ed.wf.title, source: "human", generated_by: null,
+        steps, groups: ed.wf.groups || [], project: null, origin_dir: null,
+      });
+      setState({ edit: null });
+      openWorkflow(created.workflow_id);
+    } else {
+      const n = ed.history.length;
+      const updated = await reviseDraft(ed.workflowId, {
+        title: ed.wf.title, steps, groups: ed.wf.groups || [],
+        reason: null, source: "human",
+      });
+      setState({
+        edit: null,
+        savedNotice: {
+          workflowId: ed.workflowId,
+          text: `Saved as v${updated.version} · ${n} change${n === 1 ? "" : "s"} · edited by you`
+            + (ed.generatedBy ? `, after v${ed.version} by ${ed.generatedBy}` : ""),
+        },
+      });
+      openWorkflow(ed.workflowId);
+    }
+  } catch (err) {
+    setState({
+      edit: { ...state.edit, saving: false, notice: err instanceof ApiError ? err.message : String(err) },
+    });
+  }
+}
+
+// ── the editable graph ──────────────────────────────────────────────────────────────────
+//
+// Position and pointer state a re-render must not lose mid-gesture live outside `state` —
+// exactly the reasoning `inspectorNode`/`startInspectorResize` already follow for the panel
+// resize handle, applied to dragging a node and drawing a link.
+
+let editPos = {};
+let editNodeW = 170;
+let editPlaneEl = null;
+let editDown = null; // { id, start, offset, moved, shift }
+
+function editPlanePoint(e) {
+  const r = editPlaneEl.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function editNodeDown(id, e) {
+  const ed = state.edit;
+  if (!ed) return;
+  if (ed.editingGoal && ed.editingGoal !== id) setState({ edit: { ...state.edit, editingGoal: null } });
+  if (state.edit.edgeSel || state.edit.groupSel)
+    setState({ edit: { ...state.edit, edgeSel: null, groupSel: null } });
+  const pt = editPlanePoint(e);
+  const p = editPos[id];
+  if (!p) return;
+  editDown = { id, start: pt, offset: { x: pt.x - p.x, y: pt.y - p.y }, moved: false, shift: e.shiftKey };
+}
+
+function editPlaneDown(e) {
+  if (!state.edit) return;
+  if (e.target === editPlaneEl || e.target.tagName === "svg") {
+    setState({ edit: { ...state.edit, selected: [], editingGoal: null, edgeSel: null, groupSel: null } });
+  }
+}
+
+function editPlaneMove(e) {
+  const ed = state.edit;
+  if (!ed) return;
+  if (ed.link) {
+    const pt = editPlanePoint(e);
+    setState({ edit: { ...state.edit, link: { ...ed.link, x: pt.x, y: pt.y } } });
+    return;
+  }
+  const d = editDown;
+  if (!d) return;
+  const pt = editPlanePoint(e);
+  if (!d.moved && Math.hypot(pt.x - d.start.x, pt.y - d.start.y) < 4) return;
+  d.moved = true;
+  const pins = { ...state.edit.pins, [d.id]: { x: Math.max(0, pt.x - d.offset.x), y: Math.max(0, pt.y - d.offset.y) } };
+  setState({ edit: { ...state.edit, pins } });
+}
+
+function editPlaneUp(e) {
+  const ed = state.edit;
+  if (!ed) return;
+  if (ed.link) {
+    const pt = editPlanePoint(e);
+    const from = ed.link.from;
+    const hit = Object.entries(editPos).find(
+      ([id, p]) => id !== from && pt.x >= p.x && pt.x <= p.x + editNodeW && pt.y >= p.y - 8 && pt.y <= p.y + p.h + 8,
+    );
+    setState({ edit: { ...state.edit, link: null } });
+    if (hit) editAddEdge(from, hit[0]);
+    return;
+  }
+  const d = editDown;
+  editDown = null;
+  if (!d) return;
+  if (d.moved) {
+    writeEditPins(ed.workflowId, state.edit.pins);
+    return;
+  }
+  const sel = ed.selected;
+  const next = d.shift
+    ? (sel.includes(d.id) ? sel.filter((s) => s !== d.id) : [...sel, d.id])
+    : (sel.length === 1 && sel[0] === d.id ? [] : [d.id]);
+  setState({ edit: { ...state.edit, selected: next } });
+}
+
+function editPortDown(id, e) {
+  e.stopPropagation();
+  e.preventDefault();
+  const p = editPos[id];
+  if (!p) return;
+  setState({ edit: { ...state.edit, link: { from: id, x: p.x + editNodeW / 2, y: p.y + p.h }, selected: [id] } });
+}
+
+function editToggleLayout() {
+  const ed = state.edit;
+  if (!ed) return;
+  if (ed.manual) {
+    setState({ edit: { ...ed, manual: false, pins: {} } });
+    writeEditPins(ed.workflowId, {});
+  } else {
+    const pins = {};
+    for (const [id, p] of Object.entries(editPos)) pins[id] = { x: p.x, y: p.y };
+    setState({ edit: { ...ed, manual: true, pins } });
+    writeEditPins(ed.workflowId, pins);
+  }
+}
+
+/** A port of `layout()` + `flattenConstructs()` for a draft with no run state, with pins
+    (dragged positions) laid over the computed layout. */
+function editComputeGraph(ed) {
+  const def = { steps: ed.wf.steps };
+  const topSteps = ed.wf.steps.filter((s) => !ed.wf.steps.some((p) => (p.body || []).includes(s.id)));
+  const ctx = {
+    plannedBody: (step) => bodyStepsOf(step, def),
+    stateOf: () => ({ status: "pending" }),
+    pending: [],
+    selected: ed.selected.length === 1 ? `step:${ed.selected[0]}` : (ed.groupSel ? `grp:${ed.groupSel}` : null),
+  };
+  const display = flattenConstructs(topSteps, ctx);
+  const heightFor = (step) => (step.gate ? GATE_H : NODE_H);
+  const width = Math.max(state.graphWidth, 480);
+  const { all, pos, nodeW, height, planeW, groups } = layout(display, [], [], width, heightFor);
+  for (const [id, p] of Object.entries(ed.pins || {})) if (pos[id]) { pos[id].x = p.x; pos[id].y = p.y; }
+  let maxX = 0;
+  let maxY = 0;
+  for (const s of all) {
+    const p = pos[s.id];
+    maxX = Math.max(maxX, p.x + nodeW + 16);
+    maxY = Math.max(maxY, p.y + p.h + 24);
+  }
+  return { def, all, pos, nodeW, planeW: Math.max(planeW, maxX), height: Math.max(height, maxY), groups };
+}
+
+/** A construct in edit mode: the same small gate `gateNode` draws in read mode, but
+    selectable/deletable/connectable through `state.edit` rather than `state.selected` —
+    gates don't get inline goal editing (there is no one goal to type), but they get
+    everything else a step does. */
+function editGateNode(ed, step, p, nodeW) {
+  const isSel = ed.selected.length === 1 && ed.selected[0] === step.id;
+  return el(
+    "div",
+    {
+      class: "node gate" + (isSel ? " sel" : ""),
+      style: { left: `${p.x}px`, top: `${p.y}px`, width: `${nodeW}px`, height: `${p.h}px` },
+      title: step.goal,
+      onPointerdown: (e) => editNodeDown(step.id, e),
+    },
+    el("span", {
+      class: "gate-label mono",
+      text: step.type === "loop" ? `↺ ${step.id} · repeat or exit` : `⇉ ${step.id} · join`,
+    }),
+    el("button", {
+      class: "node-x", title: "Delete this construct (⌫). Its body steps stay, hanging off what it depended on.",
+      onPointerdown: (e) => e.stopPropagation(),
+      onClick: (e) => { e.stopPropagation(); editRemoveSteps([step.id]); },
+      text: "✕",
+    }),
+    el("span", {
+      class: "node-port", title: "Drag onto another step: it will depend on this one",
+      onPointerdown: (e) => editPortDown(step.id, e),
+    }),
+  );
+}
+
+/** The editable graph: the same shape read mode draws, plus the port/✕/pin affordances and
+    pointer handling that make it editable. */
+function editViewport(ed) {
+  const { def, all, pos, nodeW, planeW, height, groups } = editComputeGraph(ed);
+  editPos = pos;
+  editNodeW = nodeW;
+  const width = Math.max(state.graphWidth, 480);
+  const scrolls = planeW > width;
+  const problems = editProblems(ed.wf);
+  const bad = new Set(problems.map((p) => p.id));
+  const selSet = new Set(ed.selected);
+
+  const paths = [];
+  const addEdge = (fromId, toId, real) => {
+    const from = pos[fromId];
+    const to = pos[toId];
+    if (!from || !to) return;
+    const cx = from.x + nodeW / 2;
+    const yb = from.y + from.h;
+    const tx = to.x + nodeW / 2;
+    const on = ed.edgeSel && ed.edgeSel.from === fromId && ed.edgeSel.to === toId;
+    const stroke = on ? ACC : DIM;
+    const d = `M ${cx} ${yb} C ${cx} ${yb + 26}, ${tx} ${to.y - 26}, ${tx} ${to.y - 2}`;
+    paths.push(
+      svgEl("g", {},
+        svgEl("path", {
+          d, "stroke-width": "1.4", "marker-end": on ? "url(#arr-acc)" : "url(#arr-dim)",
+          style: { fill: "none", stroke, opacity: on ? "0.95" : "0.35" },
+        }),
+        // Only a real dependency is selectable/removable: a gate's synthesised edges (body
+        // exits → gate, entries inherited from the construct) are the construct's own shape.
+        real &&
+          svgEl("path", {
+            d, "stroke-width": "14",
+            onClick: (e) => { e.stopPropagation(); setState({ edit: { ...state.edit, edgeSel: { from: fromId, to: toId }, selected: [], editingGoal: null } }); },
+            onPointerdown: (e) => e.stopPropagation(),
+            title: "Click to select this dependency",
+            style: { fill: "none", stroke: "transparent", cursor: "pointer", "pointer-events": "stroke" },
+          }),
+      ),
+    );
+    if (on) {
+      return { x: (from.x + to.x + nodeW) / 2, y: (from.y + from.h + to.y) / 2, from: fromId, to: toId };
+    }
+    return null;
+  };
+  let edgePill = null;
+  for (const s of all) {
+    for (const d of s.depends_on || []) {
+      if (!pos[d]) continue;
+      const realDep = (def.steps.find((x) => x.id === s.id) || { depends_on: [] }).depends_on.includes(d);
+      const pill = addEdge(d, s.id, realDep);
+      if (pill) edgePill = pill;
+    }
+  }
+  for (const gate of all.filter((s) => s.gate && s.type === "loop")) {
+    const from = pos[gate.id];
+    if (!from) continue;
+    const fy = from.y + from.h / 2;
+    for (const entryId of gate.entryIds || []) {
+      const to = pos[entryId];
+      if (!to) continue;
+      const rail = Math.min(width - 6, Math.max(from.x, to.x) + nodeW + 20);
+      const ty = to.y + NODE_H / 2;
+      paths.push(
+        svgEl("path", {
+          d: `M ${from.x + nodeW} ${fy} C ${rail} ${fy}, ${rail} ${ty}, ${to.x + nodeW + 2} ${ty}`,
+          "stroke-width": "1.3", "stroke-dasharray": "4 4", "marker-end": "url(#arr-acc)",
+          style: { fill: "none", stroke: ACC, opacity: "0.55" },
+        }),
+      );
+    }
+    if (gate.exit_when) {
+      paths.push(
+        svgEl("text", { class: "gate-edge-label", x: String(from.x + nodeW + 8), y: String(fy - 6), style: { fill: ACC, opacity: "0.8" } }, "✗ otherwise, another iteration"),
+        svgEl("text", { class: "gate-edge-label", x: String(from.x + nodeW / 2 + 10), y: String(from.y + from.h + 18), style: { fill: "var(--ok)", opacity: "0.9" } }, `✓ ${gate.exit_when}`),
+      );
+    }
+  }
+  if (ed.link) {
+    const p = pos[ed.link.from];
+    if (p) {
+      const cx = p.x + nodeW / 2;
+      const yb = p.y + p.h;
+      paths.push(
+        svgEl("path", {
+          d: `M ${cx} ${yb} C ${cx} ${yb + 26}, ${ed.link.x} ${ed.link.y - 26}, ${ed.link.x} ${ed.link.y}`,
+          "stroke-width": "1.4", "stroke-dasharray": "4 4", "marker-end": "url(#arr-acc)",
+          style: { fill: "none", stroke: ACC, opacity: "0.8" },
+        }),
+      );
+    }
+  }
+
+  const nodes = all.map((step) => {
+    const p = pos[step.id];
+    const real = def.steps.find((s) => s.id === step.id) || step;
+    if (step.gate) return editGateNode(ed, step, p, nodeW);
+    const isSel = selSet.has(step.id);
+    const isBad = bad.has(step.id);
+    const isNewStep = !!real._new;
+    const isEditingGoal = ed.editingGoal === step.id;
+    const cp = step.type === "checkpoint";
+    const ref = step.type === "workflow_ref";
+    const goalEmpty = !step.goal.trim();
+    const classes = ["node"];
+    if (cp) classes.push("checkpoint");
+    if (ref) classes.push("workflow-ref");
+    if (isNewStep) classes.push("ghost");
+    if (isBad) classes.push("invalid");
+    if (isSel) classes.push("sel");
+
+    const tag = isBad && goalEmpty ? "needs a goal"
+      : isBad && !step.harness ? "needs a harness"
+      : cp ? "checkpoint" : ref ? "sub-workflow" : isNewStep ? "new" : null;
+    const tagClass = isBad ? "node-tag" : (cp || ref || isNewStep) ? "node-tag quiet" : "node-tag";
+
+    return el(
+      "div",
+      {
+        class: classes.join(" "),
+        style: { left: `${p.x}px`, top: `${p.y}px`, width: `${nodeW}px`, height: `${p.h}px`, cursor: state.edit.pins[step.id] ? "grab" : "pointer" },
+        title: "Click to select · double-click to edit the goal · drag to pin",
+        onPointerdown: (e) => editNodeDown(step.id, e),
+        onDblclick: (e) => { e.preventDefault(); setState({ edit: { ...state.edit, editingGoal: step.id, selected: [step.id] } }); },
+      },
+      el("span", { class: "node-head" },
+        el("span", { class: "dot", style: { background: isNewStep ? "var(--color-accent-300)" : "var(--color-neutral-400)" } }),
+        isEditingGoal
+          ? el("textarea", {
+              id: `edit-goal-${step.id}`, class: "node-goal-edit", rows: "2",
+              placeholder: "State the work",
+              onPointerdown: (e) => e.stopPropagation(),
+              onInput: (e) => editGoalInput(step.id, e.target.value),
+              onBlur: () => { editGoalSession = null; setState({ edit: { ...state.edit, editingGoal: null } }); },
+              onKeyDown: (e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setState({ edit: { ...state.edit, editingGoal: null } }); }
+                if (e.key === "Escape") setState({ edit: { ...state.edit, editingGoal: null } });
+              },
+            }, step.goal)
+          : el("span", {
+              class: "node-goal" + (goalEmpty ? " dimmed" : ""),
+              style: goalEmpty ? { fontStyle: "italic" } : null,
+              text: goalEmpty ? "Double-click to state the work" : step.goal,
+            }),
+      ),
+      tag && el("span", { class: tagClass, style: isBad ? { borderColor: "var(--bad)", color: "var(--bad)" } : null, text: tag }),
+      state.edit.pins[step.id] && el("span", { class: "node-pin", title: "Pinned where you put it. Re-layout from the toolbar.", text: "⊙ pinned" }),
+      el("button", {
+        class: "node-x", title: "Delete this step (⌫). Steps after it inherit what it depended on.",
+        onPointerdown: (e) => e.stopPropagation(),
+        onClick: (e) => { e.stopPropagation(); editRemoveSteps([step.id]); },
+        text: "✕",
+      }),
+      el("span", {
+        class: "node-port", title: "Drag onto another step: it will depend on this one",
+        onPointerdown: (e) => editPortDown(step.id, e),
+      }),
+    );
+  });
+
+  const planeEl = el(
+    "div",
+    {
+      class: "graph-plane", style: { width: `${planeW}px`, height: `${height}px` },
+      onPointerdown: editPlaneDown, onPointermove: editPlaneMove, onPointerup: editPlaneUp,
+    },
+    svgEl(
+      "svg", { width: String(planeW), height: String(height) },
+      edgeDefs(),
+      (groups || []).map((g) =>
+        svgEl("g", { class: "group" },
+          svgEl("path", { class: "group-box", d: g.d }),
+          svgEl("text", {
+            class: "group-label", x: String(g.labelX), y: String(g.labelY),
+            onClick: (e) => { e.stopPropagation(); setState({ edit: { ...state.edit, groupSel: g.path, selected: [], edgeSel: null, editingGoal: null } }); },
+          }, g.label),
+        ),
+      ),
+      paths,
+    ),
+    nodes,
+    edgePill &&
+      el("button", {
+        class: "edge-pill",
+        style: { left: `${edgePill.x}px`, top: `${edgePill.y}px` },
+        onPointerdown: (e) => e.stopPropagation(),
+        onClick: (e) => { e.stopPropagation(); editRemoveEdge(); },
+        title: `${edgePill.to} will no longer wait for ${edgePill.from} (⌫)`,
+        text: `✕ remove ${edgePill.from} → ${edgePill.to}`,
+      }),
+  );
+  editPlaneEl = planeEl;
+
+  return el(
+    "div",
+    { class: scrolls ? "graph-viewport scrolls" : "graph-viewport", style: { height: `${Math.ceil(height) + (scrolls ? 14 : 0)}px` } },
+    planeEl,
+  );
+}
+
+const HINT_ROWS = [
+  "click a step to select · ⇧-click for several · double-click the goal to type",
+  "drag the ○ under a step onto another to make it depend on it",
+  "click an edge to select it · drag a step to pin it · ⌫ deletes",
+];
+
+function editToolbar(ed) {
+  const problems = editProblems(ed.wf);
+  const changes = ed.history.length;
+  const pinCount = Object.keys(ed.pins || {}).length;
+  return el(
+    "div",
+    { class: "card edit-toolbar" },
+    el(
+      "div",
+      { style: { display: "flex", gap: "var(--space-1)", flexWrap: "wrap", alignItems: "center" } },
+      el("span", { class: "section-label", style: { marginRight: "var(--space-1)" }, text: "Add" }),
+      el("button", { class: "btn btn-secondary btn-sm", text: "＋ Step", title: "A unit of work for a harness", onClick: () => editAddStep("task") }),
+      el("button", { class: "btn btn-secondary btn-sm", style: { borderLeft: "3px solid var(--warn)" }, text: "＋ Checkpoint", title: "Blocks the run until you answer", onClick: () => editAddStep("checkpoint") }),
+      el("button", { class: "btn btn-construct btn-sm", text: "↺ Loop", title: "Repeats its body until exit_when holds", onClick: () => editAddStep("loop") }),
+      el("button", { class: "btn btn-construct btn-sm", text: "⇉ Parallel", title: "Runs its body once per branch, then joins", onClick: () => editAddStep("parallel") }),
+      el("button", { class: "btn btn-secondary btn-sm", style: { borderLeft: "3px solid var(--color-accent-500, var(--color-accent-300))" }, text: "⧉ Sub-workflow", title: "Runs another workflow as one step", onClick: () => editAddStep("workflow_ref") }),
+      el("span", { class: "toolbar-sep" }),
+      el("button", { class: "btn btn-ghost btn-sm", text: "Wrap selection in loop", disabled: ed.selected.length < 1, onClick: () => editWrap("loop") }),
+      el("button", { class: "btn btn-ghost btn-sm", text: "…in parallel", disabled: ed.selected.length < 1, onClick: () => editWrap("parallel") }),
+      el("button", {
+        class: "btn btn-ghost btn-sm", text: "Group as phase", disabled: ed.selected.length < 1,
+        onClick: () => document.getElementById("edit-phase-input")?.focus(),
+      }),
+      el("span", { class: "toolbar-sep" }),
+      el("button", {
+        class: "chip" + (ed.manual ? " on" : ""), text: ed.manual ? "layout: manual" : "layout: auto",
+        title: "Auto places every step by its dependencies. Manual keeps them where you drag them.",
+        onClick: editToggleLayout,
+      }),
+      !ed.manual && pinCount > 0 &&
+        el("button", { class: "cmt-add", text: `re-layout ${pinCount} pinned`, onClick: () => { setState({ edit: { ...ed, pins: {} } }); writeEditPins(ed.workflowId, {}); } }),
+      el(
+        "span",
+        { style: { marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--space-1)" } },
+        el("button", { class: "icon-btn", text: "↶", title: "Undo ⌘Z", disabled: !ed.history.length, onClick: editUndo }),
+        el("button", { class: "icon-btn", text: "↷", title: "Redo ⇧⌘Z", disabled: !ed.future.length, onClick: editRedo }),
+        el("span", {
+          class: "mono", style: { fontSize: "11px", color: problems.length ? BAD : changes ? ACC : "var(--color-neutral-500)" },
+          text: changes ? `${changes} unsaved change${changes === 1 ? "" : "s"}${problems.length ? ` · ${problems.length} problem${problems.length === 1 ? "" : "s"}` : ""}` : "no changes yet",
+        }),
+        el("button", {
+          class: "btn btn-primary btn-sm", text: ed.saving ? "Saving…" : `Save as v${(ed.version || 0) + 1}`,
+          disabled: !changes || problems.length > 0 || ed.saving,
+          title: problems.length ? `Fix ${problems.length} problem${problems.length === 1 ? "" : "s"} first — see the panel`
+            : changes ? "Writes a new draft version with source “human”. The agent reads it like any other plan."
+            : "Nothing has changed",
+          onClick: saveEdit,
+        }),
+        el("button", { class: "btn btn-secondary btn-sm", text: "Discard edits", onClick: exitEdit }),
+      ),
+    ),
+    ed.notice && el("div", { class: "banner", style: { marginTop: "var(--space-2)" }, text: ed.notice }),
+  );
+}
+
+function editHints() {
+  return el(
+    "div",
+    { style: { display: "flex", gap: "var(--space-3)", marginBottom: "var(--space-2)", fontSize: "11px", color: "var(--color-neutral-500)", flexWrap: "wrap" } },
+    HINT_ROWS.map((t) => el("span", { text: t })),
+  );
+}
+
+/** The edit-mode inspector: a distinct render path from `inspector()`'s read-only panels,
+    since an editable form (chip lists, selects, an inline phase editor) is a different
+    shape of thing than a read summary. `splitView` still wraps it, so the resize handle and
+    layout are shared with every other screen. */
+function editAside(ed) {
+  const { def, groups } = editComputeGraph(ed);
+  const sel = ed.selected.length === 1 ? ed.wf.steps.find((s) => s.id === ed.selected[0]) : null;
+  const grp = ed.groupSel && ed.wf.steps.some((s) => (s.group || "") === ed.groupSel) ? ed.groupSel : null;
+  const problems = editProblems(ed.wf);
+  const changes = editChangeRows(ed);
+  const phaseOptions = [...new Set(ed.wf.steps.map((s) => s.group).filter(Boolean))];
+
+  let body;
+  if (grp) {
+    body = editGroupPanel(ed, grp);
+  } else if (sel) {
+    body = editStepPanel(ed, sel);
+  } else if (ed.selected.length > 1) {
+    body = editMultiPanel(ed, phaseOptions);
+  } else {
+    const harnesses = [...new Set(ed.wf.steps.map((s) => s.harness).filter(Boolean))];
+    const topCount = ed.wf.steps.filter((s) => !ed.wf.steps.some((p) => (p.body || []).includes(s.id))).length;
+    body = [
+      el("p", { style: { margin: "0", fontSize: "13px" }, text: ed.wf.title }),
+      el("span", { class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: `${topCount} top-level of ${ed.wf.steps.length} steps · ${harnesses.join(", ") || "no harness yet"}` }),
+      el("span", { style: { fontSize: "12px", color: "var(--color-neutral-500)" }, text: "Select a step to edit it, or add one from the toolbar. Nothing is written until you save." }),
+      problems.length > 0 && el("span", { class: "section-label", style: { color: "var(--bad)", marginTop: "var(--space-1)" }, text: "Before saving" }),
+      ...problems.map((p) => el("button", {
+        class: "prob-row",
+        onClick: () => setState({ edit: { ...state.edit, selected: [p.id] } }),
+      }, el("span", { class: "mono", style: { color: "var(--bad)", fontSize: "11px" }, text: p.id }), el("span", { text: ` ${p.text}` }))),
+      changes.length > 0 && el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: `Will be saved as v${(ed.version || 0) + 1}` }),
+      ...changes.map((r) => el("span", { style: { display: "flex", gap: "var(--space-1)", alignItems: "baseline", fontSize: "12px" } },
+        el("span", { class: "op-badge", style: { color: r.color }, text: r.op }),
+        el("span", { style: { color: "var(--color-neutral-600)" }, text: r.text }),
+      )),
+    ];
+  }
+
+  const aside = el(
+    "aside",
+    { class: "inspector", "data-screen-label": "Inspector", style: { width: `${state.inspectorWidth}px` } },
+    el(
+      "section",
+      { class: "card" },
+      el(
+        "span",
+        { style: { display: "flex", alignItems: "baseline", gap: "var(--space-2)" } },
+        el("span", {
+          class: "card-kicker", style: { flex: "1" },
+          text: grp ? `Phase · editing · ${ed.wf.steps.filter((s) => (s.group || "") === grp).length} steps`
+            : sel ? `${sel.type === "checkpoint" ? "Checkpoint" : sel.type === "task" ? "Step" : sel.type} · editing`
+            : ed.selected.length > 1 ? `${ed.selected.length} steps selected`
+            : "Editing the plan",
+        }),
+        (sel || grp || ed.selected.length > 1) &&
+          el("button", { class: "close-x", text: "✕", title: "Close", onClick: () => setState({ edit: { ...state.edit, selected: [], groupSel: null, editingGoal: null } }) }),
+      ),
+      body,
+    ),
+  );
+  inspectorNode = aside;
+  return aside;
+}
+
+function editStepPanel(ed, sel) {
+  const isConstruct = sel.type === "loop" || sel.type === "parallel";
+  const inBodyOf = ed.wf.steps.find((p) => (p.body || []).includes(sel.id));
+  const depOptions = ed.wf.steps.filter(
+    (s) => s.id !== sel.id && !sel.depends_on.includes(s.id) && !(sel.body || []).includes(s.id) && !editWouldCycle(ed.wf.steps, s.id, sel.id),
+  );
+  return [
+    el("span", { class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: `${sel.id} · added ${sel._new ? "by you, unsaved" : `in v${ed.version}${ed.generatedBy ? ` by ${ed.generatedBy}` : ""}`}${inBodyOf ? ` · inside ${inBodyOf.id}` : ""}` }),
+    editField("Goal", el("textarea", {
+      id: "edit-sel-goal", class: "input", rows: "3", text: sel.goal,
+      placeholder: "State the work, in one to three lines",
+      style: !sel.goal.trim() ? { borderColor: "var(--bad)" } : null,
+      onInput: (e) => editSel((s) => { s.goal = e.target.value; }),
+    }), !sel.goal.trim() ? "A step needs a goal before the plan can be saved." : null),
+    el(
+      "div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" } },
+      editField("Type", selectEl({ class: "input", onChange: (e) => editSel((s) => {
+        s.type = e.target.value;
+        if (s.type === "loop" || s.type === "parallel") { s.body = s.body || []; if (s.type === "loop") s.exit_when = s.exit_when || ""; }
+        else { delete s.body; delete s.exit_when; }
+        if (s.type === "checkpoint") s.harness = "human";
+      }) }, ["task", "checkpoint", "loop", "parallel", "workflow_ref"].map((t) => ({ value: t, text: t })), sel.type)),
+      editField("Harness", selectEl({ class: "input", style: !sel.harness ? { borderColor: "var(--bad)" } : null, onChange: (e) => editSel((s) => { s.harness = e.target.value; }) },
+        [{ value: "", text: "— choose —" }, ...["claude-code", "codex", "human"].map((h) => ({ value: h, text: h }))], sel.harness)),
+    ),
+    editField("Depends on", el(
+      "div", { style: { display: "flex", flexWrap: "wrap", gap: "var(--space-1)", alignItems: "center" } },
+      sel.depends_on.map((id) => el("span", { class: "chip-removable" }, id, el("button", { text: "✕", title: "Remove this dependency", onClick: () => editSel((s) => { s.depends_on = s.depends_on.filter((d) => d !== id); }) }))),
+      el("select", {
+        class: "chip-add", onChange: (e) => { const v = e.target.value; if (v) editAddEdge(v, sel.id); e.target.value = ""; },
+      }, el("option", { value: "", text: "＋ add…" }), depOptions.map((o) => el("option", { value: o.id, text: `${o.id} — ${(o.goal || "(no goal)").slice(0, 30)}` }))),
+    ), "Or drag the ○ under another step onto this one."),
+    isConstruct && editField(`Body · each ${sel.type === "loop" ? "iteration" : "branch"} runs`, el(
+      "div", { style: { display: "flex", flexWrap: "wrap", gap: "var(--space-1)", alignItems: "center" } },
+      (sel.body || []).map((id) => el("span", { class: "chip-removable" }, id, el("button", {
+        text: "✕", title: "Take this step out of the body",
+        onClick: () => editSel((s, wf) => { s.body = s.body.filter((b) => b !== id); const freed = wf.steps.find((x) => x.id === id); if (freed && !freed.depends_on.length) freed.depends_on = s.depends_on.slice(); }),
+      }))),
+      el("button", {
+        class: "chip-add", text: "＋ new body step",
+        onClick: () => {
+          let newId = null;
+          editMutate((wf) => {
+            const c = wf.steps.find((x) => x.id === sel.id);
+            const id = shortStepId("task", wf.steps);
+            const exits = c.body.filter((b) => !wf.steps.some((o) => c.body.includes(o.id) && o.depends_on.includes(b)));
+            wf.steps.push({ id, type: "task", goal: "", harness: c.harness, depends_on: exits.slice(), criteria: [], group: c.group || "", _new: true });
+            c.body.push(id);
+            newId = id;
+          });
+          if (newId) setState({ edit: { ...state.edit, selected: [newId], editingGoal: newId } });
+        },
+      }),
+    )),
+    isConstruct && sel.type === "loop" && editField("Exits when", el("input", {
+      class: "input", value: sel.exit_when || "", placeholder: "e.g. every open problem has an idea",
+      onInput: (e) => editSel((s) => { s.exit_when = e.target.value; }),
+    }), "Drawn on the gate's ✓ arrow. Empty means the harness decides."),
+    editField(`Done when (${sel.criteria.length})`, el(
+      "div", { style: { display: "flex", flexDirection: "column", gap: "var(--space-1)" } },
+      sel.criteria.map((c, i) => el("span", { style: { display: "flex", gap: "var(--space-1)" } },
+        el("input", { class: "input", value: c.text, placeholder: "A condition someone can check", onInput: (e) => editSel((s) => { s.criteria[i].text = e.target.value; }) }),
+        el("button", { class: "icon-btn", text: "✕", title: "Remove", onClick: () => editSel((s) => { s.criteria.splice(i, 1); }) }),
+      )),
+      el("button", { class: "cmt-add", text: "＋ add a criterion", onClick: () => editSel((s) => { s.criteria.push({ id: `c${Date.now().toString(36).slice(-4)}`, text: "" }); }) }),
+    )),
+    editField("Phase", el("input", {
+      class: "input", value: sel.group || "", list: "edit-phase-list", placeholder: "Optional label drawn around steps sharing it",
+      onInput: (e) => editSel((s) => { s.group = e.target.value; }),
+    })),
+    el("datalist", { id: "edit-phase-list" }, [...new Set(ed.wf.steps.map((s) => s.group).filter(Boolean))].map((p) => el("option", { value: p }))),
+    el(
+      "div", { style: { display: "flex", gap: "var(--space-1)", flexWrap: "wrap", alignItems: "center", marginTop: "var(--space-1)" } },
+      el("button", {
+        class: "btn btn-secondary btn-sm", text: ed.pins[sel.id] ? "Unpin · back to auto layout" : "Pin where it is",
+        onClick: () => {
+          const pins = { ...ed.pins };
+          if (pins[sel.id]) delete pins[sel.id];
+          else if (editPos[sel.id]) pins[sel.id] = { x: editPos[sel.id].x, y: editPos[sel.id].y };
+          writeEditPins(ed.workflowId, pins);
+          setState({ edit: { ...state.edit, pins } });
+        },
+      }),
+      el("button", { class: "btn btn-secondary btn-danger btn-sm", style: { marginLeft: "auto" }, text: "Delete step", onClick: () => editRemoveSteps([sel.id]) }),
+    ),
+  ];
+}
+
+/** A `<select>` with the right `<option selected>` marked — `el`'s generic prop handling
+    sets a `value` attribute, which a `<select>` (unlike an `<input>`) does not read back
+    into its displayed selection. */
+function selectEl(props, options, selectedValue) {
+  return el(
+    "select", props,
+    options.map((o) => el("option", { value: o.value, selected: o.value === selectedValue ? "selected" : null, text: o.text })),
+  );
+}
+
+function editField(label, control, hint = null) {
+  return el(
+    "div", {},
+    el("label", { style: { display: "block", fontSize: "12px", marginBottom: "5px", color: "var(--color-neutral-600)" }, text: label }),
+    control,
+    hint && el("span", { style: { display: "block", marginTop: "4px", fontSize: "11px", color: "var(--color-neutral-500)" }, text: hint }),
+  );
+}
+
+function editMultiPanel(ed, phaseOptions) {
+  const sel = ed.selected;
+  const hasPhase = sel.some((id) => (ed.wf.steps.find((s) => s.id === id) || {}).group);
+  return [
+    el("p", { class: "mono", style: { margin: "0", fontSize: "13px" }, text: sel.join(", ") }),
+    el("span", { style: { fontSize: "12px", color: "var(--color-neutral-500)" }, text: "Wrap them in a loop or parallel from the toolbar, or label them as one phase here. A phase is only a label around the work; nothing about the run changes." }),
+    editField("Phase", el(
+      "span", { style: { display: "flex", gap: "var(--space-1)", alignItems: "center" } },
+      el("input", {
+        id: "edit-phase-input", class: "input", value: ed.phaseDraft, list: "edit-phase-list-multi", placeholder: "e.g. Evaluation",
+        onInput: (e) => setState({ edit: { ...state.edit, phaseDraft: e.target.value } }),
+        onKeyDown: (e) => { if (e.key === "Enter") editApplyPhase(); },
+      }),
+      el("button", { class: "btn btn-primary btn-sm", text: "Apply", disabled: !ed.phaseDraft.trim(), onClick: editApplyPhase }),
+    )),
+    el("datalist", { id: "edit-phase-list-multi" }, phaseOptions.map((p) => el("option", { value: p }))),
+    hasPhase && el("button", {
+      class: "cmt-add", text: "remove from phase",
+      onClick: () => editMutate((wf) => { for (const s of wf.steps) if (sel.includes(s.id)) s.group = ""; }),
+    }),
+    el("div", { style: { display: "flex", marginTop: "var(--space-1)" } },
+      el("button", { class: "btn btn-secondary btn-danger btn-sm", style: { marginLeft: "auto" }, text: `Delete ${sel.length} steps`, onClick: () => editRemoveSteps(sel) }),
+    ),
+  ];
+}
+
+function editGroupPanel(ed, path) {
+  const members = ed.wf.steps.filter((s) => (s.group || "") === path);
+  const desc = (ed.wf.groups.find((g) => g.path === path) || {}).description || "";
+  const nonMembers = ed.wf.steps.filter((s) => (s.group || "") !== path);
+  return [
+    el("span", { class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: path }),
+    editField("Name", el("input", {
+      class: "input", value: path.split("/").pop().trim(),
+      onInput: (e) => {
+        const parts = path.split("/").map((s) => s.trim());
+        parts[parts.length - 1] = e.target.value;
+        const next = parts.join(" / ").replace(/\s*\/\s*/g, " / ").trim();
+        editMutate((wf) => {
+          for (const s of wf.steps) if ((s.group || "") === path) s.group = next;
+          const g = (wf.groups || []).find((x) => x.path === path);
+          if (g) g.path = next;
+        });
+        setState({ edit: { ...state.edit, groupSel: next } });
+      },
+    }), "Relabels every step in it. Nest with “/”, e.g. Ideation / Drafting."),
+    editField("What this phase is for", el("textarea", {
+      class: "input", rows: "2", text: desc, placeholder: "One line the agent reads with the plan",
+      onInput: (e) => editMutate((wf) => {
+        wf.groups = wf.groups || [];
+        const g = wf.groups.find((x) => x.path === path);
+        if (g) g.description = e.target.value;
+        else wf.groups.push({ path, description: e.target.value });
+      }),
+    })),
+    el("span", { style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: "A phase is a label, not a step: goals and criteria belong to the steps inside it. To make the group one unit of the run, select its steps and wrap them in a loop or parallel." }),
+    el("div", { class: "accent-note", text: "Saved as groups[].description on the workflow — the same shape a proof graph writes, so a compiled plan keeps its descriptions." }),
+    el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: "Steps" }),
+    ...members.map((m) => el("span", { style: { display: "flex", alignItems: "baseline", gap: "var(--space-1)", fontSize: "12px" } },
+      el("button", { class: "step-link mono", text: m.id, onClick: () => setState({ edit: { ...state.edit, selected: [m.id], groupSel: null } }) }),
+      el("span", { style: { flex: "1", minWidth: "0", color: "var(--color-neutral-500)" }, text: m.goal || "(no goal yet)" }),
+      el("button", { class: "icon-btn", text: "✕", title: "Take this step out of the phase", onClick: () => editMutate((wf) => { const x = wf.steps.find((y) => y.id === m.id); if (x) x.group = ""; }) }),
+    )),
+    el("select", { class: "chip-add", onChange: (e) => { const v = e.target.value; e.target.value = ""; if (v) editMutate((wf) => { const x = wf.steps.find((y) => y.id === v); if (x) x.group = path; }); } },
+      el("option", { value: "", text: "＋ add a step…" }), nonMembers.map((s) => el("option", { value: s.id, text: `${s.id} — ${(s.goal || "(no goal)").slice(0, 30)}` })),
+    ),
+    el("button", {
+      class: "btn btn-secondary btn-danger btn-sm", style: { alignSelf: "flex-end", marginTop: "var(--space-1)" }, text: "Dissolve phase",
+      onClick: () => { editMutate((wf) => { for (const s of wf.steps) if ((s.group || "") === path) s.group = ""; wf.groups = (wf.groups || []).filter((g) => g.path !== path); }); setState({ edit: { ...state.edit, groupSel: null } }); },
+    }),
+  ];
+}
+
+// ── blank-canvas start ──────────────────────────────────────────────────────────────────
+
+function newWorkflowScreen() {
+  const nw = state.newWorkflow || { title: "", harness: "claude-code" };
+  return el(
+    "main", { class: "narrow", "data-screen-label": "New workflow" },
+    el("button", { class: "btn btn-ghost", style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" }, text: "← Workflows", onClick: () => go("workflows") }),
+    el(
+      "div", { class: "screen-head", style: { marginTop: "var(--space-3)" } },
+      el("h4", { text: "New workflow" }),
+      el("span", { class: "badge b-dim", text: "unsaved" }),
+    ),
+    el("p", { class: "text-muted mono", style: { fontSize: "11px", margin: "var(--space-2) 0 0" }, text: "A plan you write yourself. It is saved as a draft with source “human”, and the agent reads it the same way it reads its own." }),
+    el(
+      "section", { class: "card", style: { maxWidth: "520px", marginTop: "var(--space-3)" } },
+      el("span", { class: "section-label", text: "Start a plan" }),
+      editField("Title", el("input", {
+        class: "input", value: nw.title, placeholder: "What the work is for",
+        onInput: (e) => setState({ newWorkflow: { ...nw, title: e.target.value } }),
+      })),
+      editField("Default harness for new steps", selectEl({
+        class: "input", onChange: (e) => setState({ newWorkflow: { ...nw, harness: e.target.value } }),
+      }, ["claude-code", "codex", "human"].map((h) => ({ value: h, text: h })), nw.harness), "Each step can override this."),
+      el(
+        "div", { style: { display: "flex", gap: "var(--space-1)", marginTop: "var(--space-1)" } },
+        el("button", {
+          class: "btn btn-primary btn-sm", text: "Start with one step", disabled: !nw.title.trim(),
+          onClick: () => {
+            const title = nw.title.trim();
+            if (!title) return;
+            const wf = { title, steps: [{ id: "s1", type: "task", goal: "", harness: nw.harness, depends_on: [], criteria: [], group: "", _new: true }], groups: [] };
+            setState({
+              newWorkflow: null, view: "workflow",
+              edit: {
+                workflowId: null, isNew: true, wf, base: cloneWf({ ...wf, steps: [] }),
+                version: 0, generatedBy: null, history: [], future: [],
+                selected: ["s1"], editingGoal: "s1", pins: {}, manual: false,
+                link: null, edgeSel: null, groupSel: null, phaseDraft: "", notice: null, saving: false,
+              },
+            });
+          },
+        }),
+        el("button", { class: "btn btn-secondary btn-sm", text: "Cancel", onClick: () => go("workflows") }),
+      ),
+    ),
+  );
+}
+
 /** A workflow, at whatever point in its life it has reached.
 
     Draft, ready, running or finished, it is the same screen showing the same plan — with
     execution state on it once there is any. That is the whole merge: there was never a second
     kind of object to look at, only a second document behind the same one. */
 function workflowDetailScreen() {
+  // The blank-canvas flow: nothing has been created yet, so there is no `workflow` to look
+  // up — everything on screen comes from `state.edit` alone.
+  if (state.edit && state.edit.isNew) {
+    const ed = state.edit;
+    return el(
+      "main",
+      { class: "wide graph", "data-screen-label": "Workflow detail" },
+      el(
+        "div", {},
+        el("button", { class: "btn btn-ghost", style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" }, text: "← Workflows", onClick: () => setState({ edit: null, view: "workflows" }) }),
+        el("div", { class: "screen-head", style: { marginTop: "var(--space-3)" } },
+          el("h4", { text: ed.wf.title }),
+          el("span", { class: "badge b-dim", text: "unsaved" }),
+        ),
+        editHints(),
+        editToolbar(ed),
+      ),
+      editSplitView(editViewport(ed), editAside(ed)),
+    );
+  }
+
   const workflow = (state.workflows || []).find((w) => w.workflow_id === state.workflowId);
   if (!workflow) {
     return el("main", { class: "wide graph" }, el("p", { class: "text-muted", text: "Loading…" }));
   }
+  const editing = !!(state.edit && state.edit.workflowId === workflow.workflow_id);
   const runs = executionsOf(workflow, state.runs);
   const life = lifecycleOf(workflow, runs);
   const run = runs[0];
@@ -4888,7 +6021,7 @@ function workflowDetailScreen() {
                   }),
               }),
             ],
-        badge(life),
+        editing ? el("span", { class: "badge b-dim", text: "editing" }) : badge(life),
         progress &&
           el("span", {
             class: "text-muted", style: { fontSize: "12px" },
@@ -4898,17 +6031,25 @@ function workflowDetailScreen() {
       el("p", {
         class: "text-muted mono",
         style: { fontSize: "11px", margin: "var(--space-2) 0 0" },
-        text:
-          `${workflow.workflow_id} · v${workflow.version} · ` +
-          `${workflow.source}${workflow.generated_by ? ` by ${workflow.generated_by}` : ""}` +
-          (detail && detail.state.applied_amendment_ids.length
-            ? ` · +${detail.state.applied_amendment_ids.length} amendment` +
-              (detail.state.applied_amendment_ids.length > 1 ? "s" : "")
-            : ""),
+        text: editing
+          ? `${workflow.workflow_id} · v${workflow.version} → v${workflow.version + 1} unsaved · generated by ${workflow.generated_by || workflow.source}`
+          : `${workflow.workflow_id} · v${workflow.version} · ` +
+            `${workflow.source}${workflow.generated_by ? ` by ${workflow.generated_by}` : ""}` +
+            (detail && detail.state.applied_amendment_ids.length
+              ? ` · +${detail.state.applied_amendment_ids.length} amendment` +
+                (detail.state.applied_amendment_ids.length > 1 ? "s" : "")
+              : ""),
       }),
-      projectLine(workflow),
-      decisionNote(workflow),
-      workflow.status !== "archived" &&
+      state.savedNotice && state.savedNotice.workflowId === workflow.workflow_id &&
+        el("div", { class: "accent-note", style: { marginTop: "var(--space-2)" } },
+          el("span", { text: state.savedNotice.text }),
+          el("span", { style: { display: "block", marginTop: "4px", color: "var(--color-neutral-500)" }, text: "The agent fetches this version the next time it reads the plan. Ask it to review, or approve as is." }),
+        ),
+      !editing && projectLine(workflow),
+      !editing && decisionNote(workflow),
+      editing && editHints(),
+      editing && editToolbar(state.edit),
+      !editing && workflow.status !== "archived" &&
         el(
           "div",
           { style: { display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" } },
@@ -4916,6 +6057,11 @@ function workflowDetailScreen() {
             el("button", {
               class: "btn btn-primary btn-sm", text: "Approve…",
               onClick: () => openWorkflowDialog(workflow, "approve"),
+            }),
+          draft &&
+            el("button", {
+              class: "btn btn-secondary btn-sm", text: "Edit plan…",
+              onClick: () => startEdit(workflow),
             }),
           // The way back to the plan's own thread. Without it, feedback about the plan is
           // reachable only by having nothing selected — which is true when you arrive and
@@ -4984,13 +6130,15 @@ function workflowDetailScreen() {
     // Whichever panel is showing gets the workflow, and with it the note thread. With no
     // node selected that is the plan overview, which is exactly the right home for a note
     // about the plan rather than about any one step.
-    splitView(
-      el("div", {}, staleFilter, viewport),
-      Object.assign(
-        panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
-        { noteWorkflow: workflow },
-      ),
-    ),
+    editing
+      ? editSplitView(editViewport(state.edit), editAside(state.edit))
+      : splitView(
+          el("div", {}, staleFilter, viewport),
+          Object.assign(
+            panel || (detail ? overviewPanel(detail.state, detail, topSteps) : workflowPanel(workflow, topSteps)),
+            { noteWorkflow: workflow },
+          ),
+        ),
   );
 }
 
@@ -6344,6 +7492,7 @@ const SCREENS = {
   template: templateDetailScreen,
   workflows: workflowsScreen,
   workflow: workflowDetailScreen,
+  "new-workflow": newWorkflowScreen,
   // A run's own screen survives only for a workflow with more than one execution.
   detail: detailScreen,
 };
@@ -6433,6 +7582,13 @@ function render() {
     }
   }
 
+  // A newly-created or double-clicked step's goal starts in edit — same reasoning as the
+  // dialog's first input above, since the textarea did not exist at the moment `setState`
+  // asked for it to be focused.
+  if (state.edit && state.edit.editingGoal) {
+    document.getElementById(`edit-goal-${state.edit.editingGoal}`)?.focus();
+  }
+
   measureGraph();
 }
 
@@ -6449,6 +7605,28 @@ function measureGraph() {
 window.addEventListener("resize", measureGraph);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.dialog && !state.dialog.busy) setState({ dialog: null });
+  if (!state.edit) return;
+  const tag = (e.target.tagName || "").toLowerCase();
+  const typing = tag === "input" || tag === "textarea" || tag === "select";
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    e.shiftKey ? editRedo() : editUndo();
+    return;
+  }
+  if (typing) return;
+  if ((e.key === "Backspace" || e.key === "Delete") && state.edit.edgeSel) {
+    e.preventDefault();
+    editRemoveEdge();
+    return;
+  }
+  if ((e.key === "Backspace" || e.key === "Delete") && state.edit.selected.length) {
+    e.preventDefault();
+    editRemoveSteps(state.edit.selected);
+    return;
+  }
+  if (e.key === "Escape") {
+    setState({ edit: { ...state.edit, selected: [], link: null, edgeSel: null, groupSel: null } });
+  }
 });
 
 // Back, forward, or a hash typed by hand: the URL is the source of truth for *where*, so

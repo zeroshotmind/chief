@@ -705,6 +705,96 @@ details[open] > .meta-summary::before { content: "▾ "; }
   border-color: var(--color-accent-500, var(--color-accent-300));
   background: color-mix(in srgb, var(--color-accent-300) 6%, var(--color-surface));
 }
+/* A step that fails validation in edit mode — an empty goal, a missing harness, an empty
+   construct body. Dashed rather than solid, same idiom `.node.pend`/`.node.ghost` already
+   use for "not the final result yet", in the bad hue instead of the accent one. */
+.node.invalid { border: 1px dashed var(--bad); }
+
+/* — manual plan editing — */
+.edit-toolbar { margin-top: var(--space-3); }
+.toolbar-sep { width: 1px; height: 20px; background: var(--color-divider-strong); margin: 0 var(--space-1); }
+/* Loop/Parallel in the "Add" row: dashed and accent-tinted, the same idiom a gate node
+   already draws itself in — so the button reads as a preview of the thing it adds. */
+.btn-construct {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-weight: 600; font-size: 12px; line-height: 1.2; padding: 3px 12px; border-radius: var(--radius-md);
+  color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 4%, var(--color-surface));
+  border: 1px dashed var(--color-accent);
+}
+.btn-construct:hover { background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface)); }
+.icon-btn {
+  border: none; background: none; cursor: pointer; padding: 2px 6px; font-size: 14px;
+  line-height: 1; color: var(--color-neutral-600); border-radius: var(--radius-sm);
+}
+.icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.icon-btn:hover:not(:disabled) { background: var(--color-accent-200); }
+/* Delete ✕ on an editable node: faint until hovered or the node is selected, so the graph
+   does not read as covered in controls when nothing is selected. */
+.node-x {
+  position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: var(--radius-sm);
+  border: none; background: transparent; color: var(--color-neutral-500); font-size: 11px; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0.35;
+}
+.node:hover .node-x, .node.sel .node-x { opacity: 1; }
+.node-x:hover { color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); }
+/* The port a dependency is dragged from: centred on the node's bottom edge, crosshair cursor
+   so it reads as "draw from here" rather than as part of the node body. */
+.node-port {
+  position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+  width: 11px; height: 11px; border-radius: 50%; background: var(--color-surface);
+  border: 1.5px solid var(--color-accent); cursor: crosshair; opacity: 0.55;
+}
+.node:hover .node-port, .node.sel .node-port { opacity: 1; }
+.node-port:hover { background: var(--color-accent); }
+/* "Pinned where you put it" — top-left, opposite corner from `.node-tag`, same idiom as
+   `.node-lane` (which also lives there, but never at the same time: a lane only appears on
+   a fanned run node, which is never in edit mode). */
+.node-pin {
+  position: absolute; top: -11px; left: 8px; background: var(--color-surface);
+  font-family: var(--font-mono); font-size: 10px; color: var(--color-neutral-500); padding: 0 4px;
+  white-space: nowrap;
+}
+/* The goal, in place, while it is being typed. */
+.node-goal-edit {
+  flex: 1; min-width: 0; resize: none; font-size: 12px; line-height: 1.35; padding: 0; margin: 0;
+  border: none; outline: none; background: transparent; color: var(--color-text); font-family: inherit;
+  caret-color: var(--color-accent);
+}
+/* The pill that appears at a selected dependency's midpoint, to remove it. Not a `.node-tag`:
+   it sits on the plane over an edge, not pinned to a node's corner. */
+.edge-pill {
+  position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center;
+  gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 10px; line-height: 1.2; cursor: pointer;
+  color: var(--bad); background: var(--color-surface); border: 1px solid var(--bad);
+  box-shadow: var(--shadow-sm); white-space: nowrap; font-family: inherit;
+}
+/* A removable value in the edit form — a dependency, a body member — the same rounded pill
+   family as `.chip`, tinted accent since it names another step rather than filtering a list. */
+.chip-removable {
+  display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 12px;
+  padding: 3px 6px 3px 10px; color: var(--color-accent-700); background: var(--color-accent-200);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent); border-radius: var(--radius-md);
+}
+.chip-removable button {
+  border: none; background: none; cursor: pointer; padding: 0 2px; font-size: 11px;
+  color: var(--color-accent-700); line-height: 1;
+}
+/* The "＋ add…" control at the end of a chip list: a select styled to read as an empty slot
+   rather than a form control, until it is opened. */
+.chip-add {
+  font-family: var(--font-mono); font-size: 12px; padding: 3px 6px; color: var(--color-neutral-500);
+  background: transparent; border: 1px dashed var(--color-divider-strong); border-radius: var(--radius-md);
+  cursor: pointer; max-width: 220px;
+}
+.prob-row {
+  display: flex; gap: var(--space-1); align-items: baseline; font-size: 12px; text-align: left;
+  border: none; background: none; padding: 0; cursor: pointer; color: var(--color-neutral-600);
+}
+.step-link {
+  padding: 0; border: none; background: none; cursor: pointer; color: var(--color-neutral-600);
+  font-size: 11px;
+}
+.step-link:hover { color: var(--color-accent-700); text-decoration: underline; }
 
 /* The grip between the plan and the panel. Wider than it looks — a 3px target is a target
    you miss — with the visible line drawn by a pseudo-element inside it. */

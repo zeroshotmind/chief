@@ -261,6 +261,24 @@ def validate_steps(steps: list[WorkflowStep]) -> None:
 
 def validate_definition(defn: WorkflowDefinition) -> None:
     validate_steps(defn.steps)
+    validate_groups(defn.steps, defn.groups)
+
+
+def validate_groups(steps: list[WorkflowStep], groups: list) -> None:
+    """Every declared group path must describe steps that actually carry it.
+
+    Mirrors the rule proof-graph extraction already applies to ``ExtractedGraph.groups``
+    (proof_graph.py's ``GraphGroup`` docstring): a description naming a group no step
+    belongs to describes nothing, so it is rejected the same way an unknown ``depends_on``
+    target is.
+    """
+    used = {s.group for s in steps if s.group}
+    for g in groups:
+        if g.path not in used:
+            raise ValidationFailed(
+                f"groups entry '{g.path}' describes no step; no step has group='{g.path}'",
+                details={"path": g.path},
+            )
 
 
 def dependency_closure(steps: list[WorkflowStep], step_id: str) -> set[str]:

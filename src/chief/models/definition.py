@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .proof_graph import GraphGroup
 from .review import ReviewNote
 
 StepType = Literal["task", "loop", "parallel", "checkpoint", "workflow_ref"]
@@ -305,6 +306,12 @@ class WorkflowDefinition(BaseModel):
     status: WorkflowStatus = "draft"
     version: int = 1
     steps: list[WorkflowStep] = Field(default_factory=list)
+    # Descriptions of `group` paths used by `steps`, keyed by path and nesting on '/' — the
+    # same shape a proof graph's `groups` carries (`GraphGroup`), so a plan compiled from one
+    # keeps its descriptions and a hand-edited plan can gain them the same way. Purely
+    # descriptive, like `group` itself: a `groups` entry whose path no step carries is a
+    # validation error (domain/graph.py), since it would describe nothing.
+    groups: list[GraphGroup] = Field(default_factory=list)
     # Which body of work this plan belongs to. An open string namespace like ``harness``
     # (REQ-26): adding a project is adding a value, not a schema change. Deliberately a
     # label rather than a path — a label is stable, and a path rots the moment the tree
@@ -405,6 +412,7 @@ class WorkflowCreate(BaseModel):
     source: WorkflowSource
     generated_by: str | None = None
     steps: list[WorkflowStep]
+    groups: list[GraphGroup] = Field(default_factory=list)
     # Described rather than commented: these two reach a harness through the MCP tool's
     # JSON schema, and a `#:` comment does not travel there. A field an agent sees as a
     # bare nullable string is a field it leaves null.
@@ -444,18 +452,28 @@ class WorkflowRevise(BaseModel):
     has this plan changed under a running harness". Each revision overwrites the draft;
     the audit log records that it happened.
 
-    ``source`` and ``generated_by`` are not accepted: revising a plan does not change where
-    it came from. Neither are ``project`` and ``origin_dir``, for the same reason — the
-    second especially, which is a record of where the harness stood and would be a lie if a
-    later revision from somewhere else could overwrite it. A mislabelled project is
-    corrected through ``PATCH /workflows/{id}``, which is a labelling act, not a plan one.
+    ``generated_by`` is not accepted: revising a plan does not change who first wrote it.
+    Neither are ``project`` and ``origin_dir``, for the same reason — the second especially,
+    which is a record of where the harness stood and would be a lie if a later revision from
+    somewhere else could overwrite it. A mislabelled project is corrected through
+    ``PATCH /workflows/{id}``, which is a labelling act, not a plan one.
+
+    ``source`` is the one exception, and only for one value: passing ``"human"`` marks this
+    revision as a person editing the draft by hand rather than the harness correcting its own
+    plan. That is the one case where a revision *does* bump ``version`` (REQ above notwith-
+    standing) — the person's version is a distinct thing from what the harness last wrote,
+    and the plan's own audit trail (and the UI's "vN by X, edited by you" line) needs a
+    number to point at. ``generated_by`` is still preserved either way; only ``source``
+    itself changes, to record that this particular version was hand-edited.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1)
     steps: list[WorkflowStep]
+    groups: list[GraphGroup] = Field(default_factory=list)
     reason: str | None = None
+    source: Literal["human"] | None = None
 
 
 class WorkflowLabel(BaseModel):
