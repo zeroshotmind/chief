@@ -8,10 +8,13 @@
 export const API_BASE = new URLSearchParams(location.search).get("api") || "/v1";
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, code = null } = {}) {
+  constructor(message, { status = 0, code = null, details = null } = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    // The per-field pydantic errors behind a generic "failed schema validation" message
+    // (app.py's `_clean_errors`): [{loc: ["body", "steps", 0, "goal"], msg, type}, ...].
+    this.details = details;
   }
 }
 
@@ -28,7 +31,7 @@ async function request(path, options) {
     const err = body && body.error;
     throw new ApiError(
       (err && err.message) || `${options?.method || "GET"} ${path} failed (${response.status})`,
-      { status: response.status, code: err && err.code },
+      { status: response.status, code: err && err.code, details: err && err.details },
     );
   }
   return body;

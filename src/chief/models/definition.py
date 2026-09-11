@@ -15,7 +15,7 @@ from .review import ReviewNote
 
 StepType = Literal["task", "loop", "parallel", "checkpoint", "workflow_ref"]
 WorkflowStatus = Literal["draft", "approved", "archived"]
-WorkflowSource = Literal["import", "generated"]
+WorkflowSource = Literal["import", "generated", "human"]
 InstanceFailurePolicy = Literal["fail_fast", "continue"]
 
 

@@ -3466,12 +3466,16 @@ function layout(topSteps, ghosts, rewires, width, heightFor) {
   // Node heights vary: a construct grows to hold the steps in its body, so a layer advances
   // by its tallest member rather than by a constant.
   const pos = {};
-  let y = 14;
-  let bottom = 0;
   // A boundary needs room above its members for a label, and room below the layer before it,
   // or two stacked groups sharing a column would touch. Paid only when there are groups.
   const outerPad = GROUP_PAD + (grouping ? grouping.depth * GROUP_NEST : 0);
   const drop = DROP + (grouping ? Math.max(0, 2 * outerPad + GROUP_LABEL_H - DROP) : 0);
+  // The same room is owed above the very first band: its label opens upward by `outerPad +
+  // GROUP_LABEL_H` (the y0 formula below), and with no earlier band to borrow that space
+  // from the way `drop` gives every later one, a plan whose top layer sits in a group had
+  // that label drawn above y=0 — outside the plane, so it never painted at all.
+  let y = 14 + (grouping ? outerPad + GROUP_LABEL_H : 0);
+  let bottom = 0;
 
   const bands = [];
   for (const layer of layers) {
@@ -5158,6 +5162,21 @@ function editChangeRows(ed) {
   return rows;
 }
 
+/** The generic "the submitted document failed schema validation" tells you nothing; the
+    pydantic errors behind it (app.py's `_clean_errors`, carried on `ApiError.details`) name
+    exactly which field and why. Turned into one line per error so Save's notice is
+    actionable instead of just alarming. */
+function apiErrorText(err) {
+  const base = err instanceof ApiError ? err.message : String(err);
+  const details = err instanceof ApiError ? err.details : null;
+  if (!Array.isArray(details) || !details.length) return base;
+  const lines = details.map((d) => {
+    const loc = Array.isArray(d.loc) ? d.loc.filter((p) => p !== "body").join(".") : null;
+    return loc ? `${loc}: ${d.msg}` : d.msg;
+  });
+  return `${base} — ${lines.join("; ")}`;
+}
+
 async function saveEdit() {
   const ed = state.edit;
   if (!ed) return;
@@ -5192,7 +5211,7 @@ async function saveEdit() {
     }
   } catch (err) {
     setState({
-      edit: { ...state.edit, saving: false, notice: err instanceof ApiError ? err.message : String(err) },
+      edit: { ...state.edit, saving: false, notice: apiErrorText(err) },
     });
   }
 }
@@ -5489,7 +5508,7 @@ function editViewport(ed) {
               placeholder: "State the work",
               onPointerdown: (e) => e.stopPropagation(),
               onInput: (e) => editGoalInput(step.id, e.target.value),
-              onBlur: () => { editGoalSession = null; setState({ edit: { ...state.edit, editingGoal: null } }); },
+              onBlur: () => { if (rebuilding) return; editGoalSession = null; setState({ edit: { ...state.edit, editingGoal: null } }); },
               onKeyDown: (e) => {
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setState({ edit: { ...state.edit, editingGoal: null } }); }
                 if (e.key === "Escape") setState({ edit: { ...state.edit, editingGoal: null } });
@@ -5690,6 +5709,162 @@ function editAside(ed) {
   return aside;
 }
 
+/** `inputs`/`outputs` as a hand-editable list of promises: a name, plus what it claims,
+    `{artifact_type, contract}` — the same shape `splitInputs`/`isContract` already read in
+    view mode (app.js:1718). Open and unvalidated, per the field's own docstring: this only
+    writes the plan-time claim, never a run-reported artifact, so the row layout never offers
+    a `ref`/`data` — those come from a run, not from someone typing in a draft.
+
+    Renamed by index rather than by key, so a row keeps its DOM identity — and so keyboard
+    focus — while its name is still being typed; two rows landing on the same name during an
+    edit is possible but transient, resolved the moment one is renamed again. */
+function contractField(label, field, sel) {
+  const entries = Object.entries(sel[field] || {});
+  return editField(`${label} (${entries.length})`, el(
+    "div", { style: { display: "flex", flexDirection: "column", gap: "var(--space-1)" } },
+    entries.map(([name, v], i) => {
+      const val = v && typeof v === "object" ? v : {};
+      return el(
+        "div", { style: { display: "flex", gap: "var(--space-1)" } },
+        el("input", {
+          id: `edit-sel-${field}-name-${i}`, class: "input", style: { flex: "1" }, value: name, placeholder: "name",
+          onInput: (e) => editRenameContract(field, i, e.target.value),
+        }),
+        el("input", {
+          id: `edit-sel-${field}-type-${i}`, class: "input", style: { flex: "1" }, value: val.artifact_type || "", placeholder: "artifact type",
+          onInput: (e) => editContractField(field, name, "artifact_type", e.target.value),
+        }),
+        el("input", {
+          id: `edit-sel-${field}-contract-${i}`, class: "input", style: { flex: "2" }, value: val.contract || "", placeholder: "condition, e.g. rows > 0",
+          onInput: (e) => editContractField(field, name, "contract", e.target.value),
+        }),
+        el("button", { class: "icon-btn", text: "✕", title: "Remove", onClick: () => editRemoveContract(field, name) }),
+      );
+    }),
+    el("button", { class: "cmt-add", text: `＋ add ${field === "inputs" ? "an input" : "an output"}`, onClick: () => editAddContract(field) }),
+  ), field === "inputs"
+    ? "What this step demands of what it reads. Optional; most steps say nothing here."
+    : "What this step promises about what it produces — a plan-time claim, not the artifact a run reports. Optional.");
+}
+
+function editAddContract(field) {
+  editSel((s) => {
+    const obj = { ...(s[field] || {}) };
+    let name = "value", n = 1;
+    while (name in obj) name = `value${n++}`;
+    obj[name] = { artifact_type: "", contract: "" };
+    s[field] = obj;
+  });
+}
+function editRemoveContract(field, name) {
+  editSel((s) => {
+    const obj = { ...(s[field] || {}) };
+    delete obj[name];
+    s[field] = obj;
+  });
+}
+function editContractField(field, name, key, value) {
+  editSel((s) => {
+    const obj = { ...(s[field] || {}) };
+    obj[name] = { ...(obj[name] || {}), [key]: value };
+    s[field] = obj;
+  });
+}
+function editRenameContract(field, index, newName) {
+  editSel((s) => {
+    const next = {};
+    Object.entries(s[field] || {}).forEach(([k, v], i) => { next[i === index ? newName : k] = v; });
+    s[field] = next;
+  });
+}
+
+/** Round-trips `algorithm.lines` through one textarea: two leading spaces per indent level,
+    the same convention `algBlock` already draws (`line.indent * 16px`, app.js:1832 — one
+    indent step per two spaces reads the same on screen as it does typed). A blank line
+    survives the round trip (indent 0, empty text) rather than being dropped, so pressing
+    Enter to separate steps of pseudocode doesn't fight the editor. */
+function algTextOf(lines) {
+  return (lines || []).map((l) => "  ".repeat(Math.max(0, l.indent || 0)) + (l.text || "")).join("\n");
+}
+function algLinesOf(text) {
+  return text.split("\n").map((raw) => {
+    const spaces = raw.match(/^ */)[0].length;
+    return { indent: Math.floor(spaces / 2), text: raw.slice(spaces) };
+  });
+}
+
+/** The textarea's own typed text, kept verbatim while it has focus.
+
+    `algTextOf(algLinesOf(text))` is not the identity on every keystroke — an odd number of
+    leading spaces rounds down to the nearest indent level (`Math.floor(spaces / 2)`), so one
+    space typed at the start of a line reserializes back to zero. Reading the textarea's
+    value from that round trip on every `onInput` fed the normalized text straight back in,
+    silently erasing the space that was just typed — indistinguishable, to whoever was
+    typing, from the key not working. Held raw here instead, exactly as typed, and only
+    folded into `lines` (still on every keystroke, so nothing about Save or the diff panel
+    changes) without reading the round trip back into the box until it loses focus. */
+let editAlgTextSession = null;
+let editAlgTextDraft = "";
+
+/** `algorithm`: numbered pseudocode plus a legend of external calls, read (never checked)
+    exactly as `algBlock` (app.js:1814) renders it. Absent by default — the toggle button
+    below only appears once one line exists, matching "worth writing only where the how is
+    mathematics rather than judgement" (definition.py:200-201). */
+function algorithmField(sel) {
+  const alg = sel.algorithm;
+  if (!alg) {
+    return editField("Algorithm", el("button", {
+      class: "cmt-add", text: "＋ add an algorithm",
+      onClick: () => { editAlgTextSession = null; editSel((s) => { s.algorithm = { lines: [{ indent: 0, text: "" }], externals: [] }; }); },
+    }), "Numbered pseudocode, reviewed like the goal — nothing checks it. Optional.");
+  }
+  const lines = alg.lines || [];
+  const externals = alg.externals || [];
+  return editField(`Algorithm (${lines.length} line${lines.length === 1 ? "" : "s"})`, el(
+    "div", { style: { display: "flex", flexDirection: "column", gap: "var(--space-1)" } },
+    el("textarea", {
+      id: "edit-sel-alg-text", class: "input mono", rows: String(Math.max(3, lines.length)),
+      text: editAlgTextSession === sel.id ? editAlgTextDraft : algTextOf(lines),
+      placeholder: "One step per line. Indent two spaces per level.",
+      onInput: (e) => {
+        editAlgTextSession = sel.id;
+        editAlgTextDraft = e.target.value;
+        editSel((s) => { s.algorithm.lines = algLinesOf(e.target.value); });
+      },
+      onBlur: () => { if (!rebuilding) editAlgTextSession = null; },
+    }),
+    el("span", { style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: "Indent with two spaces per level — drawn the same way it's typed." }),
+    el("span", { class: "section-label", style: { marginTop: "var(--space-1)" }, text: "External calls" }),
+    externals.map((ext, i) => el(
+      "div", { style: { display: "flex", gap: "var(--space-1)" } },
+      el("input", {
+        id: `edit-sel-alg-ext-tag-${i}`, class: "input", style: { width: "90px" }, value: ext.tag || "", placeholder: "tag, e.g. llm",
+        onInput: (e) => editAlgExt(i, "tag", e.target.value),
+      }),
+      el("input", {
+        id: `edit-sel-alg-ext-fn-${i}`, class: "input", style: { flex: "1" }, value: ext.fn || "", placeholder: "what it calls",
+        onInput: (e) => editAlgExt(i, "fn", e.target.value),
+      }),
+      el("button", { class: "icon-btn", text: "✕", title: "Remove", onClick: () => editAlgRemoveExt(i) }),
+    )),
+    el("button", { class: "cmt-add", text: "＋ add an external call", onClick: editAlgAddExt }),
+    el("button", {
+      class: "btn btn-secondary btn-danger btn-sm", style: { alignSelf: "flex-start", marginTop: "var(--space-1)" },
+      text: "Remove algorithm", onClick: () => { editAlgTextSession = null; editSel((s) => { s.algorithm = null; }); },
+    }),
+  ), "Numbered pseudocode, reviewed like the goal — nothing checks it.");
+}
+
+function editAlgAddExt() {
+  editSel((s) => { s.algorithm.externals = [...(s.algorithm.externals || []), { tag: "", fn: "" }]; });
+}
+function editAlgRemoveExt(i) {
+  editSel((s) => { s.algorithm.externals = s.algorithm.externals.filter((_, idx) => idx !== i); });
+}
+function editAlgExt(i, key, value) {
+  editSel((s) => { s.algorithm.externals = s.algorithm.externals.map((e, idx) => (idx === i ? { ...e, [key]: value } : e)); });
+}
+
 function editStepPanel(ed, sel) {
   const isConstruct = sel.type === "loop" || sel.type === "parallel";
   const inBodyOf = ed.wf.steps.find((p) => (p.body || []).includes(sel.id));
@@ -5745,19 +5920,22 @@ function editStepPanel(ed, sel) {
       }),
     )),
     isConstruct && sel.type === "loop" && editField("Exits when", el("input", {
-      class: "input", value: sel.exit_when || "", placeholder: "e.g. every open problem has an idea",
+      id: "edit-sel-exit-when", class: "input", value: sel.exit_when || "", placeholder: "e.g. every open problem has an idea",
       onInput: (e) => editSel((s) => { s.exit_when = e.target.value; }),
     }), "Drawn on the gate's ✓ arrow. Empty means the harness decides."),
     editField(`Done when (${sel.criteria.length})`, el(
       "div", { style: { display: "flex", flexDirection: "column", gap: "var(--space-1)" } },
       sel.criteria.map((c, i) => el("span", { style: { display: "flex", gap: "var(--space-1)" } },
-        el("input", { class: "input", value: c.text, placeholder: "A condition someone can check", onInput: (e) => editSel((s) => { s.criteria[i].text = e.target.value; }) }),
+        el("input", { id: `edit-sel-criterion-${c.id || i}`, class: "input", value: c.text, placeholder: "A condition someone can check", onInput: (e) => editSel((s) => { s.criteria[i].text = e.target.value; }) }),
         el("button", { class: "icon-btn", text: "✕", title: "Remove", onClick: () => editSel((s) => { s.criteria.splice(i, 1); }) }),
       )),
       el("button", { class: "cmt-add", text: "＋ add a criterion", onClick: () => editSel((s) => { s.criteria.push({ id: `c${Date.now().toString(36).slice(-4)}`, text: "" }); }) }),
     )),
+    contractField("Takes in", "inputs", sel),
+    contractField("Produces", "outputs", sel),
+    algorithmField(sel),
     editField("Phase", el("input", {
-      class: "input", value: sel.group || "", list: "edit-phase-list", placeholder: "Optional label drawn around steps sharing it",
+      id: "edit-sel-phase", class: "input", value: sel.group || "", list: "edit-phase-list", placeholder: "Optional label drawn around steps sharing it",
       onInput: (e) => editSel((s) => { s.group = e.target.value; }),
     })),
     el("datalist", { id: "edit-phase-list" }, [...new Set(ed.wf.steps.map((s) => s.group).filter(Boolean))].map((p) => el("option", { value: p }))),
@@ -5830,7 +6008,7 @@ function editGroupPanel(ed, path) {
   return [
     el("span", { class: "mono", style: { fontSize: "11px", color: "var(--color-neutral-500)" }, text: path }),
     editField("Name", el("input", {
-      class: "input", value: path.split("/").pop().trim(),
+      id: "edit-group-name", class: "input", value: path.split("/").pop().trim(),
       onInput: (e) => {
         const parts = path.split("/").map((s) => s.trim());
         parts[parts.length - 1] = e.target.value;
@@ -5844,7 +6022,7 @@ function editGroupPanel(ed, path) {
       },
     }), "Relabels every step in it. Nest with “/”, e.g. Ideation / Drafting."),
     editField("What this phase is for", el("textarea", {
-      class: "input", rows: "2", text: desc, placeholder: "One line the agent reads with the plan",
+      id: "edit-group-desc", class: "input", rows: "2", text: desc, placeholder: "One line the agent reads with the plan",
       onInput: (e) => editMutate((wf) => {
         wf.groups = wf.groups || [];
         const g = wf.groups.find((x) => x.path === path);
@@ -5887,7 +6065,7 @@ function newWorkflowScreen() {
       "section", { class: "card", style: { maxWidth: "520px", marginTop: "var(--space-3)" } },
       el("span", { class: "section-label", text: "Start a plan" }),
       editField("Title", el("input", {
-        class: "input", value: nw.title, placeholder: "What the work is for",
+        class: "input", id: "nw-title", value: nw.title, placeholder: "What the work is for",
         onInput: (e) => setState({ newWorkflow: { ...nw, title: e.target.value } }),
       })),
       editField("Default harness for new steps", selectEl({
@@ -7501,6 +7679,11 @@ const screenFor = (view) => (SCREENS[view] || workflowsScreen)();
 
 let measured = null; // the graph viewport of the most recent render, for width measurement
 let dialogKey = null;
+// True only while render() is tearing down the old tree. Removing a focused element from
+// the DOM fires a synchronous `blur` on it — indistinguishable, to that element's own
+// listener, from the user actually leaving the field. A commit-on-blur handler (the inline
+// goal editor) checks this so a rebuild mid-keystroke doesn't read as "you clicked away."
+let rebuilding = false;
 
 function render() {
   const root = document.getElementById("app");
@@ -7521,6 +7704,7 @@ function render() {
   const graphScroll = graphViewport && { left: graphViewport.scrollLeft, top: graphViewport.scrollTop };
   // replaceChildren has no conditional-child idiom of its own — a skipped branch reaching
   // it would be stringified into the page — so the list is filtered before it gets there.
+  rebuilding = true;
   root.replaceChildren(
     ...[
       navBar(),
@@ -7529,6 +7713,7 @@ function render() {
       screenFor(state.view),
     ].filter((n) => n instanceof Node),
   );
+  rebuilding = false;
   if (inspectorScroll) {
     const panel = document.querySelector(".inspector");
     if (panel) panel.scrollTop = inspectorScroll;
