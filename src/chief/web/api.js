@@ -41,11 +41,23 @@ const post = (path, body) =>
     body: JSON.stringify(body),
   });
 
+const put = (path, body) =>
+  request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export const listWorkflows = () => request("/workflows");
 
 /** The import half of "Export to a file": the exported file is a request body at rest, and
     registering it here — on this Chief or any other — is posting it back. */
 export const createWorkflow = (body) => post("/workflows", body);
+
+/** Replace a draft's plan (`PUT /workflows/{id}`). Refused once the workflow has been
+    approved. `body.source: "human"` marks this as a person's own edit rather than the
+    harness correcting its plan — the one case a revision also bumps `version`. */
+export const reviseDraft = (workflowId, body) => put(`/workflows/${workflowId}`, body);
 export const createTemplate = (body) => post("/templates", body);
 export const createProofGraph = (body) => post("/proof-graphs", body);
 

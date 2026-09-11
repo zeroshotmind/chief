@@ -106,6 +106,28 @@ def test_artifact_needs_ref_or_data(api: Api) -> None:
     assert response.status_code == 422
 
 
+def test_group_path_with_no_matching_step_is_rejected(api: Api) -> None:
+    step = task("step_01")
+    step["group"] = "Survey"
+    response = api.create_workflow(
+        [step], groups=[{"path": "Ideation", "description": "One idea per problem."}]
+    )
+    assert response.status_code == 422
+    assert "describes no step" in response.json()["error"]["message"]
+
+
+def test_group_path_matching_a_step_is_accepted(api: Api) -> None:
+    step = task("step_01")
+    step["group"] = "Survey"
+    response = api.create_workflow(
+        [step], groups=[{"path": "Survey", "description": "Read the field first."}]
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["groups"] == [
+        {"path": "Survey", "description": "Read the field first."}
+    ]
+
+
 def test_artifact_id_is_generated_when_omitted(api: Api) -> None:
     _, run_id = api.run([task("step_01")])
     api.update_step(

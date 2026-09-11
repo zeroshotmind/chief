@@ -166,4 +166,5 @@ def compile_graph(
         project=project,
         origin_dir=origin_dir,
         steps=[_step_for(node) for node in graph.nodes],
+        groups=list(graph.groups),
     )

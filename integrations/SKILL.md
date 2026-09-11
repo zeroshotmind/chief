@@ -154,6 +154,15 @@ alone — do not revise it into something the note did not ask for.
 Marking a note resolved is theirs, not yours; so is writing one. There is no tool for
 either, deliberately.
 
+**A draft may have been edited by the person, not just reviewed.** The web UI lets someone
+edit a draft's plan directly — add, remove or rewire steps, change goals, group steps into
+phases — with no amendment and no review note. A version they saved this way comes back with
+`source: "human"` and a bumped `version`. Always `get_workflow` before you call
+`revise_draft`, the same as you would to pick up review notes: if the version is not the one
+you last wrote, someone edited it by hand while you were away, and revising from what you
+remember posting would silently discard their changes. Read the plan as it stands and build
+your revision on top of it.
+
 ## Then run it
 
 `approve_workflow` (see below on who decides) → `register_run` → work the steps.

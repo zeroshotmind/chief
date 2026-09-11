@@ -34,6 +34,16 @@ function node(tag) {
     // A real anchor has these; the download path uses both.
     click() { self.clicked = true; },
     remove() {},
+    // Edit mode focuses a freshly-created step's goal textarea via getElementById — a real
+    // element always has these; the stub had no reason to until now.
+    focus() { self.focused = true; },
+    blur() {},
+    select() {},
+    setSelectionRange() {},
+    // Edit mode's drag/link gestures measure the plane against its own screen rect; the
+    // stub plane is always drawn at the origin, which is all `editPlanePoint`'s subtraction
+    // needs to produce usable coordinates.
+    getBoundingClientRect() { return { left: 0, top: 0, width: 900, height: 400 }; },
   };
   // Real nodes always have one, and code that toggles a class without going through a
   // re-render reaches for it directly. It writes through to `class`, which is what the
@@ -454,8 +464,13 @@ globalThis.fetch = async (url, options) => {
   // A create answers with the created document, not the list: the importers read the new
   // id off the response to land on the imported thing's own screen.
   const made = options && options.method === "POST" && options.body ? JSON.parse(options.body) : null;
+  // A revise (PUT) answers with the updated document too — `saveEdit` reads `version` off
+  // it to build the "Saved as vN" notice. `source: "human"` is the one case that bumps it.
+  const revised = options && options.method === "PUT" && options.body ? JSON.parse(options.body) : null;
   const body =
-    made && /\/v1\/workflows$/.test(url)
+    revised && /\/v1\/workflows\/[^/]+$/.test(url)
+      ? { ...revised, workflow_id: url.split("/").pop(), status: "draft", version: revised.source === "human" ? 2 : 1 }
+    : made && /\/v1\/workflows$/.test(url)
       ? { ...made, workflow_id: made.workflow_id || "wf_new", status: "draft", version: 1 }
     : made && /\/v1\/templates$/.test(url)
       ? { ...made, template_id: made.template_id || "tpl_new", status: "active" }
@@ -621,6 +636,18 @@ function typeInto(placeholder, value) {
   if (!hit) throw new Error(`no input field with placeholder ${placeholder}`);
   hit.fn({ target: { value } });
 }
+
+/** A non-click listener — `pointerdown`/`pointerup`/etc — on the newest matching node. Edit
+    mode's node select/drag/link gestures are pointer events, not clicks, and the stub does
+    not bubble one from a node to its container the way a browser would, so a drag has to be
+    driven as the two separate listeners it actually is. */
+function firePointer(type, matchNode, event = {}) {
+  const hit = [...handlers].reverse().find((h) => h.type === type && matchNode(h.node));
+  if (!hit) throw new Error(`no ${type} handler matching`);
+  hit.fn({ clientX: 0, clientY: 0, shiftKey: false, stopPropagation() {}, preventDefault() {}, ...event });
+}
+const isNodeWith = (text) => (n) => (n.class || "").split(" ").includes("node") && JSON.stringify(n).includes(text);
+const isPlane = (n) => (n.class || "").split(" ").includes("graph-plane");
 
 /** The workflow titles, in the order the list drew them. */
 function rowTitles(root = mainNode(), out = []) {
@@ -1978,6 +2005,110 @@ console.log(`pagination:  page1=${pagerShownPage1}, next=${pagerAdvancesToPage2}
 console.log(`stale:       step marked=${!!staleMarked}, branch offer=${branchMarkOffered}, branch marked=${!!instanceStaleMarked}`);
 console.log(`             filter: fades=${fadesNonStale}, stale unfaded=${staleStillFull}, clears=${filterClears}`);
 
+// ── manual plan editing ──────────────────────────────────────────────────────────────────
+// The draft opened earlier ("A draft" / wf_draft) has an "Edit plan…" button; a running or
+// archived workflow does not.
+location.hash = "#/workflow/wf_draft";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+record("open draft for editing");
+const editButtonOffered = countClass(mainNode(), "btn") > 0 && JSON.stringify(mainNode()).includes("Edit plan…");
+
+location.hash = "#/workflow/wf_ok"; // approved, not a draft
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+const editButtonHiddenWhenApproved = !JSON.stringify(mainNode()).includes("Edit plan…");
+
+location.hash = "#/workflow/wf_draft";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+clickButton("Edit plan…");
+await new Promise((r) => setTimeout(r, 20));
+record("edit mode");
+const editToolbarShown = countClass(mainNode(), "edit-toolbar") === 1;
+const editBadge = collectClasses(mainNode(), "badge").some((c) => c.includes("b-dim")) &&
+  JSON.stringify(mainNode()).includes('"editing"');
+const noChangesYet = JSON.stringify(mainNode()).includes("no changes yet");
+
+// Add a step: it has no goal yet, so it is both a "1 problem" plan and the reason Save
+// stays disabled. It also lands selected with its goal already open for typing.
+clickButton("＋ Step");
+await new Promise((r) => setTimeout(r, 20));
+const newNodeGhost = countClass(mainNode(), "ghost") >= 1;
+const goalTextareaOpen = countClass(mainNode(), "node-goal-edit") === 1;
+const oneUnsavedChange = JSON.stringify(mainNode()).includes("1 unsaved change");
+
+// Deselect (the panel's own ✕, not a node's — it is the more recently attached of the two
+// and so the one clickByText finds) to reach the "nothing selected" problems/changes panel.
+clickByText("✕");
+await new Promise((r) => setTimeout(r, 20));
+const oneProblemShown = JSON.stringify(mainNode()).includes("1 problem");
+const changeRowAdd = JSON.stringify(mainNode()).includes('"op-badge"') || countClass(mainNode(), "op-badge") >= 1;
+
+// Select the problem step again by clicking its row, then answer the goal through the
+// inspector's own field — the same field a person types into, not a shortcut around it.
+clickButton("s1");
+await new Promise((r) => setTimeout(r, 10));
+typeIntoId("edit-sel-goal", "a hand-added step");
+await new Promise((r) => setTimeout(r, 10));
+const problemClearedAfterGoal = !JSON.stringify(mainNode()).includes("1 problem");
+
+// Multi-select: two of the fixture's top-level steps, "a" and "e" — driven through the
+// pointer handlers directly (pointerdown on each node, pointerup on the plane, since the
+// stub does not bubble one to the other the way a browser would). The second carries
+// `shiftKey: true`, which is what turns a second click into "add to selection" rather than
+// "select only this one".
+firePointer("pointerdown", isNodeWith("first"));
+firePointer("pointerup", isPlane);
+await new Promise((r) => setTimeout(r, 10));
+firePointer("pointerdown", isNodeWith("ship it?"), { shiftKey: true });
+firePointer("pointerup", isPlane);
+await new Promise((r) => setTimeout(r, 20));
+record("multi-select panel");
+const multiPanelShown = JSON.stringify(mainNode()).includes("steps selected");
+const multiHasPhaseInput = countClass(mainNode(), "input") > 0 &&
+  JSON.stringify(mainNode()).includes("edit-phase-input");
+
+// Label them as one phase — exercises `editApplyPhase`, and gives the graph a phase label
+// to click into the phase panel.
+typeIntoId("edit-phase-input", "Kickoff");
+clickButton("Apply");
+await new Promise((r) => setTimeout(r, 20));
+const phaseApplied = JSON.stringify(mainNode()).includes("phase → Kickoff") || JSON.stringify(mainNode()).includes("Kickoff");
+
+// The phase's own label on the graph is clickable in edit mode too (`svgEl("text", {class:
+// "group-label", onClick...})`) — a click, not a pointer gesture, so the ordinary helper
+// reaches it.
+clickByText("Kickoff");
+await new Promise((r) => setTimeout(r, 20));
+record("phase panel");
+const phasePanelShown = JSON.stringify(mainNode()).includes("Dissolve phase");
+const phaseDescField = JSON.stringify(mainNode()).includes("What this phase is for");
+
+console.log(`edit mode:   offered=${editButtonOffered}, hidden on approved=${editButtonHiddenWhenApproved}, toolbar=${editToolbarShown}, badge=${editBadge}`);
+console.log(`             new step ghost=${newNodeGhost}, goal open=${goalTextareaOpen}, changes=${oneUnsavedChange}, problem=${oneProblemShown}, diff row=${changeRowAdd}, cleared=${problemClearedAfterGoal}`);
+console.log(`             multi-select panel=${multiPanelShown} phase input=${multiHasPhaseInput}, phase applied=${phaseApplied}, phase panel=${phasePanelShown} desc field=${phaseDescField}`);
+
+// ── blank-canvas start ──────────────────────────────────────────────────────────────────
+location.hash = "#/workflows";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+clickButton("New workflow…");
+await new Promise((r) => setTimeout(r, 20));
+record("new workflow screen");
+const newScreenLabel = mainNode()["data-screen-label"] === "New workflow";
+const newUnsavedBadge = JSON.stringify(mainNode()).includes("unsaved");
+typeInto("What the work is for", "A hand-written plan");
+await new Promise((r) => setTimeout(r, 10));
+clickButton("Start with one step");
+await new Promise((r) => setTimeout(r, 20));
+record("new workflow, editing");
+const newDraftEditing = countClass(mainNode(), "edit-toolbar") === 1;
+const newDraftOneStep = countClass(mainNode(), "node") >= 1;
+const newDraftGoalOpen = countClass(mainNode(), "node-goal-edit") === 1;
+
+console.log(`new workflow: screen=${newScreenLabel}, unsaved=${newUnsavedBadge}, editing after start=${newDraftEditing}, one step=${newDraftOneStep}, goal open=${newDraftGoalOpen}`);
+
 const ok =
   dialogOpened &&
   // Metadata, in the four places it can be attached. These were computed and printed and
@@ -2261,6 +2392,28 @@ const ok =
   !!instanceStaleMarked &&
   fadesNonStale &&
   staleStillFull &&
-  filterClears;
+  filterClears &&
+  // Manual plan editing: entry, toolbar, a step failing validation and the diff it leaves,
+  // the multi-select and phase panels, and the blank-canvas start.
+  editButtonOffered &&
+  editButtonHiddenWhenApproved &&
+  editToolbarShown &&
+  editBadge &&
+  noChangesYet &&
+  newNodeGhost &&
+  goalTextareaOpen &&
+  oneUnsavedChange &&
+  oneProblemShown &&
+  changeRowAdd &&
+  multiPanelShown &&
+  multiHasPhaseInput &&
+  phaseApplied &&
+  phasePanelShown &&
+  phaseDescField &&
+  newScreenLabel &&
+  newUnsavedBadge &&
+  newDraftEditing &&
+  newDraftOneStep &&
+  newDraftGoalOpen;
 console.log(ok ? "PASS" : `FAIL: expected ${expected.join(", ")}`);
 process.exit(ok ? 0 : 1);

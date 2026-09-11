@@ -17,6 +17,31 @@ def test_workflow_is_created_as_draft(api: Api) -> None:
     assert body["version"] == 1
 
 
+def test_human_revision_bumps_version_and_keeps_generated_by(api: Api) -> None:
+    workflow_id = api.create_workflow([task("step_01")]).json()["workflow_id"]
+    response = api.revise(workflow_id, [task("step_01"), task("step_02")], source="human")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == 2
+    assert body["source"] == "human"
+    assert body["generated_by"] == "planner"  # unchanged, per Api.create_workflow's default
+
+
+def test_agent_revision_does_not_bump_version(api: Api) -> None:
+    workflow_id = api.create_workflow([task("step_01")]).json()["workflow_id"]
+    response = api.revise(workflow_id, [task("step_01"), task("step_02")])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == 1
+    assert body["source"] == "generated"
+
+
+def test_human_revision_is_rejected_on_a_non_draft(api: Api) -> None:
+    workflow_id = api.approved_workflow([task("step_01")])
+    response = api.revise(workflow_id, [task("step_01"), task("step_02")], source="human")
+    assert response.status_code == 409
+
+
 def test_run_cannot_be_registered_against_a_draft(api: Api) -> None:
     workflow_id = api.create_workflow([task("step_01")]).json()["workflow_id"]
     response = api.client.post(f"/v1/workflows/{workflow_id}/runs", json={})
