@@ -16,6 +16,34 @@ the point of the tool. Read the graph in the UI, then approve it — or don't, a
 wrong (see below). Once approved the agent registers a run and reports each step as it starts
 and finishes.
 
+## Configuring execution from the UI
+
+When creating a workflow, choose how it will run: Chief launches Claude or Codex CLI tasks,
+the source conversation performs them, or an external harness uses the tracking-only flow.
+Task steps with execution settings require a model and a separate execution prompt before
+saving. CLI steps also require a working directory. Each new task starts with an empty
+prompt, even when it inherits the executor and model from another task.
+
+The model field is a required dropdown: Codex choices come from the Chief host's local
+Codex catalog; Claude offers Sonnet and Opus CLI aliases. **Custom model ID…** lets you
+pin a version or use another supported model. Aliases track the CLI's current model.
+Changing providers clears the previous model, and each new step inherits the selected
+model but still needs its own prompt. Model access depends on the CLI account.
+Chief checks the executable and working directories before creating a workflow run;
+setup errors leave the plan editable through **Configure execution…**.
+
+An approved plan with no runs has a **Configure execution…** action. It returns the plan
+to draft and opens the editor; saving changes does not grant approval. Approve the updated
+plan, then use **Execute workflow**. Plans that already have runs are changed by amendments.
+
+Select a task in the graph and click **View execution** in its step panel to open the
+resizable right drawer. Output appears only on demand, keeping the workflow canvas clear.
+During execution, the drawer updates automatically. Preview renders documents, code,
+tables, structured data, and HTML reports; Source shows the original content. Activity
+and Logs are separate tabs, and Files opens attached reports, images, PDFs, and other
+artifacts in the existing viewer. Copy and Download use the result body. Close the drawer
+to return to the step panel. Existing completed runs also use this reader.
+
 ## Review notes — saying what is wrong with a draft
 
 A plan you are not ready to approve is the normal case, and "say what is wrong" should not mean
@@ -268,7 +296,7 @@ it, which is what keeps it a tracker rather than a file server.
 
 ## Templates
 
-A workflow is single-use — approved once, executed once — so reuse lives in **templates**: a
+A workflow normally has one execution, so reuse lives in **templates**: a
 plan with `{{ parameters }}` in it. Instantiating one produces a draft workflow, which still
 needs approving. You can also turn a workflow you already ran into a template.
 

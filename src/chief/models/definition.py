@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .proof_graph import GraphGroup
 from .review import ReviewNote
@@ -112,6 +112,43 @@ class InstanceParam(BaseModel):
         return v
 
 
+class StepExecution(BaseModel):
+    """Per-step execution intent, shared by conversation and Chief-managed execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executor: Literal["source_conversation", "claude", "codex"] = Field(
+        validation_alias=AliasChoices("executor", "cli"),
+        description="Who performs this step. Source conversation uses the existing session.",
+    )
+    model: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    cwd: str | None = Field(
+        default=None, min_length=1,
+        description="Absolute working directory on the Chief host; required for CLI execution.",
+    )
+    timeout_seconds: int = Field(default=3600, ge=1, le=43200)
+
+    @field_validator("model", "prompt", "cwd")
+    @classmethod
+    def _not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+    @field_validator("model", "cwd")
+    @classmethod
+    def _trim_identifier(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def _cli_requires_cwd(self) -> StepExecution:
+        if self.executor != "source_conversation" and self.cwd is None:
+            raise ValueError("CLI execution requires cwd")
+        return self
+
+
 class WorkflowStep(BaseModel):
     """A single node of the plan.
 
@@ -152,6 +189,7 @@ class WorkflowStep(BaseModel):
             "a step with none behaves as it always has."
         ),
     )
+    execution: StepExecution | None = None
     depends_on: list[str] = Field(default_factory=list)
     # Which part of the work this step belongs to. Purely a label: nothing derives from it,
     # no rule mentions it, and two steps sharing one are not related by it in any way the

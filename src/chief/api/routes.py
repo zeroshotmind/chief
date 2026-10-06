@@ -67,6 +67,12 @@ def get_service() -> Chief:  # pragma: no cover - replaced by dependency_overrid
 Service = Annotated[Chief, Depends(get_service)]
 
 
+@router.get("/execution/models")
+def execution_models(service: Service) -> Any:
+    """Model choices for planning; access is checked by the CLI when it executes."""
+    return service.execution_models()
+
+
 # --- 2.1 workflow lifecycle ---------------------------------------------------------------
 
 
@@ -766,3 +772,21 @@ def get_audit(
 @router.get("/healthz", include_in_schema=False)
 def healthz() -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/runs/{run_id}/execute/{path:path}", response_model=RunState)
+def execute_step(run_id: str, path: str, service: Service) -> RunState:
+    """Run a task using its approved prompt, CLI and model. Waits for CLI completion."""
+    return service.execute_step(run_id, pathlib_.parse_path(path))
+
+
+@router.post("/workflows/{workflow_id}/execute", response_model=RunState)
+def execute_workflow(workflow_id: str, service: Service) -> RunState:
+    """Start or resume execution, stopping at failures, approval gates or external work."""
+    return service.execute_workflow(workflow_id)
+
+
+@router.post("/workflows/{workflow_id}/reopen", response_model=WorkflowDefinition)
+def reopen_workflow(workflow_id: str, service: Service) -> WorkflowDefinition:
+    """Reopen an approved plan with no runs. New settings require approval again."""
+    return service.reopen_workflow(workflow_id)

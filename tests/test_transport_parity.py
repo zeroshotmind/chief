@@ -55,6 +55,8 @@ REST_ONLY = {
     "decide_graph_note",
     # A harness states the project when it creates the plan. Re-filing one afterwards, and
     # reading the list of labels in use, are both housekeeping in front of a person.
+    "execution_models",  # local catalog for the planning dropdown
+    "reopen_workflow",
     "label_workflow",
     "label_proof_graph",
     "list_projects",

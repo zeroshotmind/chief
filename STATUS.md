@@ -29,8 +29,8 @@ Status vocabulary:
 
 | REQ | Requirement | Status | Where / note |
 |---|---|---|---|
-| 1 | REST API for all core operations | Built | 69 routes under `/v1`; `api/routes.py` |
-| 2 | MCP interface covering the same operations | Built | 34 tools against 69 routes, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
+| 1 | REST API for all core operations | Built | 73 routes under `/v1`; `api/routes.py` |
+| 2 | MCP interface covering the same operations | Built | 36 tools against 73 routes, `mcp_server.py`, HTTP on the same app. Surface reconciled in MCP-SURFACE.md; `tests/test_transport_parity.py` holds the two apart from drifting |
 | 3 | Not coupled to any agentic framework | Built | Plain REST + JSON; `harness` is an open string, not an enum |
 | 4 | All functionality reachable through the API; nothing UI-exclusive | Built | Invariants live in `domain/service.py`, not in route handlers, which is why the MCP surface inherited them unchanged rather than reimplementing them. Asserted, not just claimed: `test_transport_parity.py` |
 
@@ -157,7 +157,7 @@ inherit them unchanged. It did: `src/chief/mcp_server.py` holds no logic, only t
 
 **The tool list is reconciled in MCP-SURFACE.md**, which supersedes contract §3 and is the
 source for the §3 rewrite the doc still needs. Twenty-four tools, not the 14 §3 names nor the
-69 routes: the seven update/instance routes are three path-parameterised service methods, so
+73 routes: the seven update/instance routes are three path-parameterised service methods, so
 `report_instance_body_step_update` disappears into `report_step_update`; and the one-to-one
 correspondence rule is replaced by a soundness rule (every tool resolves to a method a REST
 route also reaches) plus a coverage rule over the operations an agent session legitimately
@@ -434,6 +434,7 @@ PUT    /v1/config/approval-policy
 GET    /v1/config/workflow-approval-policy                 (extension, draft auto-approval)
 PUT    /v1/config/workflow-approval-policy                 (extension, draft auto-approval)
 
+GET    /v1/execution/models                                (extension, local model choices)
 GET    /v1/projects                                        (extension, labels in use)
 
 POST   /v1/proof-graphs                                    (extension, proof graphs)
@@ -450,12 +451,16 @@ POST   /v1/proof-graphs/{graph_id}/notes                    (extension, review n
 GET    /v1/proof-graphs/{graph_id}/notes                    (extension, review notes)
 PATCH  /v1/proof-graphs/{graph_id}/notes/{note_id}          (extension, review notes)
 
+POST   /v1/workflows/{workflow_id}/reopen                  (extension, reopen an unused plan for editing)
+POST   /v1/workflows/{workflow_id}/execute                 (extension, workflow execution)
+POST   /v1/runs/{run_id}/execute/{path}                     (extension, optional CLI execution)
+
 GET    /v1/audit                                           (extension)
 ```
 
-69 routes, also served without the `/v1` prefix; `/healthz` is not counted here. Full
+73 routes, also served without the `/v1` prefix; `/healthz` is not counted here. Full
 schemas at `/docs` when running. The count is asserted against the router in
 `tests/test_transport_parity.py` — this list went stale twice before that guard existed.
 
-The MCP surface is not in this list by design: it is 30 tools over these same service
+The MCP surface is not in this list by design: it is 36 tools over these same service
 methods, mounted at `/mcp`. See MCP-SURFACE.md.

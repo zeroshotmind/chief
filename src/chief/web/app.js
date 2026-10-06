@@ -31,7 +31,7 @@
 */
 
 import {
-  ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
+  getExecutionModels, reopenWorkflow, executeWorkflow, executeStep, createRun, ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
   createTemplate, createTemplateFromWorkflow, createWorkflow, reviseDraft,
   decideAmendment, deleteTemplate, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
@@ -611,7 +611,7 @@ let viewerRootKey = null;
 
 function viewerKey(viewer) {
   if (!viewer) return null;
-  return `${viewer._gen}:${viewer.loading}:${!!viewer.error}`;
+  return `${viewer._gen}:${viewer.loading}:${!!viewer.error}:${viewer.outputTab || ""}:${viewer.outputRevision || 0}`;
 }
 
 function releaseViewerUrl() {
@@ -620,7 +620,7 @@ function releaseViewerUrl() {
 }
 
 /** Open the drawer on an artifact and fetch it. */
-async function openViewer(artifact, label) {
+async function openViewer(artifact, label, returnToOutput = null) {
   const runId = state.detail && state.detail.runId;
   // A plan-fixed input has no run and no artifact id; `fixed_source` is how it is asked for.
   const plan = artifact.fixed_source || null;
@@ -630,7 +630,7 @@ async function openViewer(artifact, label) {
   setState({
     viewerPending: null,
     viewer: {
-      _gen: ++viewerGen,
+      _gen: ++viewerGen, returnToOutput,
       runId: plan ? null : runId, artifactId: key, ref: artifact.ref,
       title: label || artifact.description || artifact.ref,
       // A URL is not Chief's to fetch and never was — it is framed, not read. The page on
@@ -920,6 +920,7 @@ function viewerBody(viewer) {
   if (viewer.node) return viewer.node;
   // A value rather than a file: metadata opened from a card, through the same tree a JSON
   // artifact gets. Nothing to fetch, so it is checked before the loading state.
+  if (viewer.kind === "execution") return keep(executionViewerBody(viewer));
   if (viewer.json !== undefined && viewer.json !== null) {
     return keep(el("div", { class: "viewer-json" }, jsonValue(viewer.json, 2)));
   }
@@ -1023,12 +1024,13 @@ function fileViewer() {
   const aside = el(
     "aside",
     {
-      id: "chief-viewer", class: "viewer", "data-screen-label": "File viewer",
+      id: "chief-viewer", class: `viewer${viewer.kind === "execution" ? " output-viewer" : ""}`,
+      "data-screen-label": viewer.kind === "execution" ? "Output viewer" : "File viewer",
       style: { width: `${width}px` },
     },
     el("div", {
       class: "viewer-grip", role: "separator", "aria-orientation": "vertical",
-      "aria-label": "Resize the file viewer", tabindex: "0",
+      "aria-label": viewer.kind === "execution" ? "Resize the output viewer" : "Resize the file viewer", tabindex: "0",
       title: "Drag to resize",
       onPointerdown: startViewerResize,
       onKeyDown: (e) => {
@@ -1056,7 +1058,16 @@ function fileViewer() {
         }),
       el("button", { class: "close-x", text: "✕", title: "Close", onClick: closeViewer }),
       ),
-      el("div", { class: "viewer-body" }, viewerBody(viewer)),
+      viewer.returnToOutput && el("button", {
+        class: "btn btn-ghost btn-sm", text: "← Back to output", onClick: () => {
+          const origin = viewer.returnToOutput;
+          openExecutionViewer(findExecutionState(origin) || origin.resultState, origin.title);
+        },
+      }),
+      viewer.kind === "execution" && executionViewerToolbar(viewer),
+      el("div", { class: "viewer-body", onScroll: (event) => {
+        if (viewer.kind === "execution") viewer.outputScroll[viewer.outputTab] = event.currentTarget.scrollTop;
+      } }, viewerBody(viewer)),
     ),
   );
   viewerNode = aside;
@@ -1192,7 +1203,10 @@ function inspectorHandle() {
     that draw a graph compose exactly this, and a handle missing from one of them is the
     kind of difference nobody notices until they are on that screen. */
 const splitView = (viewport, panel) =>
-  el("div", { class: "graph-split" }, viewport, inspectorHandle(), inspector(panel));
+  el("div", { class: "graph-split" },
+    el("div", { class: "graph-main" }, viewport),
+    !(state.viewer?.kind === "execution" || state.viewer?.returnToOutput)
+      && [inspectorHandle(), inspector(panel)]);
 
 /** The same plan-and-panel-with-a-grip layout `splitView` composes, for edit mode's own
     inspector (`editAside`), which — unlike every read-mode panel builder — already returns
@@ -1227,12 +1241,12 @@ const editorHref = (absolute) => `${EDITOR_SCHEME}${encodeURI(absolute)}`;
     The acknowledgement is written straight onto the node rather than through setState: it is
     a fact about one button for one second, and routing it through a full re-render would
     tear down every field being typed into elsewhere on the page. */
-function copyPath(button, text) {
+function copyPath(button, text, label = "⧉") {
   const done = () => {
-    button.textContent = "✓";
+    button.textContent = label === "⧉" ? "✓" : "Copied";
     button.classList.add("ok");
     setTimeout(() => {
-      button.textContent = "⧉";
+      button.textContent = label;
       button.classList.remove("ok");
     }, 1200);
   };
@@ -1347,7 +1361,7 @@ function rootRow(arts) {
         ? project ? `Folder for ${project}` : "Project folder"
         : "Set a project folder to open these",
     }),
-    root && el("span", { class: "mono art-root-path", text: root }),
+    root && el("span", { class: "mono art-root-path", title: root, text: root }),
     // One click when the plan already says where it was made. It is still only a
     // suggestion — the tree may have moved since, and then this is the wrong answer and
     // typing one is the right one.
@@ -2039,6 +2053,7 @@ const state = {
   viewerWidth: readViewerWidth(),
   rootEditing: false,
   rootDraft: "",
+  outputSections: {}, // Disclosure state survives live updates.
   detail: null, // { runId, state, def, amendments }
   dialog: null,
   error: null,
@@ -2079,6 +2094,15 @@ const state = {
 };
 
 function setState(patch) {
+  // Selecting another node returns to its inspector instead of leaving an unrelated
+  // execution in the drawer while hiding the new selection's details.
+  if (Object.hasOwn(patch, "selected") && patch.selected !== state.selected
+      && (state.viewer?.kind === "execution" || state.viewer?.returnToOutput)) {
+    releaseViewerUrl();
+    viewerNode = null;
+    setViewerInset(0);
+    patch = { ...patch, viewer: null, viewerPending: null };
+  }
   Object.assign(state, patch);
   render();
   writeHash();
@@ -2283,7 +2307,8 @@ function openNotesBadge(notes) {
 
 async function refresh() {
   try {
-    const patch = await loadRuns();
+    const [patch, models] = await Promise.all([loadRuns(), getExecutionModels().catch(() => null)]);
+    if (models) patch.executionModels = models;
     // Fetched per screen, and cleared when you leave it: a poll that lands mid-navigation
     // must not leave one workflow's decisions attached to another's detail.
     patch.workflowAudit =
@@ -2355,7 +2380,7 @@ function openTemplate(templateId) {
 
 function openWorkflow(workflowId) {
   setState({
-    view: "workflow", workflowId, selected: null, dialog: null,
+    view: "workflow", workflowId, selected: null, detail: null, dialog: null,
     workflowAudit: null, workflowNotes: null, noteDrafts: {}, noteShow: {},
   });
   refresh();
@@ -3643,6 +3668,22 @@ function stepPanel(step, stepState, def, laneMetadata, runId = null) {
     // Which node this panel is about. The review-note thread hangs off it, the way a
     // comment thread hangs off the post it is under.
     stepId: step.id,
+    execution: step.execution,
+    executionState: stepState,
+    outputKey: `${runId || def.workflow_id}:${step.id}:inspector`,
+    executeAction: step.execution && step.execution.executor !== "source_conversation" && isTopLevel && stepState.status === "pending" &&
+      (runId || def.status === "approved") ? async () => {
+        try {
+          const id = runId || (await createRun(def.workflow_id)).run_id;
+          setState({ executingStep: id });
+          await Promise.all([executeStep(id, [step.id]), refresh()]);
+          await refresh();
+        } catch (err) {
+          setState({ error: err instanceof ApiError ? err.message : String(err) });
+        } finally {
+          setState({ executingStep: null });
+        }
+      } : null,
     kicker:
       step.type === "checkpoint"
         ? `Checkpoint · ${outcome ? outcome.decision : stepState.status}`
@@ -3913,13 +3954,27 @@ function inspector(panel) {
       }),
       panel.warn && el("div", { class: "accent-note", text: panel.warn }),
       panel.staleWidget,
-      panel.summary &&
+      panel.summary && !panel.executionState?.metadata?.execution &&
         el(
           "span",
           { class: "md-inline", style: { fontSize: "12px", color: panel.summaryColor } },
           inline(panel.summary),
         ),
       criteriaBlock(panel.criteria, panel.criteriaMet),
+      panel.executionState?.metadata?.execution && executionEntry(panel.executionState, panel.title),
+      panel.execution && outputDisclosure(`${panel.outputKey}:config`, "Execution settings",
+        el("div", { class: "execution-config" },
+          el("strong", { text: `${panel.execution.executor} · ${panel.execution.model} · ${panel.execution.executor === "source_conversation" ? "Existing conversation" : "Fresh session"}` }),
+          el("div", { class: "mono", text: panel.execution.cwd }),
+          el("pre", { class: "execution-log", text: panel.execution.prompt }),
+        ),
+      ),
+      panel.executeAction && el("button", {
+        class: "btn", text: "Execute step", onClick: async (event) => {
+          event.currentTarget.disabled = true;
+          await panel.executeAction();
+        },
+      }),
       // Fixed in the plan, so readable before the first run exists — same reasoning as the
       // body/params sections below, which is why this sits beside them rather than under
       // the outputs section further down.
@@ -4004,7 +4059,9 @@ function inspector(panel) {
           ),
         ),
       ),
-      metadataBlock(panel.metadata),
+      metadataBlock(panel.executionState?.metadata?.execution
+        ? Object.fromEntries(Object.entries(panel.metadata || {}).filter(([key]) => key !== "execution"))
+        : panel.metadata),
       panel.approve &&
         el(
           "div",
@@ -4024,6 +4081,198 @@ function inspector(panel) {
   );
   inspectorNode = aside;
   return aside;
+}
+
+// CLI results are readable prose; the complete transport logs remain available on demand.
+function outputDisclosure(key, title, content) {
+  return el("details", {
+    class: "execution-disclosure", open: state.outputSections[key] || null,
+    onToggle: (event) => { state.outputSections[key] = event.currentTarget.open; },
+  }, el("summary", { text: title }), content);
+}
+
+function readableOutput(raw) {
+  if (!raw) return "";
+  try {
+    const value = JSON.parse(raw);
+    if (value && typeof value === "object") {
+      if (typeof value.output === "string") return value.output;
+      if (typeof value.summary === "string") return value.summary;
+    }
+  } catch { /* Ordinary Markdown. */ }
+  return raw;
+}
+
+function executionText(stepState) {
+  const exec = stepState.metadata?.execution || {};
+  if (typeof exec.output === "string" && exec.output) return exec.output;
+  return readableOutput((stepState.status !== "running" && exec.result) || exec.live_text)
+    || (stepState.status !== "running" ? stepState.summary || "" : "");
+}
+
+function executionFormat(stepState) {
+  const exec = stepState.metadata?.execution || {};
+  if (["markdown", "text", "json", "html"].includes(exec.output_format)) return exec.output_format;
+  const text = executionText(stepState).trim();
+  try {
+    const value = JSON.parse(text);
+    if (value && typeof value === "object") return "json";
+  } catch { /* Markdown or plain text. */ }
+  if (/^(?:<!doctype html[^>]*>\s*)?<html[\s>]/i.test(text)) return "html";
+  return "markdown";
+}
+
+function executionViewFingerprint(viewer, step) {
+  const exec = step.metadata?.execution || {};
+  const tab = viewer.outputTab;
+  const body = tab === "activity" ? exec.activity : tab === "files" ? step.artifacts
+    : tab === "logs" ? [exec.stdout, exec.stderr, exec.result, exec.exit_code, exec.timed_out]
+    : [executionText(step), executionFormat(step)];
+  return JSON.stringify([step.status, step.status === "failed" ? step.summary : null, body]);
+}
+
+function executionFingerprint(stepState) {
+  return JSON.stringify([stepState.status, stepState.summary, stepState.metadata?.execution, stepState.artifacts]);
+}
+
+function findExecutionState(viewer) {
+  if (state.detail?.runId !== viewer.runId) return null;
+  const id = viewer.resultState.metadata?.execution?.id;
+  if (!id) return state.detail.state.step_states[viewer.resultState.step_id] || null;
+  const walk = (states) => {
+    for (const step of Object.values(states || {})) {
+      if (step.metadata?.execution?.id === id) return step;
+      for (const instance of step.instances || []) {
+        const found = walk(instance.step_states);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  return walk(state.detail.state.step_states);
+}
+
+function openExecutionViewer(stepState, title) {
+  releaseViewerUrl();
+  viewerNode = null;
+  setState({ viewerPending: null, viewer: {
+    _gen: ++viewerGen, kind: "execution", runId: state.detail?.runId,
+    title: title || `${stepState.step_id} output`, ref: stepState.step_id,
+    resultState: stepState, outputTab: "output", outputScroll: {}, outputRevision: 0,
+    fingerprint: executionFingerprint(stepState), loading: false, error: null,
+  } });
+}
+
+function executionViewerToolbar(viewer) {
+  const step = viewer.resultState;
+  const exec = step.metadata?.execution || {};
+  const text = executionText(step);
+  const format = executionFormat(step);
+  return el("div", { class: "output-viewer-tools" },
+    el("div", { class: "execution-facts text-muted", text: [step.status, exec.executor, exec.model, format,
+      step.status === "running" && "Updates live"].filter(Boolean).join(" · ") }),
+    el("div", { class: "output-viewer-actions" },
+      text && el("button", { class: "btn btn-secondary btn-sm", text: "Copy output", onClick: (e) => copyPath(e.currentTarget, text, "Copy output") }),
+      text && el("button", { class: "btn btn-secondary btn-sm", text: "Download output", onClick: () => {
+        const extension = { markdown: "md", text: "txt", json: "json", html: "html" }[format];
+        const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+        const link = el("a", { href: url, download: `${step.step_id}-output.${extension}` });
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } }),
+    ),
+    el("div", { class: "output-viewer-tabs", role: "tablist", "aria-label": "Output views" },
+      [["output", "Preview"], ["source", "Source"], ["activity", "Activity"], ["logs", "Logs"],
+        ["files", `Files (${(step.artifacts || []).length})`]].map(([tab, label]) => el("button", {
+          class: `output-viewer-tab${viewer.outputTab === tab ? " active" : ""}`,
+          role: "tab", id: `execution-tab-${tab}`, tabindex: viewer.outputTab === tab ? "0" : "-1",
+          "aria-selected": String(viewer.outputTab === tab),
+          "aria-controls": "output-viewer-content", text: label,
+          onClick: () => setState({ viewer: { ...viewer, outputTab: tab, node: null } }),
+          onKeyDown: (event) => {
+            const tabs = ["output", "source", "activity", "logs", "files"];
+            const index = tabs.indexOf(tab);
+            const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
+              : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
+              : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null;
+            if (!next) return;
+            event.preventDefault();
+            setState({ viewer: { ...viewer, outputTab: next, node: null } });
+            document.getElementById(`execution-tab-${next}`)?.focus();
+          },
+        })),
+    ),
+  );
+}
+
+function executionViewerBody(viewer) {
+  const step = viewer.resultState;
+  const exec = step.metadata?.execution || {};
+  const text = executionText(step);
+  const tab = viewer.outputTab;
+  let body;
+  if (tab === "source") body = el("pre", { class: "viewer-pre output-source" }, el("code", { text }));
+  else if (tab === "activity") body = (exec.activity || []).length
+    ? el("ol", { class: "output-activity" }, exec.activity.map((event) => el("li", {},
+      el("strong", { text: event.title }), event.detail && el("pre", { class: "execution-log", text: event.detail }))))
+    : el("p", { class: "text-muted", text: "No activity events were recorded for this execution." });
+  else if (tab === "logs") body = el("div", { class: "output-logs" },
+    exec.exit_code != null && el("p", { text: `Exit code: ${exec.exit_code}` }),
+    exec.timed_out && el("p", { class: "execution-error", text: "The CLI exceeded its time limit." }),
+    [["Stderr", exec.stderr], ["Stdout", exec.stdout], ["Final control response", exec.result]].filter(([, value]) => value)
+      .map(([label, value]) => outputDisclosure(`${viewer.runId}:${step.step_id}:viewer:${label}`, label,
+        el("pre", { class: "viewer-pre output-source", text: value }))),
+    !exec.stderr && !exec.stdout && !exec.result && el("p", { class: "text-muted", text: "No logs recorded yet." }),
+  );
+  else if (tab === "files") body = el("div", { class: "output-files" },
+    (step.artifacts || []).map((artifact) => el("div", { class: "card" },
+      el("strong", { text: artifact.description || artifact.ref || artifact.type }),
+      artifact.ref && el("span", { class: "mono text-muted", text: artifact.ref }),
+      el("button", { class: "btn btn-secondary btn-sm", text: "Open file", onClick: () => openViewer(artifact, artifact.description || artifact.ref || artifact.type, viewer) }),
+    )),
+    !(step.artifacts || []).length && el("p", { class: "text-muted", text: "No files were attached to this step." }),
+  );
+  else if (!text) body = el("p", { class: "text-muted", text: step.status === "running" ? "Waiting for output…" : "No output returned." });
+  else {
+    const format = executionFormat(step);
+    if (format === "json") {
+      try { body = el("div", { class: "viewer-json" }, jsonValue(JSON.parse(text), 0)); }
+      catch { body = el("pre", { class: "viewer-pre output-source", text }); }
+    } else if (format === "html") body = el("iframe", {
+      class: "viewer-frame output-html", title: `${viewer.title} preview`, srcdoc: text,
+      sandbox: "allow-scripts", referrerpolicy: "no-referrer",
+    });
+    else if (format === "text") body = el("pre", { class: "viewer-pre output-source", text });
+    else {
+      body = el("div", { class: "viewer-doc md-block output-document" }, markdown(text));
+      renderMermaid(body);
+    }
+  }
+  return el("section", { id: "output-viewer-content", role: "tabpanel", "aria-label": tab, class: "output-content" },
+    step.status === "failed" && el("p", { class: "execution-error", role: "alert", text: step.summary || "Execution failed." }),
+    body);
+}
+
+// Keep the inspector compact; the full result and trajectory live in the right drawer.
+function executionEntry(stepState, title) {
+  const exec = stepState.metadata?.execution || {};
+  const usage = exec.usage || {};
+  // Runs saved before streaming support stored the usage in the stdout envelope.
+  let oldUsage = {};
+  if (!usage.duration_ms && exec.stdout) {
+    try { oldUsage = JSON.parse(exec.stdout); } catch { /* JSONL or plain logs. */ }
+  }
+  const duration = usage.duration_ms || oldUsage.duration_ms
+    || (stepState.started_at && (Date.parse(stepState.completed_at || new Date().toISOString()) - Date.parse(stepState.started_at)));
+  const cost = usage.total_cost_usd ?? oldUsage.total_cost_usd;
+  return el("div", { class: "execution-entry" },
+    el("button", { class: "btn btn-secondary btn-sm output-open", text: "View execution",
+      onClick: () => openExecutionViewer(stepState, title) }),
+    el("div", { class: "execution-facts text-muted", text: [
+      exec.executor, exec.model, duration && (duration < 60000 ? `${Math.max(0, Math.round(duration / 1000))}s` : fmtDuration(duration)),
+      Number.isFinite(cost) && `$${cost.toFixed(4)}`,
+    ].filter(Boolean).join(" · ") }),
+  );
 }
 
 // ── templates ────────────────────────────────────────────────────────────────────────────
@@ -4878,6 +5127,50 @@ function shortStepId(type, steps) {
 }
 
 const cloneWf = (v) => JSON.parse(JSON.stringify(v));
+const EXECUTOR_OPTIONS = [
+  { value: "source_conversation", text: "Source conversation" },
+  { value: "claude", text: "Chief · Claude CLI" },
+  { value: "codex", text: "Chief · Codex CLI" },
+  { value: "tracking", text: "Tracking only · external reporting" },
+];
+
+function emptyExecution(executor, defaults = {}) {
+  if (executor === "tracking") return null;
+  return { executor, model: defaults.executor === executor ? defaults.model || "" : "", prompt: "",
+    ...(executor === "source_conversation" ? {} : { cwd: defaults.cwd || "" }),
+    timeout_seconds: defaults.timeout_seconds || 3600 };
+}
+
+function defaultExecution(wf) {
+  const configured = wf.steps.find((s) => s.type === "task" && s.execution)?.execution;
+  return emptyExecution(wf._executionDefault || configured?.executor || "tracking", configured);
+}
+
+function changeExecutionMode(executor) {
+  editMutate((wf) => {
+    wf._executionDefault = executor;
+    for (const step of wf.steps.filter((s) => s.type === "task")) {
+      const previous = step.execution;
+      step.execution = emptyExecution(executor, previous || {});
+      if (step.execution) step.execution.prompt = previous?.prompt || "";
+      step._customModel = false;
+    }
+  });
+}
+
+async function configureExecution(workflow) {
+  try {
+    const draft = await reopenWorkflow(workflow.workflow_id);
+    await refresh();
+    startEdit(draft);
+    setState({ edit: { ...state.edit,
+      selected: draft.steps.filter((s) => s.type === "task").slice(0, 1).map((s) => s.id),
+      notice: "Choose workflow execution, then set a model and prompt for each task. Save and approve the updated plan before executing.",
+    } });
+  } catch (err) {
+    setState({ error: apiErrorText(err) });
+  }
+}
 
 function startEdit(workflow) {
   const wf = {
@@ -4998,6 +5291,7 @@ function editAddStep(type) {
       id, type, goal: "", harness,
       depends_on: sel.filter((x) => wf.steps.some((s) => s.id === x)),
       criteria: [], group: "", _new: true,
+      execution: type === "task" ? defaultExecution(wf) : null,
     };
     if (type === "loop" || type === "parallel") step.body = [];
     if (type === "loop") step.exit_when = "";
@@ -5124,6 +5418,14 @@ function editProblems(wf) {
   for (const s of wf.steps) {
     if (!s.goal.trim()) problems.push({ id: s.id, text: "has no goal" });
     if (!s.harness) problems.push({ id: s.id, text: "has no harness" });
+    if (s.type === "task" && s.execution) {
+      if (!s.execution.model?.trim()) problems.push({ id: s.id, text: "needs an execution model" });
+      if (!s.execution.prompt?.trim()) problems.push({ id: s.id, text: "needs an execution prompt" });
+      if (s.execution.executor !== "source_conversation" && !s.execution.cwd?.startsWith("/"))
+        problems.push({ id: s.id, text: "needs an absolute working directory" });
+      if (!(Number.isInteger(s.execution.timeout_seconds) && s.execution.timeout_seconds >= 1 && s.execution.timeout_seconds <= 43200))
+        problems.push({ id: s.id, text: "needs a whole-number timeout between 1 and 43200 seconds" });
+    }
     if ((s.type === "loop" || s.type === "parallel") && !(s.body || []).length) {
       problems.push({ id: s.id, text: `${s.type} with an empty body` });
     }
@@ -5145,6 +5447,7 @@ function editChangeRows(ed) {
     if (o.goal !== s.goal) diffs.push("goal");
     if (o.type !== s.type) diffs.push(`type → ${s.type}`);
     if (o.harness !== s.harness) diffs.push(`harness → ${s.harness}`);
+    if (JSON.stringify(o.execution) !== JSON.stringify(s.execution)) diffs.push("execution settings");
     if (JSON.stringify(o.depends_on) !== JSON.stringify(s.depends_on))
       diffs.push(`depends on ${s.depends_on.join(", ") || "nothing"}`);
     if (JSON.stringify(o.criteria) !== JSON.stringify(s.criteria)) diffs.push("criteria");
@@ -5180,9 +5483,14 @@ function apiErrorText(err) {
 async function saveEdit() {
   const ed = state.edit;
   if (!ed) return;
+  const problems = editProblems(ed.wf);
+  if (problems.length) {
+    setState({ edit: { ...ed, notice: problems.map((p) => `${p.id}: ${p.text}`).join("; ") } });
+    return;
+  }
   setState({ edit: { ...ed, saving: true } });
   const steps = ed.wf.steps.map((s) => {
-    const { _new, ...rest } = s;
+    const { _new, _customModel, ...rest } = s;
     return rest;
   });
   try {
@@ -5632,6 +5940,12 @@ function editToolbar(ed) {
         el("button", { class: "btn btn-secondary btn-sm", text: "Discard edits", onClick: exitEdit }),
       ),
     ),
+    editField("Workflow execution", selectEl({
+      id: "edit-workflow-executor", class: "input",
+      onChange: (e) => changeExecutionMode(e.target.value),
+    }, EXECUTOR_OPTIONS, ed.wf._executionDefault ||
+      ed.wf.steps.find((s) => s.type === "task" && s.execution)?.execution?.executor || "tracking"),
+    "Sets execution for all tasks. Override the executor and model on individual steps. Stored execution requires a prompt for every task."),
     ed.notice && el("div", { class: "banner", style: { marginTop: "var(--space-2)" }, text: ed.notice }),
   );
 }
@@ -5865,6 +6179,68 @@ function editAlgExt(i, key, value) {
   editSel((s) => { s.algorithm.externals = s.algorithm.externals.map((e, idx) => (idx === i ? { ...e, [key]: value } : e)); });
 }
 
+function executionModelField(sel) {
+  const config = sel.execution;
+  const catalog = state.executionModels || {};
+  const providers = config.executor === "source_conversation" ? ["codex", "claude"] : [config.executor];
+  const options = providers.flatMap((provider) => (catalog[provider] || []).map((model) => ({
+    value: model.id, text: `${model.label} · ${model.id}`,
+  })));
+  const known = options.some((option) => option.value === config.model);
+  const custom = sel._customModel || (!!config.model && !known);
+  return editField("Model (required)", el("div", { class: "execution-model-fields" },
+    selectEl({ id: "edit-execution-model", class: "input", "aria-label": "Model", required: true,
+      style: !config.model.trim() ? { borderColor: "var(--bad)" } : null,
+      onChange: (event) => editSel((step) => {
+        step._customModel = event.target.value === "__custom__";
+        step.execution.model = step._customModel ? "" : event.target.value;
+      }),
+    }, [{ value: "", text: "— choose a model —" }, ...options,
+      { value: "__custom__", text: "Custom model ID…" }], custom ? "__custom__" : config.model),
+    custom && el("input", {
+      id: "edit-execution-custom-model", class: "input", value: config.model,
+      placeholder: "Exact model ID or CLI alias", "aria-label": "Custom model ID",
+      onInput: (event) => editSel((step) => { step.execution.model = event.target.value.trim(); }),
+    }),
+  ), config.executor === "source_conversation" ?
+    "Records the planned model; it does not switch the existing conversation." :
+    config.executor === "claude" ? "Aliases follow the CLI's current model. Use Custom to pin a specific model ID." :
+    options.length ? "Choices from the local Codex catalog; access depends on your CLI account." :
+    "No local Codex catalog found. Open Codex once, then refresh Chief, or enter a custom ID.");
+}
+
+function executionFields(sel) {
+  const config = sel.execution;
+  return el("div", {},
+    editField("Step executor", selectEl({ id: "edit-step-executor", class: "input",
+      onChange: (e) => editSel((s) => {
+        const previous = s.execution;
+        s.execution = emptyExecution(e.target.value, previous || {});
+        if (s.execution) s.execution.prompt = previous?.prompt || "";
+        s._customModel = false;
+      }),
+    }, EXECUTOR_OPTIONS, config?.executor || "tracking")),
+    config && executionModelField(sel),
+    config && editField("Execution prompt (required)", el("textarea", {
+      id: "edit-execution-prompt", class: "input", rows: "6", text: config.prompt,
+      placeholder: "Write the instructions this executor should carry out for this step",
+      style: !config.prompt.trim() ? { borderColor: "var(--bad)" } : null,
+      onInput: (e) => editSel((s) => { s.execution.prompt = e.target.value; }),
+    }), "Required for each task before saving. Chief also supplies the goal, criteria and dependency results."),
+    config && config.executor !== "source_conversation" && editField("Working directory (required)", el("input", {
+      id: "edit-execution-cwd", class: "input", value: config.cwd || "",
+      placeholder: "/absolute/path/to/project",
+      style: !config.cwd?.startsWith("/") ? { borderColor: "var(--bad)" } : null,
+      onInput: (e) => editSel((s) => { s.execution.cwd = e.target.value; }),
+    }), "An existing directory on the Chief host."),
+    config && config.executor !== "source_conversation" && editField("Timeout (seconds)", el("input", {
+      id: "edit-execution-timeout", class: "input", type: "number", min: "1", max: "43200",
+      value: config.timeout_seconds,
+      onInput: (e) => editSel((s) => { s.execution.timeout_seconds = Number(e.target.value); }),
+    })),
+  );
+}
+
 function editStepPanel(ed, sel) {
   const isConstruct = sel.type === "loop" || sel.type === "parallel";
   const inBodyOf = ed.wf.steps.find((p) => (p.body || []).includes(sel.id));
@@ -5886,10 +6262,13 @@ function editStepPanel(ed, sel) {
         if (s.type === "loop" || s.type === "parallel") { s.body = s.body || []; if (s.type === "loop") s.exit_when = s.exit_when || ""; }
         else { delete s.body; delete s.exit_when; }
         if (s.type === "checkpoint") s.harness = "human";
+        if (s.type !== "task") s.execution = null;
+        else if (!s.execution) s.execution = defaultExecution(ed.wf);
       }) }, ["task", "checkpoint", "loop", "parallel", "workflow_ref"].map((t) => ({ value: t, text: t })), sel.type)),
       editField("Harness", selectEl({ class: "input", style: !sel.harness ? { borderColor: "var(--bad)" } : null, onChange: (e) => editSel((s) => { s.harness = e.target.value; }) },
         [{ value: "", text: "— choose —" }, ...["claude-code", "codex", "human"].map((h) => ({ value: h, text: h }))], sel.harness)),
     ),
+    sel.type === "task" && executionFields(sel),
     editField("Depends on", el(
       "div", { style: { display: "flex", flexWrap: "wrap", gap: "var(--space-1)", alignItems: "center" } },
       sel.depends_on.map((id) => el("span", { class: "chip-removable" }, id, el("button", { text: "✕", title: "Remove this dependency", onClick: () => editSel((s) => { s.depends_on = s.depends_on.filter((d) => d !== id); }) }))),
@@ -5911,7 +6290,7 @@ function editStepPanel(ed, sel) {
             const c = wf.steps.find((x) => x.id === sel.id);
             const id = shortStepId("task", wf.steps);
             const exits = c.body.filter((b) => !wf.steps.some((o) => c.body.includes(o.id) && o.depends_on.includes(b)));
-            wf.steps.push({ id, type: "task", goal: "", harness: c.harness, depends_on: exits.slice(), criteria: [], group: c.group || "", _new: true });
+            wf.steps.push({ id, type: "task", goal: "", harness: c.harness, depends_on: exits.slice(), criteria: [], group: c.group || "", _new: true, execution: defaultExecution(wf) });
             c.body.push(id);
             newId = id;
           });
@@ -6051,7 +6430,7 @@ function editGroupPanel(ed, path) {
 // ── blank-canvas start ──────────────────────────────────────────────────────────────────
 
 function newWorkflowScreen() {
-  const nw = state.newWorkflow || { title: "", harness: "claude-code" };
+  const nw = state.newWorkflow || { title: "", harness: "claude-code", executor: "" };
   return el(
     "main", { class: "narrow", "data-screen-label": "New workflow" },
     el("button", { class: "btn btn-ghost", style: { fontSize: "13px", marginLeft: "calc(-1 * var(--space-1))" }, text: "← Workflows", onClick: () => go("workflows") }),
@@ -6068,17 +6447,22 @@ function newWorkflowScreen() {
         class: "input", id: "nw-title", value: nw.title, placeholder: "What the work is for",
         onInput: (e) => setState({ newWorkflow: { ...nw, title: e.target.value } }),
       })),
-      editField("Default harness for new steps", selectEl({
+      editField("Workflow execution (required)", selectEl({
+        id: "nw-executor", class: "input",
+        onChange: (e) => setState({ newWorkflow: { ...nw, executor: e.target.value } }),
+      }, [{ value: "", text: "— choose how to execute —" }, ...EXECUTOR_OPTIONS], nw.executor || ""),
+      "Choose Chief to launch CLI steps, or the source conversation to perform them. Each configured task needs its own model and prompt before saving."),
+      editField("Default reporting harness for new steps", selectEl({
         class: "input", onChange: (e) => setState({ newWorkflow: { ...nw, harness: e.target.value } }),
-      }, ["claude-code", "codex", "human"].map((h) => ({ value: h, text: h })), nw.harness), "Each step can override this."),
+      }, ["claude-code", "codex", "human"].map((h) => ({ value: h, text: h })), nw.harness), "The tracking label; execution is chosen above. Each step can override this."),
       el(
         "div", { style: { display: "flex", gap: "var(--space-1)", marginTop: "var(--space-1)" } },
         el("button", {
-          class: "btn btn-primary btn-sm", text: "Start with one step", disabled: !nw.title.trim(),
+          class: "btn btn-primary btn-sm", text: "Start with one step", disabled: !nw.title.trim() || !nw.executor,
           onClick: () => {
             const title = nw.title.trim();
-            if (!title) return;
-            const wf = { title, steps: [{ id: "s1", type: "task", goal: "", harness: nw.harness, depends_on: [], criteria: [], group: "", _new: true }], groups: [] };
+            if (!title || !nw.executor) return;
+            const wf = { title, _executionDefault: nw.executor, steps: [{ id: "s1", type: "task", goal: "", harness: nw.harness, depends_on: [], criteria: [], group: "", _new: true, execution: emptyExecution(nw.executor) }], groups: [] };
             setState({
               newWorkflow: null, view: "workflow",
               edit: {
@@ -6134,6 +6518,11 @@ function workflowDetailScreen() {
   // Only trust the loaded detail if it belongs to this workflow's execution.
   const detail = state.detail && run && state.detail.runId === run.run_id ? state.detail : null;
   const draft = workflow.status === "draft";
+  const executablePlan = detail ? detail.def : workflow;
+  const hasCliSteps = executablePlan.steps.some((s) =>
+    s.execution && s.execution.executor !== "source_conversation");
+  const executing = state.executingWorkflow === workflow.workflow_id
+    || hasLiveExecution(detail?.state.step_states);
 
   const amendments = detail ? detail.amendments : [];
   const { viewport, panel, topSteps, staleFilter } = planGraph({
@@ -6221,8 +6610,12 @@ function workflowDetailScreen() {
       state.savedNotice && state.savedNotice.workflowId === workflow.workflow_id &&
         el("div", { class: "accent-note", style: { marginTop: "var(--space-2)" } },
           el("span", { text: state.savedNotice.text }),
-          el("span", { style: { display: "block", marginTop: "4px", color: "var(--color-neutral-500)" }, text: "The agent fetches this version the next time it reads the plan. Ask it to review, or approve as is." }),
+          el("span", { style: { display: "block", marginTop: "4px", color: "var(--color-neutral-500)" }, text: draft ? "The agent fetches this version the next time it reads the plan. Ask it to review, or approve as is." : "Complete the pending work before resuming Chief execution." }),
         ),
+      !editing && !draft && !hasCliSteps && el("p", {
+        class: "text-muted",
+        text: "Chief execution requires per-step Claude or Codex settings. Use Configure execution to set up task prompts and models, or execute and report it from the source conversation.",
+      }),
       !editing && projectLine(workflow),
       !editing && decisionNote(workflow),
       editing && editHints(),
@@ -6241,6 +6634,34 @@ function workflowDetailScreen() {
               class: "btn btn-secondary btn-sm", text: "Edit plan…",
               onClick: () => startEdit(workflow),
             }),
+          !draft && !runs.length && el("button", {
+            class: "btn btn-secondary btn-sm", text: "Configure execution…",
+            title: "Returns this unused plan to draft so execution settings can be reviewed and approved.",
+            onClick: () => configureExecution(workflow),
+          }),
+          !draft && el("button", {
+            class: "btn btn-primary btn-sm",
+            text: executing ? "Executing…" : run?.status === "completed" ? "Workflow completed"
+              : run?.status === "failed" ? "Execution failed" : run ? "Resume workflow" : "Execute workflow",
+            disabled: executing || !hasCliSteps || (run && run.status !== "running") || null,
+            title: !hasCliSteps ? "Add Claude or Codex execution settings to the plan first." :
+              "Execute ready CLI steps in dependency order.",
+            onClick: async () => {
+              setState({ executingWorkflow: workflow.workflow_id, error: null });
+              try {
+                const result = await executeWorkflow(workflow.workflow_id);
+                await refresh();
+                if (result.status === "running") setState({ savedNotice: {
+                  workflowId: workflow.workflow_id,
+                  text: "Execution stopped at a source-conversation step, external work, or a step already running. Complete that work, then resume.",
+                } });
+              } catch (err) {
+                setState({ error: err instanceof ApiError ? err.message : String(err) });
+              } finally {
+                setState({ executingWorkflow: null });
+              }
+            },
+          }),
           // The way back to the plan's own thread. Without it, feedback about the plan is
           // reachable only by having nothing selected — which is true when you arrive and
           // false the moment you click a node, so it reads as having disappeared.
@@ -7737,10 +8158,24 @@ function render() {
   // whatever it is showing. Rebuilt only when `viewerKey` actually changes: a different
   // file opened, the fetch finishing, or an error landing.
   const viewerHost = document.getElementById("viewer-root");
+  if (state.viewer?.kind === "execution") {
+    const latest = findExecutionState(state.viewer);
+    if (latest && executionFingerprint(latest) !== state.viewer.fingerprint) {
+      const changed = executionViewFingerprint(state.viewer, latest)
+        !== executionViewFingerprint(state.viewer, state.viewer.resultState);
+      state.viewer = { ...state.viewer, resultState: latest, fingerprint: executionFingerprint(latest),
+        outputRevision: state.viewer.outputRevision + (changed ? 1 : 0),
+        node: changed ? null : state.viewer.node };
+    }
+  }
   const vKey = viewerKey(state.viewer);
   if (vKey !== viewerRootKey) {
     viewerRootKey = vKey;
     viewerHost.replaceChildren(...(state.viewer ? [fileViewer()] : []));
+    if (state.viewer?.kind === "execution") {
+      const body = viewerHost.querySelector(".viewer-body");
+      if (body) body.scrollTop = state.viewer.outputScroll[state.viewer.outputTab] || 0;
+    }
   }
   // Width is cheap to keep current regardless: a resize commits through `setState` like
   // anything else, and must not cost the rebuild above skips for everyone else.
@@ -7790,6 +8225,7 @@ function measureGraph() {
 window.addEventListener("resize", measureGraph);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.dialog && !state.dialog.busy) setState({ dialog: null });
+  if (e.key === "Escape" && !state.dialog && state.viewer) { closeViewer(); return; }
   if (!state.edit) return;
   const tag = (e.target.tagName || "").toLowerCase();
   const typing = tag === "input" || tag === "textarea" || tag === "select";
@@ -7828,9 +8264,28 @@ appliedHash = hashFor(state);
 if (location.hash !== appliedHash) location.replace(appliedHash);
 render();
 refresh();
-// No timer. There used to be a 15-second poll here, and it re-rendered the page out from
-// under whoever was reading it — an opened artifact, an expanded schema, a disclosure
-// mid-thought, all snapped shut on a schedule. Data now refreshes when something you do
-// asks for it (navigating, acting on a run) or when you press the nav's refresh button.
-// The state-preservation patterns the poll forced (drafts in state, caches keyed off
-// content) stay: a manual refresh rebuilds the DOM just as thoroughly.
+// Refresh only the execution being watched. Idle and completed views stay stable.
+let outputPollBusy = false;
+function hasLiveExecution(states) {
+  return Object.values(states || {}).some((step) =>
+    (step.status === "running" && step.metadata?.execution)
+    || (step.instances || []).some((instance) => hasLiveExecution(instance.step_states)));
+}
+setInterval(async () => {
+  if (outputPollBusy || state.edit || state.dialog || !["workflow", "detail"].includes(state.view)) return;
+  if (!state.executingWorkflow && !state.executingStep && !hasLiveExecution(state.detail?.state.step_states)) return;
+  if (window.getSelection()?.toString()) return;
+  outputPollBusy = true;
+  const route = hashFor(state);
+  try {
+    if (!state.detail) { await refresh(); return; }
+    const runId = state.detail.runId;
+    const detail = await getRunDetail(runId);
+    if (route !== hashFor(state) || state.detail?.runId !== runId) return;
+    setState({ detail: { runId, ...detail },
+      runs: (state.runs || []).map((run) => run.run_id === runId ? { ...run, ...detail.state } : run),
+    });
+  } catch (err) {
+    setState({ error: err instanceof ApiError ? err.message : String(err) });
+  } finally { outputPollBusy = false; }
+}, 1500);

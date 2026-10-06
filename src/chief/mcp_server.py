@@ -1,6 +1,6 @@
 """MCP surface (REQ-2), mounted on the same app as the REST API.
 
-Thirty-four tools against 69 routes. The two are reconciled in MCP-SURFACE.md; in short, the
+Thirty-six tools against 73 routes. The two are reconciled in MCP-SURFACE.md; in short, the
 seven update/instance routes are three service methods each parameterised by a state path,
 and the approval-policy config, the audit query, artifact comments, draft review notes and
 both destructive deletes are deliberately REST-only — a session that can edit the policy
@@ -121,6 +121,8 @@ HARNESS_OPERATIONS = [
     "register_run",
     "get_run",
     "list_runs",
+    "execute_workflow",
+    "execute_step",
     "report_step_update",
     "resolve_checkpoint",
     "ask_question",
@@ -436,6 +438,27 @@ def build_mcp(service: Chief, *, name: str = "chief") -> MCPServer:
     # ``path`` addresses a step at any depth: ["step_03"] for a top-level step,
     # ["step_06", "inst_01", "step_09"] for a step inside a loop iteration or a parallel
     # branch. The contract's fixed depth-1 routes are the two- and three-token cases.
+
+    @tool()
+    @_guard
+    def execute_workflow(workflow_id: str) -> RunState:
+        """Start or resume Chief execution of an approved workflow.
+
+        Reuses the current run and launches ready CLI tasks in dependency order. Stops
+        at human checkpoints, source-conversation tasks, externally managed constructs,
+        failures, or pending amendments. Call again after resolving the blocker.
+        """
+        return service.execute_workflow(workflow_id)
+
+    @tool()
+    @_guard
+    def execute_step(run_id: str, path: list[str]) -> RunState:
+        """Launch a pending task using its approved execution settings in a fresh session.
+
+        No launch overrides are accepted. Dependencies must be completed and the run
+        must be active. Waits for completion; records CLI errors and criterion evidence.
+        """
+        return service.execute_step(run_id, path)
 
     @tool()
     @_guard

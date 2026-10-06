@@ -6,8 +6,18 @@ trigger: /chief
 
 # Chief
 
-Chief holds the plan and the state of the work. It never executes anything — you do, and
-you report what happened. The tools come from the `chief` MCP server; if they are not
+Chief holds the plan and the state of the work. By default you execute and report what
+happened. Tasks may optionally declare `execution` with `executor` (`source_conversation`,
+`claude`, or `codex`), `model`, `prompt`, and optional `timeout_seconds` during planning.
+CLI executors also require an absolute `cwd`. Choose those settings before approval.
+For `source_conversation`, carry out the stored prompt in this conversation and report
+through the existing tools; the stored model describes the planned choice and does not
+switch this conversation's model. For CLI executors, use `execute_step` after approval
+to launch the task in a fresh session; do not also execute or report that task yourself.
+`execute_workflow(workflow_id)` starts or resumes a single current run and advances
+ready CLI steps in dependency order. It stops at source-conversation steps, human gates,
+failures, pending amendments, and constructs needing externally registered instances.
+Resolve the blocker through the existing tools before resuming. The tools come from the `chief` MCP server; if they are not
 available, say so rather than working untracked.
 
 **Loading this skill is not a cue to call anything.** Each tool below is named at the moment

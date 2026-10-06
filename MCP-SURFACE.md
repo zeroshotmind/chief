@@ -1,7 +1,7 @@
 # MCP surface — reconciling contract §3
 
 STATUS.md item 1: the §3 tool list cannot be built as written, because it names 14 tools
-against what is now 69 REST routes and requires them to correspond one-to-one. This doc
+against what is now 73 REST routes and requires them to correspond one-to-one. This doc
 reconciles the two. It is the source for the §3 rewrite.
 
 **Status: built.** `src/chief/mcp_server.py`, mounted at `/mcp`, asserted by
@@ -284,3 +284,17 @@ omission is recorded here rather than left as drift.
 **Not blocked by this doc:** REQ-9's scope and REQ-40's diff both remain open (STATUS.md
 §2). Neither is on the path to the tool surface — the diff matters to the approval *screen*,
 and a harness polling `get_amendment` reads the operations directly.
+
+Optional CLI execution adds `execute_step(run_id, path)` over
+`POST /runs/{run_id}/execute/{path}`. It uses only the execution configuration stored
+in the approved task plan and starts a fresh session. Existing reporting remains available.
+
+Workflow execution adds `execute_workflow(workflow_id)` over
+`POST /workflows/{workflow_id}/execute`, reusing a single current run and advancing ready
+CLI tasks until a failure, gate, source-conversation step, or external work stops it.
+
+The human UI can reopen an approved workflow with no runs using
+`POST /workflows/{workflow_id}/reopen`; it becomes a draft again and requires a new approval.
+This is a human-only operation with no MCP tool. Once a run exists, use amendments.
+
+`GET /execution/models` is REST-only: it supplies the planning UI with local model choices, without credentials or a network call.

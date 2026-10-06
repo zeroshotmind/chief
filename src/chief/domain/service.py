@@ -8,6 +8,7 @@ free by calling the same methods.
 from __future__ import annotations
 
 from copy import deepcopy
+from threading import Lock
 from typing import Any
 
 from .. import lean
@@ -24,8 +25,8 @@ from ..ids import comment_id as new_comment_id
 from ..ids import instance_id as format_instance_id
 from ..ids import note_id as new_note_id
 from ..ids import now
-from ..ids import question_id as new_question_id
 from ..ids import proof_graph_id as new_graph_id
+from ..ids import question_id as new_question_id
 from ..ids import run_id as new_run_id
 from ..ids import template_id as new_template_id
 from ..ids import workflow_id as new_workflow_id
@@ -88,6 +89,7 @@ _TERMINAL = frozenset({"completed", "failed", "skipped"})
 class Chief:
     def __init__(self, store: Store) -> None:
         self.store = store
+        self._workflow_execution_lock = Lock()
 
     # --- workflows ----------------------------------------------------------------------
 
@@ -352,6 +354,25 @@ class Chief:
         if decision.reason:
             detail["reason"] = decision.reason
         return detail
+
+    def reopen_workflow(self, workflow_id: str) -> WorkflowDefinition:
+        """Return an approved, unused plan to draft so changed settings get reviewed."""
+        with self.store.transaction() as conn:
+            definition = self.store.get_workflow(workflow_id)
+            if definition.status != "approved":
+                raise InvalidTransition("only an approved workflow can be reopened")
+            if self.store.list_runs(workflow_id=workflow_id):
+                raise InvalidTransition(
+                    "this workflow has runs; change its plan through an amendment"
+                )
+            definition.status = "draft"
+            definition.version += 1
+            self.store.save_workflow(conn, definition)
+            self.store.audit(
+                conn, "workflow.reopened", workflow_id=workflow_id,
+                detail={"reason": "Reopened for editing; approval must be given again."},
+            )
+            return definition
 
     def approve_workflow(
         self, workflow_id: str, decision: AmendmentDecision | None = None
@@ -954,6 +975,16 @@ class Chief:
         parent_run_id: str | None = None,
         parent_step_path: list[str] | None = None,
     ) -> RunState:
+        with self.store.transaction():
+            return self._register_run(
+                workflow_id, body, parent_run_id=parent_run_id,
+                parent_step_path=parent_step_path,
+            )
+
+    def _register_run(
+        self, workflow_id: str, body: RunCreate, *, parent_run_id: str | None = None,
+        parent_step_path: list[str] | None = None,
+    ) -> RunState:
         defn = self.store.get_workflow(workflow_id)
         if defn.status == "draft":
             raise InvalidTransition(
@@ -1089,6 +1120,23 @@ class Chief:
         self, status: str | None = None, workflow_id: str | None = None
     ) -> list[RunState]:
         return self.store.list_runs(status, workflow_id)
+
+    def execution_models(self) -> dict[str, list[dict[str, str]]]:
+        from .execution_models import execution_models
+
+        return execution_models()
+
+    def execute_workflow(self, workflow_id: str) -> RunState:
+        """Start or resume Chief execution of the workflow's current run."""
+        from .execution import execute_workflow
+
+        return execute_workflow(self, workflow_id)
+
+    def execute_step(self, run_id: str, path: list[str]) -> RunState:
+        """Execute the approved launch configuration in a fresh CLI session."""
+        from .execution import execute_step
+
+        return execute_step(self, run_id, path)
 
     # --- execution reporting ------------------------------------------------------------
 

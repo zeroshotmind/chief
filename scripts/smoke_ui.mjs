@@ -37,6 +37,7 @@ function node(tag) {
     // Edit mode focuses a freshly-created step's goal textarea via getElementById — a real
     // element always has these; the stub had no reason to until now.
     focus() { self.focused = true; },
+    scrollIntoView() {},
     blur() {},
     select() {},
     setSelectionRange() {},
@@ -484,6 +485,15 @@ globalThis.fetch = async (url, options) => {
     : url.includes("/notes") ? NOTES
     : url.includes("/audit") ? AUDIT
     : url.endsWith("/templates") ? TEMPLATES
+    : /\/workflows\/[^/]+\/reopen$/.test(url) ? (() => {
+        const wf = WORKFLOWS.find((w) => url.includes(`/${w.workflow_id}/`));
+        wf.status = "draft"; wf.version += 1; return wf;
+      })()
+    : /\/workflows\/[^/]+\/execute$/.test(url) ? { ...RUN, status: "completed" }
+    : url.endsWith("/execution/models") ? {
+        codex: [{ id: "target-model", label: "Target model" }],
+        claude: [{ id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }],
+      }
     : url.endsWith("/workflows") ? WORKFLOWS
     : url.endsWith("/runs") ? [RUN]
     : url.includes("/definition") ? { run_id: "run_1", workflow_id: "wf_ok", title: "Approved one", base_version: 2, applied_amendment_ids: [], steps: STEPS }
@@ -516,7 +526,7 @@ function clickIn(root, text) {
   })(root);
   for (const n of found) {
     const hit = [...clicks].reverse().find((c) => c.node === n);
-    if (hit) return hit.fn({ preventDefault() {}, stopPropagation() {} });
+    if (hit) return hit.fn({ currentTarget: n, preventDefault() {}, stopPropagation() {} });
   }
   throw new Error(`no clickable element under that subtree with text ${text}`);
 }
@@ -622,6 +632,12 @@ const mainNode = () => roots.app.children.find((c) => c.tag === "main");
 
 /** Type into the field whose id is `id` — the checkpoint answers, which are addressed by
     step and field name rather than by the words on screen. */
+function changeIntoId(id, value) {
+  const hit = [...handlers].reverse().find((h) => h.type === "change" && h.node.id === id);
+  if (!hit) throw new Error(`no select field with id ${id}`);
+  hit.fn({ target: { value } });
+}
+
 function typeIntoId(id, value) {
   const hit = [...handlers].reverse().find((h) => h.type === "input" && h.node.id === id);
   if (!hit) throw new Error(`no input field with id ${id}`);
@@ -2099,6 +2115,9 @@ record("new workflow screen");
 const newScreenLabel = mainNode()["data-screen-label"] === "New workflow";
 const newUnsavedBadge = JSON.stringify(mainNode()).includes("unsaved");
 typeInto("What the work is for", "A hand-written plan");
+const executionChoiceRequired = findByTag(mainNode(), "button").some((b) =>
+  b.textContent === "Start with one step" && b.disabled != null);
+changeIntoId("nw-executor", "codex");
 await new Promise((r) => setTimeout(r, 10));
 clickButton("Start with one step");
 await new Promise((r) => setTimeout(r, 20));
@@ -2109,7 +2128,157 @@ const newDraftGoalOpen = countClass(mainNode(), "node-goal-edit") === 1;
 
 console.log(`new workflow: screen=${newScreenLabel}, unsaved=${newUnsavedBadge}, editing after start=${newDraftEditing}, one step=${newDraftOneStep}, goal open=${newDraftGoalOpen}`);
 
-const ok =
+// Executable authoring requires a separate prompt, model and directory.
+typeIntoId("edit-sel-goal", "Implement the test change");
+const executionFieldsShown = JSON.stringify(mainNode()).includes("Execution prompt (required)") &&
+  JSON.stringify(mainNode()).includes("Model (required)");
+const beforeInvalidSave = posts.length;
+clickButton("Save as v1");
+await new Promise((r) => setTimeout(r, 20));
+const missingExecutionBlocked = posts.length === beforeInvalidSave &&
+  JSON.stringify(mainNode()).includes("needs an execution prompt");
+const modelDropdownShown = findByTag(mainNode(), "select").some((n) => n.id === "edit-execution-model");
+changeIntoId("edit-execution-model", "target-model");
+changeIntoId("edit-step-executor", "claude");
+const modelResetOnProviderChange = findByTag(mainNode(), "select")
+  .find((n) => n.id === "edit-execution-model")?.children.some((n) => n.value === "" && n.selected) &&
+  !findByTag(mainNode(), "option").some((n) => n.value === "target-model");
+changeIntoId("edit-execution-model", "__custom__");
+typeIntoId("edit-execution-custom-model", "claude-custom");
+const customModelWorks = findByTag(mainNode(), "input").some((n) => n.id === "edit-execution-custom-model" && n.value === "claude-custom");
+changeIntoId("edit-step-executor", "codex");
+changeIntoId("edit-execution-model", "target-model");
+typeIntoId("edit-execution-prompt", "Implement the approved change and verify tests.");
+typeIntoId("edit-execution-cwd", "/tmp/project");
+clickButton("＋ Step");
+await new Promise((r) => setTimeout(r, 20));
+const newStepNeedsOwnPrompt = findByTag(mainNode(), "textarea").some((field) =>
+  field.id === "edit-execution-prompt" && !field.textContent);
+typeIntoId("edit-sel-goal", "Verify the changes");
+typeIntoId("edit-execution-prompt", "Run the test suite and report results.");
+clickButton("Save as v1");
+await new Promise((r) => setTimeout(r, 60));
+const configuredCreation = posts.find((p) => p.method === "POST" &&
+  p.url.endsWith("/workflows") && p.body.title === "A hand-written plan");
+const configuredCreationSaved = configuredCreation?.body.steps.length === 2 &&
+  configuredCreation.body.steps.every((s) => s.execution.executor === "codex" &&
+    s.execution.model === "target-model" && s.execution.prompt && s.execution.cwd === "/tmp/project");
+console.log(`model choices: dropdown=${modelDropdownShown}, reset=${modelResetOnProviderChange}, custom=${customModelWorks}`);
+console.log(`execution authoring: choice=${executionChoiceRequired}, fields=${executionFieldsShown}, blocked=${missingExecutionBlocked}, own-prompt=${newStepNeedsOwnPrompt}, saved=${configuredCreationSaved}`);
+
+// Approved workflows expose Chief execution directly in the toolbar.
+clickButton("← Workflows");
+await new Promise((r) => setTimeout(r, 20));
+WORKFLOWS.push({
+  workflow_id: "wf_execute", title: "CLI workflow", source: "human", status: "approved",
+  version: 1, steps: [{ id: "cli", type: "task", goal: "Implement", harness: "codex",
+    depends_on: [], criteria: [], execution: { executor: "codex", model: "target", prompt: "Implement",
+      cwd: "/tmp/project" } }],
+});
+location.hash = "#/workflow/wf_execute";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+const workflowExecuteOffered = JSON.stringify(mainNode()).includes("Execute workflow");
+clickButton("Execute workflow");
+await new Promise((r) => setTimeout(r, 60));
+const workflowExecuteSent = posts.some((p) =>
+  p.method === "POST" && p.url.endsWith("/workflows/wf_execute/execute"));
+console.log(`workflow execution: offered=${workflowExecuteOffered}, sent=${workflowExecuteSent}`);
+const configureOffered = JSON.stringify(mainNode()).includes("Configure execution…");
+clickButton("Configure execution…");
+await new Promise((r) => setTimeout(r, 60));
+const configureReopened = posts.some((p) => p.url.endsWith("/workflows/wf_execute/reopen")) &&
+  JSON.stringify(mainNode()).includes("Workflow execution") &&
+  JSON.stringify(mainNode()).includes("Execution prompt (required)");
+console.log(`execution setup: offered=${configureOffered}, reopened-in-editor=${configureReopened}`);
+
+// Existing saved envelopes and newly streamed output both have readable result views.
+RUN.step_states.a.metadata.execution = {
+  executor: "claude", model: "target", exit_code: 0,
+  result: JSON.stringify({ status: "completed", summary: "Legacy greeting", output: "## Greeting\nHello **world**." }),
+  stdout: JSON.stringify({ result: "wire-only-marker", total_cost_usd: .01 }),
+};
+location.hash = "#/workflow/wf_ok";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
+const outputHiddenInitially = countClass(mainNode(), "execution-result-card") === 0 &&
+  countClass(mainNode(), "execution-prose") === 0 && countClass(roots["viewer-root"], "output-viewer") === 0;
+clickByText("did it");
+const executionOffered = JSON.stringify(mainNode()).includes("View execution");
+const noExecutionJsonTree = !findByClass(mainNode(), "meta-json").some((n) =>
+  JSON.stringify(n).includes("wire-only-marker"));
+clickButton("View execution");
+const inspectorReplaced = countClass(mainNode(), "inspector") === 0;
+clickIn(roots["viewer-root"], "Copy output");
+await new Promise((r) => setTimeout(r, 10));
+const resultCopied = copied === "## Greeting\nHello **world**.";
+RUN.step_states.a = { ...RUN.step_states.a, status: "running", metadata: { execution: {
+  executor: "codex", model: "target", live_text: "Checking files",
+  activity: [{ title: "Running command", detail: "pytest" }],
+} } };
+clickButton("↻");
+await new Promise((r) => setTimeout(r, 60));
+const liveOutputShown = JSON.stringify(roots["viewer-root"]).includes("Checking files");
+clickIn(roots["viewer-root"], "Activity");
+const liveActivityShown = JSON.stringify(roots["viewer-root"]).includes("pytest");
+RUN.step_states.a.status = "failed";
+RUN.step_states.a.summary = "CLI execution failed: exited with code 1";
+RUN.step_states.a.metadata.execution.stderr = "File not found: example.txt";
+clickButton("↻");
+await new Promise((r) => setTimeout(r, 60));
+clickIn(roots["viewer-root"], "Logs");
+const readableFailure = JSON.stringify(roots["viewer-root"]).includes("File not found") &&
+  JSON.stringify(roots["viewer-root"]).includes("CLI execution failed: exited with code 1");
+const logsClosed = findByClass(roots["viewer-root"], "execution-disclosure").some((n) =>
+  n.children[0]?.textContent === "Stderr" && !n.open);
+clickIn(roots["viewer-root"], "✕");
+const inspectorRestored = countClass(mainNode(), "inspector") === 1 &&
+  JSON.stringify(mainNode()).includes("View execution");
+console.log(`execution output: hidden=${outputHiddenInitially}, offered=${executionOffered}, inspector-replaced=${inspectorReplaced}, inspector-restored=${inspectorRestored}, logs-collapsed=${logsClosed}, copy=${resultCopied}, live=${liveOutputShown}, activity=${liveActivityShown}, failure=${readableFailure}`);
+
+// The output reader previews rich content and keeps control JSON in Logs.
+RUN.step_states.a = { ...RUN.step_states.a, status: "completed", metadata: { execution: {
+  executor: "claude", model: "target", output_format: "markdown",
+  output: "## Report\nHello **world**.\n\n| Check | Result |\n| --- | --- |\n| Tests | Pass |\n\n```python\nprint('hello')\n```",
+  result: "control-response-only", stdout: "stream-log-only", activity: [{ title: "Checked tests", detail: "3 passed" }],
+} } };
+clickButton("↻");
+await new Promise((r) => setTimeout(r, 60));
+clickButton("View execution");
+const outputReaderShown = countClass(roots["viewer-root"], "output-viewer") === 1;
+const richPreview = countClass(roots["viewer-root"], "md-h") > 0 &&
+  countTag(roots["viewer-root"], "table") === 1 && countTag(roots["viewer-root"], "code") > 0;
+const controlHiddenFromPreview = !JSON.stringify(roots["viewer-root"]).includes("control-response-only");
+clickIn(roots["viewer-root"], "Source");
+const readerSource = findByClass(roots["viewer-root"], "output-source").some((n) => JSON.stringify(n).includes("## Report"));
+clickIn(roots["viewer-root"], "Activity");
+const readerActivity = JSON.stringify(roots["viewer-root"]).includes("Checked tests");
+clickIn(roots["viewer-root"], "Logs");
+const readerLogs = JSON.stringify(roots["viewer-root"]).includes("control-response-only");
+clickIn(roots["viewer-root"], "Files (7)");
+const readerFiles = countClass(roots["viewer-root"], "output-files") === 1;
+clickIn(roots["viewer-root"], "Preview");
+clickIn(roots["viewer-root"], "Download output");
+const readerDownloaded = await exported.text() === RUN.step_states.a.metadata.execution.output;
+RUN.step_states.a = { ...RUN.step_states.a, metadata: { execution: {
+  executor: "claude", model: "target", output_format: "html", output: "<html><body><h1>HTML report</h1></body></html>",
+} } };
+clickButton("↻");
+await new Promise((r) => setTimeout(r, 60));
+const outputHtml = findByClass(roots["viewer-root"], "output-html")[0];
+const htmlPreviewSandboxed = outputHtml?.srcdoc.includes("HTML report") && outputHtml.sandbox === "allow-scripts";
+RUN.step_states.a = { ...RUN.step_states.a, metadata: { execution: {
+  executor: "claude", model: "target", output_format: "json", output: '{"summary":"Keep this data field","rows":[1,2]}',
+} } };
+clickButton("↻");
+await new Promise((r) => setTimeout(r, 60));
+const structuredPreview = countClass(roots["viewer-root"], "j-str") > 0 &&
+  JSON.stringify(roots["viewer-root"]).includes("Keep this data field");
+console.log(`output reader: shown=${outputReaderShown}, rich-preview=${richPreview}, control-hidden=${controlHiddenFromPreview}, source=${readerSource}, activity=${readerActivity}, logs=${readerLogs}, files=${readerFiles}, download=${readerDownloaded}, html-sandbox=${htmlPreviewSandboxed}, json=${structuredPreview}`);
+
+const ok = modelDropdownShown && modelResetOnProviderChange && customModelWorks && outputReaderShown && richPreview && controlHiddenFromPreview && readerSource && readerActivity && readerLogs && readerFiles && readerDownloaded && htmlPreviewSandboxed && structuredPreview && outputHiddenInitially && executionOffered && inspectorReplaced && inspectorRestored && liveActivityShown && logsClosed && noExecutionJsonTree && resultCopied && liveOutputShown && readableFailure && executionChoiceRequired && executionFieldsShown && missingExecutionBlocked &&
+  newStepNeedsOwnPrompt && configuredCreationSaved && configureOffered && configureReopened &&
+  workflowExecuteOffered && workflowExecuteSent &&
   dialogOpened &&
   // Metadata, in the four places it can be attached. These were computed and printed and
   // — for a while — asserted nowhere, which is a report rather than a test: the harness

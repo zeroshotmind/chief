@@ -51,6 +51,8 @@ const put = (path, body) =>
     body: JSON.stringify(body),
   });
 
+export const getExecutionModels = () => request("/execution/models");
+
 export const listWorkflows = () => request("/workflows");
 
 /** The import half of "Export to a file": the exported file is a request body at rest, and
@@ -297,3 +299,10 @@ export const decideAmendment = (amendmentId, approve, reason) =>
     decided_by: "human",
     reason: reason || null,
   });
+
+export const executeStep = (runId, path) => post(`/runs/${runId}/execute/${path.join("/")}`, {});
+export const createRun = (workflowId) => post(`/workflows/${workflowId}/runs`, {});
+
+export const executeWorkflow = (workflowId) => post(`/workflows/${workflowId}/execute`, {});
+
+export const reopenWorkflow = (workflowId) => post(`/workflows/${workflowId}/reopen`, {});

@@ -8,6 +8,7 @@ and on the post-amendment definition, so an amendment can never leave the plan m
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 
 from ..errors import ValidationFailed
 from ..models import WorkflowDefinition, WorkflowStep
@@ -92,6 +93,11 @@ def validate_steps(steps: list[WorkflowStep]) -> None:
 
     # body presence and shape (contract 1.2)
     for step in steps:
+        if step.execution is not None and step.type != "task":
+            raise ValidationFailed("execution settings apply only to task steps")
+        if step.execution is not None and step.execution.cwd is not None:
+            if not Path(step.execution.cwd).is_absolute():
+                raise ValidationFailed("execution.cwd must be an absolute directory")
         if step.is_construct:
             if not step.body_ids:
                 raise ValidationFailed(

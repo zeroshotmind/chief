@@ -95,7 +95,7 @@ def create_app(store: Store | None = None) -> FastAPI:
         summary="Chief API & Data Contract v1 — adaptive agentic workflow tracker",
         description=(
             "Tracks workflow plans and execution state reported by external agentic "
-            "harnesses. The Chief never executes a step itself."
+            "harnesses, with optional approved per-step CLI execution."
         ),
     )
     app.state.store = store
