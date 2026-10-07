@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .execution_usage import UsageAccumulator
+
 
 def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -18,6 +20,7 @@ def _text(value: Any) -> str:
 
 
 def stream_output(raw: str) -> dict[str, Any]:
+    accounting = UsageAccumulator()
     activity: list[dict[str, str]] = []
     text: list[str] = []
     result: dict[str, Any] | None = None
@@ -28,6 +31,7 @@ def stream_output(raw: str) -> dict[str, Any]:
             continue
         if not isinstance(event, dict):
             continue
+        accounting.accept(event)
         kind = event.get("type")
         if kind == "result" or (kind is None and "result" in event):
             result = event
@@ -71,9 +75,29 @@ def stream_output(raw: str) -> dict[str, Any]:
         elif kind == "error":
             activity.append({"kind": "error", "title": "CLI error",
                              "detail": str(event.get("message", ""))[:4000]})
-    usage = {}
-    if result is not None:
-        usage = {key: result[key] for key in ("total_cost_usd", "duration_ms", "usage")
-                 if key in result}
+    usage = accounting.snapshot()
     return {"activity": activity[-80:], "live_text": "\n\n".join(text)[-64000:],
             "usage": usage, "envelope": result}
+
+
+def hydrate_usage(run):
+    """Expose normalized counts for older saved runs without a database migration."""
+    def walk(states):
+        for state in states.values():
+            execution = state.metadata.get("execution")
+            if isinstance(execution, dict):
+                usage = execution.get("usage")
+                if not isinstance(usage, dict) or "tokens" not in usage:
+                    usage = usage if isinstance(usage, dict) else {}
+                    raw = execution.get("stdout")
+                    parsed = stream_output(raw)["usage"] if isinstance(raw, str) else {}
+                    if "tokens" in parsed:
+                        execution["usage"] = {**usage, **parsed}
+                    elif isinstance(usage.get("usage"), dict):
+                        accounting = UsageAccumulator()
+                        accounting.accept({"type": "result", **usage})
+                        execution["usage"] = accounting.snapshot()
+            for instance in state.instances or []:
+                walk(instance.step_states)
+    walk(run.step_states)
+    return run

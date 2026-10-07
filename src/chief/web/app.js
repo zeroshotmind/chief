@@ -32,7 +32,7 @@
 
 import {
   getExecutionModels, reopenWorkflow, executeWorkflow, executeStep, createRun, ApiError, approveWorkflow, archiveTemplate, archiveWorkflow, createProofGraph,
-  createTemplate, createTemplateFromWorkflow, createWorkflow, reviseDraft,
+  createTemplate, createTemplateFromWorkflow, createWorkflow, cloneWorkflow, reviseDraft,
   decideAmendment, deleteTemplate, deleteWorkflow, getRunDefinition, getRunDetail, getWorkflowAudit, instantiateTemplate,
   addGraphNote, addReviewNote, artifactContent, artifactModules, commentOnArtifact,
   decideGraphNote, decideReviewNote, graphFixedContent, labelProofGraph, labelWorkflow, listAmendments, listGraphNotes,
@@ -41,6 +41,7 @@ import {
   compileProofGraph, deleteProofGraph, getProofGraph, listProofGraphs, proofGraphToolchain, reviseProofGraph, verifyProofGraph,
 } from "./api.js";
 import { markdown, inline } from "./markdown.js";
+import { stepUsage, usageRows, usageTotals } from "./usage.js";
 
 // ── colour and status vocabulary ─────────────────────────────────────────────────────────
 // Colours stay as CSS custom properties rather than literals so the dark palette in
@@ -907,6 +908,7 @@ function frameSandbox(url) {
 
 function viewerBody(viewer) {
   const { file } = viewer;
+  if (viewer.kind === "usage") return workflowUsageBody(viewer);
   // Built once and kept, every branch below alike: an iframe (the `url` and MDX-runtime
   // cases) reloads whenever it is detached from the document and reattached, even as the
   // very same node — see `render()`'s viewer-root block, which exists so that never
@@ -1025,12 +1027,12 @@ function fileViewer() {
     "aside",
     {
       id: "chief-viewer", class: `viewer${viewer.kind === "execution" ? " output-viewer" : ""}`,
-      "data-screen-label": viewer.kind === "execution" ? "Output viewer" : "File viewer",
+      "data-screen-label": viewer.kind === "usage" ? "Token usage" : viewer.kind === "execution" ? "Output viewer" : "File viewer",
       style: { width: `${width}px` },
     },
     el("div", {
       class: "viewer-grip", role: "separator", "aria-orientation": "vertical",
-      "aria-label": viewer.kind === "execution" ? "Resize the output viewer" : "Resize the file viewer", tabindex: "0",
+      "aria-label": viewer.kind === "usage" ? "Resize the usage viewer" : viewer.kind === "execution" ? "Resize the output viewer" : "Resize the file viewer", tabindex: "0",
       title: "Drag to resize",
       onPointerdown: startViewerResize,
       onKeyDown: (e) => {
@@ -1067,6 +1069,7 @@ function fileViewer() {
       viewer.kind === "execution" && executionViewerToolbar(viewer),
       el("div", { class: "viewer-body", onScroll: (event) => {
         if (viewer.kind === "execution") viewer.outputScroll[viewer.outputTab] = event.currentTarget.scrollTop;
+        if (viewer.kind === "usage") viewer.scrollTop = event.currentTarget.scrollTop;
       } }, viewerBody(viewer)),
     ),
   );
@@ -1205,7 +1208,7 @@ function inspectorHandle() {
 const splitView = (viewport, panel) =>
   el("div", { class: "graph-split" },
     el("div", { class: "graph-main" }, viewport),
-    !(state.viewer?.kind === "execution" || state.viewer?.returnToOutput)
+    !(["execution", "usage"].includes(state.viewer?.kind) || state.viewer?.returnToOutput)
       && [inspectorHandle(), inspector(panel)]);
 
 /** The same plan-and-panel-with-a-grip layout `splitView` composes, for edit mode's own
@@ -2096,8 +2099,10 @@ const state = {
 function setState(patch) {
   // Selecting another node returns to its inspector instead of leaving an unrelated
   // execution in the drawer while hiding the new selection's details.
-  if (Object.hasOwn(patch, "selected") && patch.selected !== state.selected
-      && (state.viewer?.kind === "execution" || state.viewer?.returnToOutput)) {
+  const changedContext = ["selected", "view", "workflowId", "runId"].some((key) =>
+    Object.hasOwn(patch, key) && patch[key] !== state[key]);
+  if (changedContext
+      && (["execution", "usage"].includes(state.viewer?.kind) || state.viewer?.returnToOutput)) {
     releaseViewerUrl();
     viewerNode = null;
     setViewerInset(0);
@@ -2662,7 +2667,7 @@ function navBar() {
     There is no separate runs list. A workflow that is executing is a workflow in the running
     state, and clicking it shows the same plan it showed while it was a draft — with progress
     on it. */
-function workflowRow({ workflow, runs, life, progress, updated, duration }) {
+function workflowRow({ workflow, runs, life, progress, updated, duration, usage }) {
   return el(
     "button",
     { class: "run-row", onClick: () => openWorkflow(workflow.workflow_id) },
@@ -2689,6 +2694,7 @@ function workflowRow({ workflow, runs, life, progress, updated, duration }) {
       title: updated ? `${relAgo(updated)} \u00b7 ${new Date(updated).toLocaleString()}` : null,
     }),
     el("span", { class: "dur", text: fmtDuration(duration) }),
+    el("span", { class: "tokens", text: tokenValue(usage, "total_tokens"), title: "Reported tokens across recorded executions" }),
     // A button inside the row button: the click has to be stopped or the workflow opens
     // underneath the confirmation asking whether to delete it.
     el("button", {
@@ -2845,6 +2851,7 @@ const WF_COLUMNS = [
   // stale while the thing it describes is moving.
   { key: "updated", label: "Last updated", cls: "stamp", dir: "desc", of: (w, ctx) => ctx.updated },
   { key: "duration", label: "Duration", cls: "dur", dir: "desc", of: (w, ctx) => ctx.duration },
+  { key: "tokens", label: "Tokens", cls: "tokens", dir: "desc", of: (w, ctx) => ctx.usage.tokens.total_tokens ?? null },
 ];
 
 // The column an unknown sort key falls back to, and the one the list opens on.
@@ -2874,6 +2881,7 @@ function workflowsScreen() {
       fraction: progress && progress.total ? progress.done / progress.total : 0,
       updated: [w.updated_at || "", runs[0] ? runs[0].updated_at : ""].sort().pop() || "",
       duration: durationOf(runs[0]),
+      usage: usageTotals(usageRows(runs, w)),
     };
   });
 
@@ -2898,6 +2906,7 @@ function workflowsScreen() {
     const [x, y] = [col.of(a.workflow, a), col.of(b.workflow, b)];
     // A missing timestamp is not "oldest" — it is unknown, and unknown belongs at the end
     // whichever way the column is pointing.
+    if (x == null || y == null) return x == y ? 0 : x == null ? 1 : -1;
     if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
     return x < y ? -sign : x > y ? sign : 0;
   };
@@ -3965,6 +3974,7 @@ function inspector(panel) {
       panel.execution && outputDisclosure(`${panel.outputKey}:config`, "Execution settings",
         el("div", { class: "execution-config" },
           el("strong", { text: `${panel.execution.executor} · ${panel.execution.model} · ${panel.execution.executor === "source_conversation" ? "Existing conversation" : "Fresh session"}` }),
+          el("div", { text: executionProfileLabel(panel.execution) }),
           el("div", { class: "mono", text: panel.execution.cwd }),
           el("pre", { class: "execution-log", text: panel.execution.prompt }),
         ),
@@ -4126,9 +4136,10 @@ function executionViewFingerprint(viewer, step) {
   const exec = step.metadata?.execution || {};
   const tab = viewer.outputTab;
   const body = tab === "activity" ? exec.activity : tab === "files" ? step.artifacts
+    : tab === "usage" ? exec.usage
     : tab === "logs" ? [exec.stdout, exec.stderr, exec.result, exec.exit_code, exec.timed_out]
     : [executionText(step), executionFormat(step)];
-  return JSON.stringify([step.status, step.status === "failed" ? step.summary : null, body]);
+  return JSON.stringify([step.status, step.status === "failed" ? step.summary : null, body, stepUsage(step)]);
 }
 
 function executionFingerprint(stepState) {
@@ -4171,6 +4182,8 @@ function executionViewerToolbar(viewer) {
   return el("div", { class: "output-viewer-tools" },
     el("div", { class: "execution-facts text-muted", text: [step.status, exec.executor, exec.model, format,
       step.status === "running" && "Updates live"].filter(Boolean).join(" · ") }),
+    exec.executor && el("div", { class: "execution-facts text-muted", text: executionProfileLabel(exec) }),
+    tokenSummary([stepUsage(step)]),
     el("div", { class: "output-viewer-actions" },
       text && el("button", { class: "btn btn-secondary btn-sm", text: "Copy output", onClick: (e) => copyPath(e.currentTarget, text, "Copy output") }),
       text && el("button", { class: "btn btn-secondary btn-sm", text: "Download output", onClick: () => {
@@ -4182,7 +4195,7 @@ function executionViewerToolbar(viewer) {
       } }),
     ),
     el("div", { class: "output-viewer-tabs", role: "tablist", "aria-label": "Output views" },
-      [["output", "Preview"], ["source", "Source"], ["activity", "Activity"], ["logs", "Logs"],
+      [["output", "Preview"], ["source", "Source"], ["activity", "Activity"], ["usage", "Usage"], ["logs", "Logs"],
         ["files", `Files (${(step.artifacts || []).length})`]].map(([tab, label]) => el("button", {
           class: `output-viewer-tab${viewer.outputTab === tab ? " active" : ""}`,
           role: "tab", id: `execution-tab-${tab}`, tabindex: viewer.outputTab === tab ? "0" : "-1",
@@ -4190,7 +4203,7 @@ function executionViewerToolbar(viewer) {
           "aria-controls": "output-viewer-content", text: label,
           onClick: () => setState({ viewer: { ...viewer, outputTab: tab, node: null } }),
           onKeyDown: (event) => {
-            const tabs = ["output", "source", "activity", "logs", "files"];
+            const tabs = ["output", "source", "activity", "usage", "logs", "files"];
             const index = tabs.indexOf(tab);
             const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
               : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
@@ -4212,6 +4225,7 @@ function executionViewerBody(viewer) {
   const tab = viewer.outputTab;
   let body;
   if (tab === "source") body = el("pre", { class: "viewer-pre output-source" }, el("code", { text }));
+  else if (tab === "usage") body = tokenMetrics(usageTotals([stepUsage(step)]));
   else if (tab === "activity") body = (exec.activity || []).length
     ? el("ol", { class: "output-activity" }, exec.activity.map((event) => el("li", {},
       el("strong", { text: event.title }), event.detail && el("pre", { class: "execution-log", text: event.detail }))))
@@ -4253,6 +4267,73 @@ function executionViewerBody(viewer) {
     body);
 }
 
+const TOKEN_LABELS = { total_tokens: "Total tokens", input_tokens: "Input tokens", output_tokens: "Output tokens",
+  reasoning_tokens: "Reasoning tokens", cache_read_tokens: "Cache reads", cache_write_tokens: "Cache writes" };
+
+function tokenValue(usage, key) {
+  const value = usage.tokens[key];
+  return value == null ? "—" : value.toLocaleString() + (usage.coverage[key] < usage.count ? "+" : "");
+}
+
+function tokenSummary(rows) {
+  const usage = usageTotals(rows);
+  if (!Object.keys(usage.tokens).length) return null;
+  return el("span", { class: "token-summary text-muted", text:
+    `${tokenValue(usage, "total_tokens")} tokens · ${tokenValue(usage, "input_tokens")} in · ${tokenValue(usage, "output_tokens")} out${usage.provisional ? " · so far" : ""}` });
+}
+
+function tokenMetrics(usage) {
+  return el("div", { class: "token-report" },
+    el("div", { class: "token-metrics" }, Object.entries(TOKEN_LABELS).map(([key, label]) =>
+      el("div", { class: "token-metric" }, el("span", { class: "text-muted", text: label }),
+        el("strong", { text: tokenValue(usage, key) }),
+        el("span", { class: "text-muted", text: `${usage.coverage[key]} of ${usage.count} executions reported` })))),
+    el("p", { class: "text-muted", text: `CLI-reported cost estimate: ${usage.cost == null ? "—" : "$" + usage.cost.toFixed(4)}${usage.costCoverage && usage.costCoverage < usage.count ? " (partial)" : ""}` }),
+    el("p", { class: "text-muted", text: "Input includes cache reads and writes. Reasoning, when reported, is part of output. Total = input + output. — means unavailable; + means some executions have no count." }),
+    usage.provisional && el("p", { class: "accent-note", text: "Usage so far. Counts update when the CLI reports them; output totals may arrive only at completion." }),
+    el("p", { class: "text-muted", text: "Reported usage for recorded executions, including failures and nested steps. This is not a spending cap or a subscription-quota balance. Older reports may cover only the main agent." }),
+  );
+}
+
+function currentUsageRows(viewer) {
+  const runs = (state.runs || []).filter((run) => run.workflow_id === viewer.workflowId)
+    .map((run) => state.detail?.runId === run.run_id ? state.detail.state : run);
+  const definition = state.detail && runs.some((run) => run.run_id === state.detail.runId)
+    ? state.detail.def : (state.workflows || []).find((w) => w.workflow_id === viewer.workflowId);
+  return usageRows(runs, definition);
+}
+
+function workflowUsageAction(workflow, runs) {
+  return el("div", { class: "workflow-usage-action" }, tokenSummary(usageRows(runs, workflow)),
+    el("button", { class: "btn btn-secondary btn-sm", text: "Usage", onClick: () => {
+      releaseViewerUrl();
+      viewerNode = null;
+      setState({ viewerPending: null, viewer: { _gen: ++viewerGen, kind: "usage",
+        workflowId: workflow.workflow_id, title: `${workflow.title} · Usage`, outputRevision: 0, scrollTop: 0 },
+        viewerWidth: clampViewerWidth(Math.max(state.viewerWidth, 760)) });
+    } }),
+  );
+}
+
+function workflowUsageBody(viewer) {
+  const rows = currentUsageRows(viewer);
+  const totals = usageTotals(rows);
+  return el("div", { class: "workflow-usage" }, tokenMetrics(totals),
+    el("h4", { text: "Steps by token usage" }),
+    el("div", { class: "token-table-wrap" }, el("table", { class: "token-table" },
+      el("thead", {}, el("tr", {}, ["Step", "Input", "Output", "Reasoning", "Total", "Cost est."].map((text) => el("th", { text })))),
+      el("tbody", {}, rows.map((row) => el("tr", {},
+        el("td", {}, el("strong", { text: row.title }),
+          el("div", { class: "text-muted mono", text: `${row.path} · ${row.status}` }),
+          el("div", { class: "text-muted", text: row.model })),
+        ...["input_tokens", "output_tokens", "reasoning_tokens", "total_tokens"].map((key) =>
+          el("td", { text: row.tokens[key] == null ? "—" : row.tokens[key].toLocaleString() })),
+        el("td", { text: row.cost == null ? "—" : "$" + row.cost.toFixed(4) }),
+      ))))),
+    !rows.length && el("p", { class: "text-muted", text: "No executions reported yet." }),
+  );
+}
+
 // Keep the inspector compact; the full result and trajectory live in the right drawer.
 function executionEntry(stepState, title) {
   const exec = stepState.metadata?.execution || {};
@@ -4266,6 +4347,7 @@ function executionEntry(stepState, title) {
     || (stepState.started_at && (Date.parse(stepState.completed_at || new Date().toISOString()) - Date.parse(stepState.started_at)));
   const cost = usage.total_cost_usd ?? oldUsage.total_cost_usd;
   return el("div", { class: "execution-entry" },
+    tokenSummary([stepUsage(stepState)]),
     el("button", { class: "btn btn-secondary btn-sm output-open", text: "View execution",
       onClick: () => openExecutionViewer(stepState, title) }),
     el("div", { class: "execution-facts text-muted", text: [
@@ -4501,6 +4583,7 @@ function templatesScreen() {
   const sign = dir === "desc" ? -1 : 1;
   const cmp = (a, b) => {
     const [x, y] = [col.of(a), col.of(b)];
+    if (x == null || y == null) return x == y ? 0 : x == null ? 1 : -1;
     if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
     return x < y ? -sign : x > y ? sign : 0;
   };
@@ -5133,10 +5216,25 @@ const EXECUTOR_OPTIONS = [
   { value: "codex", text: "Chief · Codex CLI" },
   { value: "tracking", text: "Tracking only · external reporting" },
 ];
+const EXECUTION_PROFILES = [
+  { value: "text_only", text: "Text only · no tools" },
+  { value: "limited_tools", text: "Limited tools · choose capabilities" },
+  { value: "full_agent", text: "Full agent · standard CLI context" },
+];
+const EXECUTION_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebFetch", "WebSearch"];
+
+function executionProfileLabel(config) {
+  if (config.executor === "source_conversation") return "Uses the existing conversation's context and tools";
+  const profile = config.profile || "full_agent";
+  const label = EXECUTION_PROFILES.find((item) => item.value === profile)?.text || profile;
+  return profile === "limited_tools" ? `${label}: ${(config.tools || []).join(", ")}` : label;
+}
 
 function emptyExecution(executor, defaults = {}) {
   if (executor === "tracking") return null;
   return { executor, model: defaults.executor === executor ? defaults.model || "" : "", prompt: "",
+    profile: executor === "claude" ? defaults.profile || "full_agent" : "full_agent",
+    tools: executor === "claude" && defaults.profile === "limited_tools" ? [...(defaults.tools || [])] : [],
     ...(executor === "source_conversation" ? {} : { cwd: defaults.cwd || "" }),
     timeout_seconds: defaults.timeout_seconds || 3600 };
 }
@@ -5170,6 +5268,30 @@ async function configureExecution(workflow) {
   } catch (err) {
     setState({ error: apiErrorText(err) });
   }
+}
+
+function cloneWorkflowButton(workflow, run) {
+  const busy = state.cloningWorkflow === workflow.workflow_id;
+  return el("button", {
+    class: "btn btn-secondary btn-sm", text: busy ? "Cloning…" : "Clone workflow",
+    disabled: busy || null,
+    title: "Copy this plan and its execution settings into a new draft for another run.",
+    onClick: async () => {
+      if (state.cloningWorkflow) return;
+      setState({ cloningWorkflow: workflow.workflow_id, error: null });
+      try {
+        const created = await cloneWorkflow(workflow.workflow_id, run?.run_id);
+        await refresh();
+        openWorkflow(created.workflow_id);
+        setState({ savedNotice: { workflowId: created.workflow_id,
+          text: "Workflow cloned. Review the settings, then approve and execute this fresh copy." } });
+      } catch (err) {
+        setState({ error: apiErrorText(err) });
+      } finally {
+        setState({ cloningWorkflow: null });
+      }
+    },
+  });
 }
 
 function startEdit(workflow) {
@@ -5421,6 +5543,8 @@ function editProblems(wf) {
     if (s.type === "task" && s.execution) {
       if (!s.execution.model?.trim()) problems.push({ id: s.id, text: "needs an execution model" });
       if (!s.execution.prompt?.trim()) problems.push({ id: s.id, text: "needs an execution prompt" });
+      if (s.execution.profile === "limited_tools" && !s.execution.tools?.length)
+        problems.push({ id: s.id, text: "needs at least one tool for Limited tools" });
       if (s.execution.executor !== "source_conversation" && !s.execution.cwd?.startsWith("/"))
         problems.push({ id: s.id, text: "needs an absolute working directory" });
       if (!(Number.isInteger(s.execution.timeout_seconds) && s.execution.timeout_seconds >= 1 && s.execution.timeout_seconds <= 43200))
@@ -6221,6 +6345,30 @@ function executionFields(sel) {
       }),
     }, EXECUTOR_OPTIONS, config?.executor || "tracking")),
     config && executionModelField(sel),
+    config && config.executor !== "source_conversation" && editField("Execution profile", selectEl({
+      id: "edit-execution-profile", class: "input", "aria-label": "Execution profile",
+      onChange: (event) => editSel((step) => {
+        step.execution.profile = event.target.value;
+        step.execution.tools = event.target.value === "limited_tools" ? ["Read", "Glob", "Grep"] : [];
+      }),
+    }, config.executor === "claude" ? EXECUTION_PROFILES : EXECUTION_PROFILES.filter((p) => p.value === "full_agent"),
+    config.profile || "full_agent"), config.executor === "codex" ?
+      "Codex currently supports Full agent here. Use Claude for Text only or Limited tools." :
+      config.profile === "text_only" ?
+        "For text transformations and answers using supplied context. Short system instructions; no tools, skills, plugins, project instructions, or memory. File references are not read." :
+      config.profile === "limited_tools" ?
+        "Only the selected tools are available and authorized. Keeps coding guidance; skips skills, plugins, project instructions, and memory. Bash can run arbitrary commands." :
+        "Standard CLI instructions, tools and configured project context. Choose Text only when the step needs no tools."),
+    config?.profile === "limited_tools" && editField("Tools (choose at least one)",
+      el("div", { class: "execution-tool-choices" }, ...EXECUTION_TOOLS.map((tool) => el("label", {},
+        el("input", { type: "checkbox", "aria-label": tool, checked: (config.tools || []).includes(tool),
+          onChange: (event) => editSel((step) => {
+            const selected = new Set(step.execution.tools || []);
+            if (event.target.checked) selected.add(tool); else selected.delete(tool);
+            step.execution.tools = EXECUTION_TOOLS.filter((name) => selected.has(name));
+          }),
+        }), tool,
+      )))),
     config && editField("Execution prompt (required)", el("textarea", {
       id: "edit-execution-prompt", class: "input", rows: "6", text: config.prompt,
       placeholder: "Write the instructions this executor should carry out for this step",
@@ -6618,6 +6766,8 @@ function workflowDetailScreen() {
       }),
       !editing && projectLine(workflow),
       !editing && decisionNote(workflow),
+      !editing && runs.length > 0 && workflowUsageAction(workflow, runs),
+      !editing && workflow.status === "archived" && cloneWorkflowButton(workflow, run),
       editing && editHints(),
       editing && editToolbar(state.edit),
       !editing && workflow.status !== "archived" &&
@@ -6665,6 +6815,7 @@ function workflowDetailScreen() {
           // The way back to the plan's own thread. Without it, feedback about the plan is
           // reachable only by having nothing selected — which is true when you arrive and
           // false the moment you click a node, so it reads as having disappeared.
+          cloneWorkflowButton(workflow, run),
           planNoteButton(workflow),
           el("button", {
             class: "btn btn-secondary btn-sm", text: draft ? "Discard…" : "Archive…",
@@ -7550,6 +7701,7 @@ function proofGraphsScreen() {
   const sign = dir === "desc" ? -1 : 1;
   const cmp = (a, b) => {
     const [x, y] = [col.of(a.graph, a), col.of(b.graph, b)];
+    if (x == null || y == null) return x == y ? 0 : x == null ? 1 : -1;
     if (x === "" || y === "") return x === y ? 0 : x === "" ? 1 : -1;
     return x < y ? -sign : x > y ? sign : 0;
   };
@@ -8168,10 +8320,19 @@ function render() {
         node: changed ? null : state.viewer.node };
     }
   }
+  if (state.viewer?.kind === "usage") {
+    const fingerprint = JSON.stringify(currentUsageRows(state.viewer));
+    if (fingerprint !== state.viewer.fingerprint) state.viewer = { ...state.viewer,
+      fingerprint, outputRevision: (state.viewer.outputRevision || 0) + 1, node: null };
+  }
   const vKey = viewerKey(state.viewer);
   if (vKey !== viewerRootKey) {
     viewerRootKey = vKey;
     viewerHost.replaceChildren(...(state.viewer ? [fileViewer()] : []));
+    if (state.viewer?.kind === "usage") {
+      const body = viewerHost.querySelector(".viewer-body");
+      if (body) body.scrollTop = state.viewer.scrollTop || 0;
+    }
     if (state.viewer?.kind === "execution") {
       const body = viewerHost.querySelector(".viewer-body");
       if (body) body.scrollTop = state.viewer.outputScroll[state.viewer.outputTab] || 0;

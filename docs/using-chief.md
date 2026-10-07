@@ -24,6 +24,33 @@ Task steps with execution settings require a model and a separate execution prom
 saving. CLI steps also require a working directory. Each new task starts with an empty
 prompt, even when it inherits the executor and model from another task.
 
+Choose each task's **Execution profile** during planning, before approval:
+
+- **Text only** (Claude): uses short system instructions and only the supplied prompt and
+  step context. No tools, skills, installed plugins, project instructions, memory, or MCP.
+  Suitable for summaries and text transformations; file references are not read.
+  Chief omits run identifiers, empty context sections, and a goal identical to the prompt.
+  Input/output requirements, dependency results and branch metadata are included when
+  present. Criterion evidence is requested only for steps with criteria; completion is
+  still validated. The response contract asks for status, summary and full output, with
+  an optional format. File/artifact instructions are omitted.
+- **Limited tools** (Claude): select the exact built-in tools the step needs. Keeps the
+  CLI's coding guidance but skips customizations and MCP. Selected tools are authorized
+  for this invocation; Bash can run arbitrary commands. Managed CLI policies still apply.
+- **Full agent**: keeps the existing CLI behavior, instructions, tools and project context.
+  This is the default for existing plans and the only currently supported Codex profile.
+
+Profiles and tool choices are part of the saved, approved plan and survive cloning and
+templates. Change them through a draft revision or approved amendment, not at launch.
+Source-conversation execution continues using that conversation's existing context.
+The API fields are `execution.profile` (`text_only`, `limited_tools`, or `full_agent`)
+and `execution.tools` (a nonempty list only for `limited_tools`). The supported tools are
+`Read`, `Glob`, `Grep`, `Edit`, `Write`, `Bash`, `WebFetch`, and `WebSearch`.
+An omitted profile means `full_agent` for compatibility. New tasks inherit the profile
+and tool selection, but need their own prompt. Reduced profiles require a Claude CLI
+supporting `--safe-mode`; Chief preserves subscription login and does not use `--bare`.
+Unsupported flags fail the run rather than silently reverting to Full agent.
+
 The model field is a required dropdown: Codex choices come from the Chief host's local
 Codex catalog; Claude offers Sonnet and Opus CLI aliases. **Custom model ID…** lets you
 pin a version or use another supported model. Aliases track the CLI's current model.
@@ -36,6 +63,20 @@ An approved plan with no runs has a **Configure execution…** action. It return
 to draft and opens the editor; saving changes does not grant approval. Approve the updated
 plan, then use **Execute workflow**. Plans that already have runs are changed by amendments.
 
+To repeat a workflow, use **Clone workflow**. This opens a new draft with the same steps,
+prompts, models, working directories, and project details. If a run is displayed, its
+effective plan (including approved amendments) is copied. Approvals, run history, outputs,
+and token usage are not copied. Review the new draft, approve it, then execute it.
+The REST equivalent is `POST /workflows/{workflow_id}/clone`, with optional `run_id` query
+parameter to select a run's effective plan.
+
+Chief passes dependency results, evidence, artifacts, and task metadata to subsequent CLI
+steps, including nested branch results. It excludes CLI logs, duplicate streamed text,
+usage counters, execution timestamps, and replay history from that prompt. The complete
+execution record remains available in the output viewer. A fresh CLI session still has
+the context allowed by the selected execution profile. Token savings depend on that
+profile, model and CLI version; the Usage view reports the actual provider counts.
+
 Select a task in the graph and click **View execution** in its step panel to open the
 resizable right drawer. Output appears only on demand, keeping the workflow canvas clear.
 During execution, the drawer updates automatically. Preview renders documents, code,
@@ -43,6 +84,15 @@ tables, structured data, and HTML reports; Source shows the original content. Ac
 and Logs are separate tabs, and Files opens attached reports, images, PDFs, and other
 artifacts in the existing viewer. Copy and Download use the result body. Close the drawer
 to return to the step panel. Existing completed runs also use this reader.
+
+The workflow list's **Tokens** column lets you compare workflows. Open **Usage** on a
+workflow for totals and a table of steps ordered by token use, or select a step and open
+**View execution → Usage**. Input includes cache reads/writes; reasoning is included in
+output rather than added again. `—` means the CLI did not expose a count; `+` marks a partial
+total. Counts refresh during execution when available. Claude's output count arrives at
+completion. Cost is the CLI's estimate, not a billing statement. This tracks usage without
+enforcing a token cap. Source-conversation tasks appear when their harness reports
+normalized counts in `metadata.token_usage`.
 
 ## Review notes — saying what is wrong with a draft
 

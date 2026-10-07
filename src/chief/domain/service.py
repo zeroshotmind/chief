@@ -80,6 +80,7 @@ from ..transport import current_transport
 from . import files, patch, paths, policy_eval
 from . import templates as tmpl
 from .derive import recompute, set_status
+from .execution_output import hydrate_usage
 from .graph import top_level_ids, validate_definition
 
 _SERVER_ONLY_STATUSES = frozenset({"skipped"})
@@ -126,6 +127,27 @@ class Chief:
                 detail={"source": defn.source, "generated_by": defn.generated_by},
             )
         return defn
+
+    def clone_workflow(self, workflow_id: str, run_id: str | None = None) -> WorkflowDefinition:
+        """Copy a saved plan into an independent draft, optionally from a run's plan."""
+        original = self.get_workflow(workflow_id)
+        plan = original
+        lineage: dict[str, Any] = {"workflow_id": workflow_id, "version": original.version}
+        if run_id is not None:
+            run, plan = self.store.get_run(run_id)
+            if run.workflow_id != workflow_id:
+                raise ValidationFailed("the source run belongs to a different workflow")
+            lineage.update(run_id=run_id, base_version=run.base_version,
+                           applied_amendment_ids=list(run.applied_amendment_ids))
+        cloned = self.create_workflow(WorkflowCreate(
+            title=f"{original.title} (copy)", source="import",
+            steps=deepcopy(plan.steps), groups=deepcopy(plan.groups),
+            project=original.project, origin_dir=original.origin_dir,
+        ))
+        with self.store.transaction() as conn:
+            self.store.audit(conn, "workflow.cloned", workflow_id=cloned.workflow_id,
+                             detail={"cloned_from": lineage})
+        return self.get_workflow(cloned.workflow_id)
 
     def revise_draft(self, workflow_id: str, body: WorkflowRevise) -> WorkflowDefinition:
         """draft -> draft, with a different plan. See ``WorkflowRevise`` for why this is not
@@ -1097,7 +1119,7 @@ class Chief:
 
     def get_run(self, run_id: str) -> RunState:
         run, _ = self.store.get_run(run_id)
-        return run
+        return hydrate_usage(run)
 
     def get_run_plan(self, run_id: str) -> RunPlan:
         """The plan this run is actually executing, with the lineage that identifies it.
@@ -1119,7 +1141,7 @@ class Chief:
     def list_runs(
         self, status: str | None = None, workflow_id: str | None = None
     ) -> list[RunState]:
-        return self.store.list_runs(status, workflow_id)
+        return [hydrate_usage(run) for run in self.store.list_runs(status, workflow_id)]
 
     def execution_models(self) -> dict[str, list[dict[str, str]]]:
         from .execution_models import execution_models

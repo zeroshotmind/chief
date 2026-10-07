@@ -1358,3 +1358,35 @@ main {
 .output-html { min-height: 500px; }
 
 .execution-model-fields { display: grid; gap: var(--space-2); }
+
+/* Token accounting stays compact on the canvas and opens in the right drawer. */
+.run-row .tokens, .col-head.tokens { flex: none; width: 86px; text-align: right; }
+.run-row .tokens { font: 11.5px var(--font-mono); color: var(--color-neutral-500); }
+.workflow-usage-action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.token-summary { font-size: 11px; font-variant-numeric: tabular-nums; }
+.token-report { font-size: 12px; line-height: 1.5; }
+.token-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.token-metric { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3); border: 1px solid var(--color-divider); border-radius: var(--radius-md); }
+.token-metric strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.token-metric > :last-child { font-size: 10px; }
+.workflow-usage { padding: var(--space-3) 0; }
+.workflow-usage h4 { margin: var(--space-5) 0 var(--space-3); }
+.token-table-wrap { overflow-x: auto; }
+.token-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.token-table th, .token-table td { padding: 10px 6px; text-align: right; border-bottom: 1px solid var(--color-divider); white-space: nowrap; }
+.token-table th:first-child, .token-table td:first-child { text-align: left; min-width: 140px; max-width: 210px; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .run-row .tokens, .col-head.tokens { width: auto; }
+  .run-row .tokens { order: 3; }
+}
+.execution-tool-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.execution-tool-choices label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}

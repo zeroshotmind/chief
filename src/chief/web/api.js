@@ -58,6 +58,8 @@ export const listWorkflows = () => request("/workflows");
 /** The import half of "Export to a file": the exported file is a request body at rest, and
     registering it here — on this Chief or any other — is posting it back. */
 export const createWorkflow = (body) => post("/workflows", body);
+export const cloneWorkflow = (workflowId, runId = null) =>
+  post(`/workflows/${workflowId}/clone${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`, {});
 
 /** Replace a draft's plan (`PUT /workflows/{id}`). Refused once the workflow has been
     approved. `body.source: "human"` marks this as a person's own edit rather than the

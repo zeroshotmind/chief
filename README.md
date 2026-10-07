@@ -235,6 +235,28 @@ Structured JSON objects/arrays are also accepted as `output`. Generated `artifac
 the existing file viewer, with a return action to the step’s output. Copy and download act
 on the result body. Completed pages stop refreshing automatically.
 
+Token usage is captured from CLI events independently of the bounded output log. The
+workflow list has a sortable **Tokens** column, and **Usage** on a workflow opens totals
+and steps ranked by consumption. **View execution → Usage** shows a single step's input,
+output, reasoning (when exposed), cache reads/writes, and CLI-reported cost estimate.
+Counts update as the CLI emits them; Claude output counts wait for the final result.
+Unavailable fields show `—`, and partial workflow totals use `+` with reporting coverage.
+These are observed counts, not enforced budgets or subscription quota balances.
+
+Normalized counts are in `step.metadata.execution.usage.tokens`: `input_tokens`,
+`output_tokens`, `reasoning_tokens`, `cache_read_tokens`, `cache_write_tokens`, and
+`total_tokens`. Input includes cache; reasoning is a subset of output; total is input plus
+output. Claude's per-model final totals include reported subagent usage when available;
+older results may cover only the main agent. Nested loop/parallel steps and failures count;
+reused execution IDs count once across replayed runs. The view covers recorded executions,
+not work whose execution evidence was removed. Old runs are normalized on read when their
+saved usage or logs contain enough information.
+
+External/source-conversation harnesses can opt in by reporting the same normalized fields
+in `step.metadata.token_usage`, with optional `cost_usd`. Unreported usage remains unknown.
+See [Codex JSONL usage](https://learn.chatgpt.com/docs/non-interactive-mode) and
+[Claude usage accounting](https://code.claude.com/docs/en/agent-sdk/cost-tracking).
+
 Retrying finished work uses the existing approved history-edit/replay flow. A server
 interruption can leave a step running; reconcile it through the existing reporting flow.
 Changing launch settings on an approved run uses the existing amendment mechanism.

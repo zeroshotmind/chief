@@ -91,6 +91,15 @@ def get_workflow(workflow_id: str, service: Service) -> WorkflowDefinition:
     return service.get_workflow(workflow_id)
 
 
+@router.post("/workflows/{workflow_id}/clone", response_model=WorkflowDefinition,
+             status_code=status.HTTP_201_CREATED)
+def clone_workflow(
+    workflow_id: str, service: Service, run_id: str | None = None,
+) -> WorkflowDefinition:
+    """Create an unapproved copy. Pass run_id to copy that run's amended plan."""
+    return service.clone_workflow(workflow_id, run_id)
+
+
 @router.put("/workflows/{workflow_id}", response_model=WorkflowDefinition)
 def revise_draft(
     workflow_id: str, body: WorkflowRevise, service: Service

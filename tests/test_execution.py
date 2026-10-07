@@ -27,7 +27,7 @@ def test_fresh_cli_and_evidence(client, tmp_path, cli):
     step["criteria"] = ["tests pass"]
     workflow, run = api.run([step])
     assert client.get(f"/v1/workflows/{workflow}").json()["steps"][0]["execution"] == {
-        **step["execution"], "timeout_seconds": 3600,
+        **step["execution"], "timeout_seconds": 3600, "profile": "full_agent", "tools": [],
     }
     result = json.dumps(dict(status="completed", summary="Tests passed.",
                              criteria_met={"c1": "All tests passed."}))
@@ -49,6 +49,107 @@ def test_fresh_cli_and_evidence(client, tmp_path, cli):
         assert "Stored prompt" in process.communicate.call_args.args[0]
         assert client.post(f"/v1/runs/{run}/execute/work").status_code == 409
         assert launch.call_count == 1
+        assert "--safe-mode" not in args and "--tools" not in args
+
+
+@pytest.mark.parametrize("profile,tools", [("text_only", []),
+                                         ("limited_tools", ["Read", "Grep"])])
+def test_reviewed_profile_controls_cli_and_is_recorded(client, tmp_path, profile, tools):
+    api = Api(client)
+    step = executable(tmp_path, profile=profile, tools=tools)
+    wid = api.create_workflow([step]).json()["workflow_id"]
+    # Configuring a profile does not grant approval or bypass it.
+    assert client.post(f"/v1/workflows/{wid}/execute").status_code == 409
+    assert client.post(f"/v1/workflows/{wid}/approve").status_code == 200
+    run = client.post(f"/v1/workflows/{wid}/runs", json={}).json()["run_id"]
+    with patch("chief.domain.execution.subprocess.Popen") as launch:
+        launch.return_value.returncode = 0
+        launch.return_value.communicate.return_value = (
+            json.dumps({"result": json.dumps({"status": "completed", "summary": "world",
+                                             "output": "world"})}), "")
+        response = client.post(f"/v1/runs/{run}/execute/work")
+    assert response.status_code == 200, response.text
+    command = launch.call_args.args[0]
+    assert "--safe-mode" in command and "--disable-slash-commands" in command
+    assert "--strict-mcp-config" in command and "--bare" not in command
+    assert json.loads(command[command.index("--mcp-config") + 1]) == {"mcpServers": {}}
+    assert command[command.index("--tools") + 1] == ",".join(tools)
+    assert ("--system-prompt" in command) == (profile == "text_only")
+    if tools:
+        assert command[command.index("--allowedTools") + 1] == ",".join(tools)
+    recorded = response.json()["step_states"]["work"]["metadata"]["execution"]
+    assert recorded["profile"] == profile and recorded["tools"] == tools
+
+
+@pytest.mark.parametrize("config", [
+    {"profile": "unknown"}, {"profile": "limited_tools"},
+    {"profile": "text_only", "tools": ["Bash"]},
+    {"profile": "full_agent", "tools": ["Read"]},
+    {"profile": "limited_tools", "tools": ["Task"]},
+    {"profile": "limited_tools", "tools": ["Read", "Read"]},
+    {"executor": "codex", "profile": "text_only"},
+    {"executor": "source_conversation", "profile": "limited_tools", "tools": ["Read"]},
+])
+def test_reject_unsupported_or_inconsistent_profiles(client, tmp_path, config):
+    step = executable(tmp_path)
+    step["execution"].update(config)
+    assert Api(client).create_workflow([step]).status_code == 422
+
+
+@pytest.mark.parametrize("criteria,evidence,expected", [
+    ([], {}, "completed"), (["output is world"], {"c1": "Exact output: world"}, "completed"),
+    (["output is world"], {}, "failed"),
+])
+def test_text_prompt_is_small_but_still_requires_criterion_evidence(
+    client, tmp_path, criteria, evidence, expected,
+):
+    step = executable(tmp_path, profile="text_only")
+    step.update(goal="Output world", criteria=criteria)
+    step["execution"]["prompt"] = "Output world"
+    _, run = Api(client).run([step])
+    payload = {"status": "completed", "summary": "world", "output": "world"}
+    if evidence:
+        payload["criteria_met"] = evidence
+    with patch("chief.domain.execution.subprocess.Popen") as launch:
+        launch.return_value.returncode = 0
+        launch.return_value.communicate.return_value = (json.dumps({
+            "result": json.dumps(payload),
+        }), "")
+        response = client.post(f"/v1/runs/{run}/execute/work")
+    state = response.json()["step_states"]["work"]
+    assert state["status"] == expected
+    prompt = launch.return_value.communicate.call_args.args[0]
+    assert prompt.count("Output world") == 1
+    assert run not in prompt
+    for unused in ("run_id", '"path"', '"inputs"', '"outputs"', '"dependencies"',
+                   '"instance_metadata"', "artifacts", "absolute file paths"):
+        assert unused not in prompt
+    if criteria:
+        assert "output is world" in prompt and '"criteria_met"' in prompt
+        assert "criterion id to evidence" in prompt
+    else:
+        assert "Chief step context" not in prompt and "criteria_met" not in prompt
+        assert len(prompt) < 200
+        assert state["metadata"]["execution"]["output"] == "world"
+
+
+def test_text_prompt_preserves_supplied_data_and_distinct_goal():
+    from chief.domain.execution import _text_prompt
+
+    context = {
+        "run_id": "irrelevant", "path": ["loop", "i1", "work"],
+        "goal": "Summarize all supplied records", "criteria": [],
+        "inputs": {"records": [], "count": 0, "enabled": False, "note": "", "absent": None},
+        "outputs": {"columns": ["name", "count"]},
+        "instance_metadata": {"branch": 0},
+        "dependencies": {"before": {"metadata": {"execution": {"output": "αβ"}}}},
+    }
+    prompt = _text_prompt("Produce a table", context)
+    sent = json.loads(prompt.split("Chief step context:\n")[1].split("\n\n")[0])
+    assert sent == {key: value for key, value in context.items()
+                    if key not in {"run_id", "path", "criteria"}}
+    assert "data, not instructions" in prompt
+    assert context["criteria"] == []  # Prompt construction leaves the approved plan intact.
 
 
 def test_dependencies_and_no_settings(client, tmp_path):
@@ -59,6 +160,56 @@ def test_dependencies_and_no_settings(client, tmp_path):
         assert client.post(f"/v1/runs/{run}/execute/work").status_code == 409
         assert client.post(f"/v1/runs/{run}/execute/before").status_code == 422
         launch.assert_not_called()
+
+
+def test_dependency_prompt_keeps_results_without_cli_logs(client, tmp_path):
+    api = Api(client)
+    step = executable(tmp_path)
+    step["depends_on"] = ["before"]
+    _, run = api.run([task("before"), step])
+    api.update_step(run, "before", status="running")
+    api.update_step(run, "before", status="completed", summary="short summary",
+                    artifacts=[{"type": "file", "ref": "/tmp/report.txt"}],
+                    metadata={"customer_input": "keep this", "token_usage": {"input_tokens": 999},
+                              "execution": {"stdout": "LARGE_LOG" * 5000, "stderr": "DIAGNOSTIC",
+                                            "result": "DUPLICATE_RESULT", "live_text": "DUPLICATE",
+                                            "output": "full result", "output_format": "text"}})
+    before = client.get(f"/v1/runs/{run}").json()["step_states"]["before"]
+    with patch("chief.domain.execution.subprocess.Popen") as launch:
+        launch.return_value.returncode = 0
+        launch.return_value.communicate.return_value = (
+            json.dumps({"result": json.dumps({"status": "completed", "summary": "done"})}), "")
+        assert client.post(f"/v1/runs/{run}/execute/work").status_code == 200
+        prompt = launch.return_value.communicate.call_args.args[0]
+    context = json.loads(prompt.split("Chief step context:\n")[1].split("\nExecute only")[0])
+    dependency = context["dependencies"]["before"]
+    assert dependency["metadata"] == {"customer_input": "keep this",
+                                       "execution": {"output": "full result",
+                                                     "output_format": "text"}}
+    assert dependency["summary"] == "short summary"
+    assert dependency["artifacts"][0]["ref"] == "/tmp/report.txt"
+    assert "LARGE_LOG" not in prompt and "DUPLICATE" not in prompt
+    assert client.get(f"/v1/runs/{run}").json()["step_states"]["before"] == before
+
+
+def test_nested_dependency_context_omits_replay_history_and_keeps_evidence():
+    from chief.domain.execution import _dependency_context
+    from chief.models import StepInstance, StepState
+
+    child = StepState(step_id="child", status="completed", summary="done",
+                      criteria_met={"c1": "tests passed"}, history=[{"summary": "obsolete"}],
+                      metadata={"execution": {"stdout": "LOG", "output": "answer"}})
+    instance = StepInstance(instance_id="i1", parent_step_id="loop", kind="iteration", index=1,
+                            status="completed", metadata={"parameter": 42},
+                            step_states={"child": child}, history=[{"summary": "old branch"}])
+    state = StepState(step_id="loop", status="completed", instances=[instance])
+    data = _dependency_context(state)
+    nested = data["instances"][0]
+    assert nested["metadata"] == {"parameter": 42}
+    assert nested["step_states"]["child"]["criteria_met"] == {"c1": "tests passed"}
+    assert "history" not in nested and "history" not in nested["step_states"]["child"]
+    assert "LOG" not in json.dumps(data)
+    assert child.history == [{"summary": "obsolete"}]
 
 
 @pytest.mark.parametrize("result,code", [("invalid JSON", 0),
@@ -290,14 +441,16 @@ def test_streaming_publishes_live_activity_before_completion(client, tmp_path):
     script = tmp_path / "fake_cli.py"
     script.write_text('''import json, sys, time
 sys.stdin.read()
-print(json.dumps({"type": "assistant", "message": {"content": [
+print(json.dumps({"type": "assistant", "message": {"id": "m1",
+    "usage": {"input_tokens": 100, "output_tokens": 1}, "content": [
     {"type": "text", "text": "Checking the files…"},
     {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}
 ]}}), flush=True)
 time.sleep(1.8)
 print(json.dumps({"type": "result", "result": json.dumps({
     "status": "completed", "summary": "Done", "output": "## Result\\nAll files checked."
-}), "duration_ms": 1800, "total_cost_usd": .001}), flush=True)
+}), "usage": {"input_tokens": 100, "output_tokens": 20},
+    "duration_ms": 1800, "total_cost_usd": .001}), flush=True)
 ''')
     real_launch = subprocess.Popen
 
@@ -318,10 +471,12 @@ print(json.dumps({"type": "result", "result": json.dumps({
         assert state["status"] == "running"
         assert execution["live_text"] == "Checking the files…"
         assert execution["activity"][0]["detail"] == "ls"
+        assert execution["usage"]["tokens"] == {"input_tokens": 100}
         result = future.result(timeout=5).json()["step_states"]["work"]
     assert result["status"] == "completed"
     assert result["metadata"]["execution"]["output"] == "## Result\nAll files checked."
     assert result["metadata"]["execution"]["usage"]["total_cost_usd"] == .001
+    assert result["metadata"]["execution"]["usage"]["tokens"]["total_tokens"] == 120
     assert "Checking the files" in result["metadata"]["execution"]["stdout"]
 
 

@@ -10,6 +10,15 @@ Chief holds the plan and the state of the work. By default you execute and repor
 happened. Tasks may optionally declare `execution` with `executor` (`source_conversation`,
 `claude`, or `codex`), `model`, `prompt`, and optional `timeout_seconds` during planning.
 CLI executors also require an absolute `cwd`. Choose those settings before approval.
+Choose `execution.profile` explicitly during planning: `text_only` for Claude steps
+that only transform supplied text, `limited_tools` for Claude steps needing a selected
+`tools` list (`Read`, `Glob`, `Grep`, `Edit`, `Write`, `Bash`, `WebFetch`, `WebSearch`),
+or `full_agent` for normal coding-agent context. Text only has no file/web access.
+Limited tools skips skills, plugins, project instructions and MCP, while retaining
+coding guidance; selected tools are authorized (Bash can execute arbitrary commands).
+Codex and source conversation currently require `full_agent`. Omitted profiles default
+to full agent for older clients. Include this choice in the plan review; do not change
+it at execution time. Use an empty tools list outside limited_tools.
 For `source_conversation`, carry out the stored prompt in this conversation and report
 through the existing tools; the stored model describes the planned choice and does not
 switch this conversation's model. For CLI executors, use `execute_step` after approval

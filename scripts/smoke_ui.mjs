@@ -2146,7 +2146,15 @@ const modelResetOnProviderChange = findByTag(mainNode(), "select")
 changeIntoId("edit-execution-model", "__custom__");
 typeIntoId("edit-execution-custom-model", "claude-custom");
 const customModelWorks = findByTag(mainNode(), "input").some((n) => n.id === "edit-execution-custom-model" && n.value === "claude-custom");
+changeIntoId("edit-execution-profile", "limited_tools");
+const limitedToolsShown = findByTag(mainNode(), "input").filter((n) =>
+  n.type === "checkbox" && ["Read", "Glob", "Grep"].includes(n["aria-label"]) && n.checked).length === 3;
+changeIntoId("edit-execution-profile", "text_only");
+const textProfileShown = JSON.stringify(mainNode()).includes("File references are not read.") &&
+  !findByTag(mainNode(), "input").some((n) => n["aria-label"] === "Bash");
 changeIntoId("edit-step-executor", "codex");
+const codexProfileRestricted = findByTag(mainNode(), "select").find((n) =>
+  n.id === "edit-execution-profile")?.children.length === 1;
 changeIntoId("edit-execution-model", "target-model");
 typeIntoId("edit-execution-prompt", "Implement the approved change and verify tests.");
 typeIntoId("edit-execution-cwd", "/tmp/project");
@@ -2162,7 +2170,10 @@ const configuredCreation = posts.find((p) => p.method === "POST" &&
   p.url.endsWith("/workflows") && p.body.title === "A hand-written plan");
 const configuredCreationSaved = configuredCreation?.body.steps.length === 2 &&
   configuredCreation.body.steps.every((s) => s.execution.executor === "codex" &&
-    s.execution.model === "target-model" && s.execution.prompt && s.execution.cwd === "/tmp/project");
+    s.execution.model === "target-model" && s.execution.prompt && s.execution.cwd === "/tmp/project" &&
+    s.execution.profile === "full_agent" && s.execution.tools.length === 0);
+console.log(`execution profiles: limited=${limitedToolsShown}, text=${textProfileShown}, codex=${codexProfileRestricted}`);
+if (!(limitedToolsShown && textProfileShown && codexProfileRestricted)) throw new Error("Execution profiles failed");
 console.log(`model choices: dropdown=${modelDropdownShown}, reset=${modelResetOnProviderChange}, custom=${customModelWorks}`);
 console.log(`execution authoring: choice=${executionChoiceRequired}, fields=${executionFieldsShown}, blocked=${missingExecutionBlocked}, own-prompt=${newStepNeedsOwnPrompt}, saved=${configuredCreationSaved}`);
 
@@ -2195,6 +2206,7 @@ console.log(`execution setup: offered=${configureOffered}, reopened-in-editor=${
 // Existing saved envelopes and newly streamed output both have readable result views.
 RUN.step_states.a.metadata.execution = {
   executor: "claude", model: "target", exit_code: 0,
+  usage: {tokens: {input_tokens: 1000, output_tokens: 200, total_tokens: 1200, cache_read_tokens: 800}, total_cost_usd: .01},
   result: JSON.stringify({ status: "completed", summary: "Legacy greeting", output: "## Greeting\nHello **world**." }),
   stdout: JSON.stringify({ result: "wire-only-marker", total_cost_usd: .01 }),
 };
@@ -2203,12 +2215,27 @@ fireWindow("hashchange", {});
 await new Promise((r) => setTimeout(r, 60));
 const outputHiddenInitially = countClass(mainNode(), "execution-result-card") === 0 &&
   countClass(mainNode(), "execution-prose") === 0 && countClass(roots["viewer-root"], "output-viewer") === 0;
+clickButton("Usage");
+const workflowUsageShown = countClass(roots["viewer-root"], "token-table") === 1 &&
+  JSON.stringify(roots["viewer-root"]).includes("1,200") && countClass(mainNode(), "inspector") === 0;
+clickButton("← Workflows");
+await new Promise((r) => setTimeout(r, 60));
+const usageClosedOnNavigation = countClass(roots["viewer-root"], "viewer") === 0;
+clickButton("Tokens");
+const tokensColumnShown = JSON.stringify(mainNode()).includes("1,200");
+location.hash = "#/workflow/wf_ok";
+fireWindow("hashchange", {});
+await new Promise((r) => setTimeout(r, 60));
 clickByText("did it");
 const executionOffered = JSON.stringify(mainNode()).includes("View execution");
 const noExecutionJsonTree = !findByClass(mainNode(), "meta-json").some((n) =>
   JSON.stringify(n).includes("wire-only-marker"));
 clickButton("View execution");
 const inspectorReplaced = countClass(mainNode(), "inspector") === 0;
+clickIn(roots["viewer-root"], "Usage");
+const stepUsageShown = countClass(roots["viewer-root"], "token-metric") === 6 &&
+  JSON.stringify(roots["viewer-root"]).includes("1,200");
+clickIn(roots["viewer-root"], "Preview");
 clickIn(roots["viewer-root"], "Copy output");
 await new Promise((r) => setTimeout(r, 10));
 const resultCopied = copied === "## Greeting\nHello **world**.";
@@ -2276,7 +2303,9 @@ const structuredPreview = countClass(roots["viewer-root"], "j-str") > 0 &&
   JSON.stringify(roots["viewer-root"]).includes("Keep this data field");
 console.log(`output reader: shown=${outputReaderShown}, rich-preview=${richPreview}, control-hidden=${controlHiddenFromPreview}, source=${readerSource}, activity=${readerActivity}, logs=${readerLogs}, files=${readerFiles}, download=${readerDownloaded}, html-sandbox=${htmlPreviewSandboxed}, json=${structuredPreview}`);
 
-const ok = modelDropdownShown && modelResetOnProviderChange && customModelWorks && outputReaderShown && richPreview && controlHiddenFromPreview && readerSource && readerActivity && readerLogs && readerFiles && readerDownloaded && htmlPreviewSandboxed && structuredPreview && outputHiddenInitially && executionOffered && inspectorReplaced && inspectorRestored && liveActivityShown && logsClosed && noExecutionJsonTree && resultCopied && liveOutputShown && readableFailure && executionChoiceRequired && executionFieldsShown && missingExecutionBlocked &&
+console.log(`usage viewer: workflow=${workflowUsageShown}, step=${stepUsageShown}, navigation=${usageClosedOnNavigation}, column=${tokensColumnShown}`);
+
+const ok = usageClosedOnNavigation && tokensColumnShown && workflowUsageShown && stepUsageShown && modelDropdownShown && modelResetOnProviderChange && customModelWorks && outputReaderShown && richPreview && controlHiddenFromPreview && readerSource && readerActivity && readerLogs && readerFiles && readerDownloaded && htmlPreviewSandboxed && structuredPreview && outputHiddenInitially && executionOffered && inspectorReplaced && inspectorRestored && liveActivityShown && logsClosed && noExecutionJsonTree && resultCopied && liveOutputShown && readableFailure && executionChoiceRequired && executionFieldsShown && missingExecutionBlocked &&
   newStepNeedsOwnPrompt && configuredCreationSaved && configureOffered && configureReopened &&
   workflowExecuteOffered && workflowExecuteSent &&
   dialogOpened &&
