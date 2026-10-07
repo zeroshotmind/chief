@@ -2153,8 +2153,12 @@ changeIntoId("edit-execution-profile", "text_only");
 const textProfileShown = JSON.stringify(mainNode()).includes("File references are not read.") &&
   !findByTag(mainNode(), "input").some((n) => n["aria-label"] === "Bash");
 changeIntoId("edit-step-executor", "codex");
-const codexProfileRestricted = findByTag(mainNode(), "select").find((n) =>
-  n.id === "edit-execution-profile")?.children.length === 1;
+const codexProfilesShown = findByTag(mainNode(), "select").find((n) =>
+  n.id === "edit-execution-profile")?.children.length === 3;
+changeIntoId("edit-execution-profile", "limited_tools");
+const codexToolsShown = findByTag(mainNode(), "input").some((n) =>
+  n["aria-label"] === "shell" && n.checked) &&
+  !findByTag(mainNode(), "input").some((n) => n["aria-label"] === "Bash");
 changeIntoId("edit-execution-model", "target-model");
 typeIntoId("edit-execution-prompt", "Implement the approved change and verify tests.");
 typeIntoId("edit-execution-cwd", "/tmp/project");
@@ -2171,9 +2175,9 @@ const configuredCreation = posts.find((p) => p.method === "POST" &&
 const configuredCreationSaved = configuredCreation?.body.steps.length === 2 &&
   configuredCreation.body.steps.every((s) => s.execution.executor === "codex" &&
     s.execution.model === "target-model" && s.execution.prompt && s.execution.cwd === "/tmp/project" &&
-    s.execution.profile === "full_agent" && s.execution.tools.length === 0);
-console.log(`execution profiles: limited=${limitedToolsShown}, text=${textProfileShown}, codex=${codexProfileRestricted}`);
-if (!(limitedToolsShown && textProfileShown && codexProfileRestricted)) throw new Error("Execution profiles failed");
+    s.execution.profile === "limited_tools" && s.execution.tools.join() === "shell");
+console.log(`execution profiles: limited=${limitedToolsShown}, text=${textProfileShown}, codex=${codexProfilesShown && codexToolsShown}`);
+if (!(limitedToolsShown && textProfileShown && codexProfilesShown && codexToolsShown)) throw new Error("Execution profiles failed");
 console.log(`model choices: dropdown=${modelDropdownShown}, reset=${modelResetOnProviderChange}, custom=${customModelWorks}`);
 console.log(`execution authoring: choice=${executionChoiceRequired}, fields=${executionFieldsShown}, blocked=${missingExecutionBlocked}, own-prompt=${newStepNeedsOwnPrompt}, saved=${configuredCreationSaved}`);
 

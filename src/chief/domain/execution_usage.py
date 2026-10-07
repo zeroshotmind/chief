@@ -20,7 +20,8 @@ def normalize(raw: dict, provider: str) -> dict[str, int]:
             "reasoning_output_tokens", "reasoning_tokens", "reasoningOutputTokens"),
         "cache_read_tokens": (
             "cached_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens"),
-        "cache_write_tokens": ("cache_creation_input_tokens", "cacheCreationInputTokens"),
+        "cache_write_tokens": ("cache_creation_input_tokens", "cacheCreationInputTokens",
+                               "cache_write_input_tokens"),
     }
     for field, keys in aliases.items():
         for key in keys:

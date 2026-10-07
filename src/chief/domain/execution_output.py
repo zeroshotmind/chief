@@ -59,7 +59,10 @@ def stream_output(raw: str) -> dict[str, Any]:
         elif kind in ("item.started", "item.completed"):
             item = _mapping(event.get("item"))
             item_type = item.get("type")
-            if item_type == "agent_message" and kind == "item.completed":
+            if item_type == "error":
+                activity.append({"kind": "error", "title": "CLI diagnostic",
+                                 "detail": _text(item.get("message"))[:4000]})
+            elif item_type == "agent_message" and kind == "item.completed":
                 text.append(_text(item.get("text")))
             elif item_type == "command_execution":
                 activity.append({"kind": "command", "title": (

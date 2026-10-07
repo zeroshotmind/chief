@@ -50,6 +50,9 @@ def test_fresh_cli_and_evidence(client, tmp_path, cli):
         assert client.post(f"/v1/runs/{run}/execute/work").status_code == 409
         assert launch.call_count == 1
         assert "--safe-mode" not in args and "--tools" not in args
+        if cli == "codex":
+            assert "--skip-git-repo-check" in args
+            assert "--ignore-user-config" not in args
 
 
 @pytest.mark.parametrize("profile,tools", [("text_only", []),
@@ -87,13 +90,70 @@ def test_reviewed_profile_controls_cli_and_is_recorded(client, tmp_path, profile
     {"profile": "full_agent", "tools": ["Read"]},
     {"profile": "limited_tools", "tools": ["Task"]},
     {"profile": "limited_tools", "tools": ["Read", "Read"]},
-    {"executor": "codex", "profile": "text_only"},
+    {"executor": "codex", "profile": "limited_tools", "tools": ["Read"]},
+    {"profile": "limited_tools", "tools": ["shell"]},
     {"executor": "source_conversation", "profile": "limited_tools", "tools": ["Read"]},
 ])
 def test_reject_unsupported_or_inconsistent_profiles(client, tmp_path, config):
     step = executable(tmp_path)
     step["execution"].update(config)
     assert Api(client).create_workflow([step]).status_code == 422
+
+
+@pytest.mark.parametrize("profile,tools", [
+    ("text_only", []), ("limited_tools", ["shell"]),
+    ("limited_tools", ["web_search", "view_image"]),
+])
+def test_codex_profiles_apply_scoped_config_and_capture_usage(client, tmp_path, profile, tools):
+    step = executable(tmp_path, "codex", profile=profile, tools=tools)
+    wid, run = Api(client).run([step])
+    captured = {}
+    result = json.dumps({"status": "completed", "summary": "world", "output": "world"})
+    with patch("chief.domain.execution.subprocess.Popen") as launch:
+        process = launch.return_value
+        process.returncode = 0
+        process.communicate.return_value = (json.dumps({"type": "turn.completed", "usage": {
+            "input_tokens": 500, "cached_input_tokens": 100, "cache_write_input_tokens": 50,
+            "output_tokens": 20, "reasoning_output_tokens": 5,
+        }}), "")
+
+        def start(command, **kwargs):
+            options = dict(command[i + 1].split("=", 1) for i, arg in enumerate(command)
+                           if arg == "-c")
+            captured.update({key: json.loads(value) for key, value in options.items()})
+            if profile == "text_only":
+                instructions = Path(captured["model_instructions_file"])
+                assert instructions.is_file() and "No tools" in instructions.read_text()
+            Path(command[command.index("--output-last-message") + 1]).write_text(result)
+            return process
+
+        launch.side_effect = start
+        response = client.post(f"/v1/runs/{run}/execute/work")
+    state = response.json()["step_states"]["work"]
+    assert state["status"] == "completed", state
+    command = launch.call_args.args[0]
+    assert "--ignore-user-config" in command and "--strict-config" in command
+    assert "--ignore-rules" not in command
+    assert command[command.index("--sandbox") + 1] == (
+        "workspace-write" if "shell" in tools else "read-only")
+    assert captured["features.shell_tool"] == ("shell" in tools)
+    assert captured["features.code_mode_host"] is True  # selected tools need the runtime
+    assert captured["features.view_image"] == ("view_image" in tools)
+    assert captured["web_search"] == ("live" if "web_search" in tools else "disabled")
+    for key in ("features.plugins", "features.apps", "features.hooks",
+                "skills.include_instructions", "memories.use_memories",
+                "tools.experimental_request_user_input.enabled"):
+        assert captured[key] is False
+    if profile == "text_only":
+        assert not Path(captured["model_instructions_file"]).exists()  # per-run temp file removed
+    else:
+        assert "model_instructions_file" not in captured  # retain coding guidance
+    tokens = state["metadata"]["execution"]["usage"]["tokens"]
+    assert tokens == {"input_tokens": 500, "output_tokens": 20, "reasoning_tokens": 5,
+                      "cache_read_tokens": 100, "cache_write_tokens": 50, "total_tokens": 520}
+    cloned = client.post(f"/v1/workflows/{wid}/clone").json()
+    assert cloned["steps"][0]["execution"]["profile"] == profile
+    assert cloned["steps"][0]["execution"]["tools"] == tools
 
 
 @pytest.mark.parametrize("criteria,evidence,expected", [

@@ -17,6 +17,7 @@ from ..ids import now
 from ..models import RunCreate, RunState, StepInstance, StepState, StepUpdate
 from ..models.definition import StepExecution
 from . import paths
+from .codex_execution import profile_args as codex_profile_args
 from .execution_output import stream_output
 from .graph import top_level_ids
 
@@ -166,9 +167,11 @@ def execute_step(service: Chief, run_id: str, path: list[str]) -> RunState:
         with tempfile.TemporaryDirectory(prefix="chief-execution-") as folder:
             result_file = Path(folder) / "result.txt"
             if config.executor == "codex":
+                sandbox = ("read-only" if config.profile != "full_agent" and
+                           "shell" not in config.tools else "workspace-write")
                 command = ["codex", "exec", "--json", "--model", config.model, "--ephemeral",
-                           "--sandbox", "workspace-write", "--output-last-message",
-                           str(result_file), "-"]
+                           "--sandbox", sandbox, "--skip-git-repo-check", "--output-last-message",
+                           str(result_file), *codex_profile_args(config, Path(folder)), "-"]
             else:
                 command = ["claude", "--print", "--model", config.model,
                            "--session-id", execution_id, "--no-session-persistence",

@@ -125,13 +125,14 @@ class StepExecution(BaseModel):
     prompt: str = Field(min_length=1)
     profile: Literal["text_only", "limited_tools", "full_agent"] = Field(
         default="full_agent",
-        description="Choose during planning. Text only and limited tools require Claude CLI. "
+        description="Choose during planning. Text only and limited tools require CLI execution. "
                     "Omitted profiles retain the existing full-agent behavior.",
     )
     tools: list[Literal["Read", "Glob", "Grep", "Edit", "Write", "Bash",
-                        "WebFetch", "WebSearch"]] = Field(
+                        "WebFetch", "WebSearch", "shell", "web_search", "view_image"]] = Field(
         default_factory=list,
-        description="Explicit tool selection for Claude limited_tools; empty for other profiles.",
+        description="Limited tools only: Claude uses Read/Glob/Grep/Edit/Write/Bash/WebFetch/"
+                    "WebSearch; Codex uses shell/web_search/view_image. Otherwise empty.",
     )
     cwd: str | None = Field(
         default=None, min_length=1,
@@ -156,14 +157,18 @@ class StepExecution(BaseModel):
     def _cli_requires_cwd(self) -> StepExecution:
         if self.executor != "source_conversation" and self.cwd is None:
             raise ValueError("CLI execution requires cwd")
-        if self.profile != "full_agent" and self.executor != "claude":
-            raise ValueError("text_only and limited_tools profiles currently require Claude CLI")
+        if self.profile != "full_agent" and self.executor == "source_conversation":
+            raise ValueError("text_only and limited_tools profiles require a fresh CLI session")
         if self.profile == "limited_tools" and not self.tools:
             raise ValueError("limited_tools requires at least one tool")
         if self.profile != "limited_tools" and self.tools:
             raise ValueError("tools can only be selected with the limited_tools profile")
         if len(self.tools) != len(set(self.tools)):
             raise ValueError("tools must not contain duplicates")
+        allowed = ({"shell", "web_search", "view_image"} if self.executor == "codex" else
+                   {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebFetch", "WebSearch"})
+        if set(self.tools) - allowed:
+            raise ValueError(f"unsupported tools for {self.executor}")
         return self
 
 

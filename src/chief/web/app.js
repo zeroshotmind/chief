@@ -5221,7 +5221,10 @@ const EXECUTION_PROFILES = [
   { value: "limited_tools", text: "Limited tools · choose capabilities" },
   { value: "full_agent", text: "Full agent · standard CLI context" },
 ];
-const EXECUTION_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebFetch", "WebSearch"];
+const EXECUTION_TOOLS = {
+  claude: ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebFetch", "WebSearch"],
+  codex: ["shell", "web_search", "view_image"],
+};
 
 function executionProfileLabel(config) {
   if (config.executor === "source_conversation") return "Uses the existing conversation's context and tools";
@@ -5233,8 +5236,8 @@ function executionProfileLabel(config) {
 function emptyExecution(executor, defaults = {}) {
   if (executor === "tracking") return null;
   return { executor, model: defaults.executor === executor ? defaults.model || "" : "", prompt: "",
-    profile: executor === "claude" ? defaults.profile || "full_agent" : "full_agent",
-    tools: executor === "claude" && defaults.profile === "limited_tools" ? [...(defaults.tools || [])] : [],
+    profile: defaults.executor === executor ? defaults.profile || "full_agent" : "full_agent",
+    tools: defaults.executor === executor && defaults.profile === "limited_tools" ? [...(defaults.tools || [])] : [],
     ...(executor === "source_conversation" ? {} : { cwd: defaults.cwd || "" }),
     timeout_seconds: defaults.timeout_seconds || 3600 };
 }
@@ -6335,6 +6338,7 @@ function executionModelField(sel) {
 
 function executionFields(sel) {
   const config = sel.execution;
+  const toolChoices = EXECUTION_TOOLS[config?.executor] || [];
   return el("div", {},
     editField("Step executor", selectEl({ id: "edit-step-executor", class: "input",
       onChange: (e) => editSel((s) => {
@@ -6349,23 +6353,25 @@ function executionFields(sel) {
       id: "edit-execution-profile", class: "input", "aria-label": "Execution profile",
       onChange: (event) => editSel((step) => {
         step.execution.profile = event.target.value;
-        step.execution.tools = event.target.value === "limited_tools" ? ["Read", "Glob", "Grep"] : [];
+        step.execution.tools = event.target.value === "limited_tools" ?
+          (config.executor === "codex" ? ["shell"] : ["Read", "Glob", "Grep"]) : [];
       }),
-    }, config.executor === "claude" ? EXECUTION_PROFILES : EXECUTION_PROFILES.filter((p) => p.value === "full_agent"),
-    config.profile || "full_agent"), config.executor === "codex" ?
-      "Codex currently supports Full agent here. Use Claude for Text only or Limited tools." :
+    }, EXECUTION_PROFILES,
+    config.profile || "full_agent"),
       config.profile === "text_only" ?
         "For text transformations and answers using supplied context. Short system instructions; no tools, skills, plugins, project instructions, or memory. File references are not read." :
       config.profile === "limited_tools" ?
-        "Only the selected tools are available and authorized. Keeps coding guidance; skips skills, plugins, project instructions, and memory. Bash can run arbitrary commands." :
+        config.executor === "codex" ?
+          "Shell can read, edit and run commands in the workspace sandbox. Web search accesses the web; view image reads local images. Keeps coding guidance; skips personal configuration, skills and plugins." :
+          "Only the selected tools are available and authorized. Keeps coding guidance; skips skills, plugins, project instructions, and memory. Bash can run arbitrary commands." :
         "Standard CLI instructions, tools and configured project context. Choose Text only when the step needs no tools."),
     config?.profile === "limited_tools" && editField("Tools (choose at least one)",
-      el("div", { class: "execution-tool-choices" }, ...EXECUTION_TOOLS.map((tool) => el("label", {},
+      el("div", { class: "execution-tool-choices" }, ...toolChoices.map((tool) => el("label", {},
         el("input", { type: "checkbox", "aria-label": tool, checked: (config.tools || []).includes(tool),
           onChange: (event) => editSel((step) => {
             const selected = new Set(step.execution.tools || []);
             if (event.target.checked) selected.add(tool); else selected.delete(tool);
-            step.execution.tools = EXECUTION_TOOLS.filter((name) => selected.has(name));
+            step.execution.tools = toolChoices.filter((name) => selected.has(name));
           }),
         }), tool,
       )))),

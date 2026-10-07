@@ -26,7 +26,7 @@ prompt, even when it inherits the executor and model from another task.
 
 Choose each task's **Execution profile** during planning, before approval:
 
-- **Text only** (Claude): uses short system instructions and only the supplied prompt and
+- **Text only** (Claude or Codex): uses short system instructions and only the supplied prompt and
   step context. No tools, skills, installed plugins, project instructions, memory, or MCP.
   Suitable for summaries and text transformations; file references are not read.
   Chief omits run identifiers, empty context sections, and a goal identical to the prompt.
@@ -34,21 +34,32 @@ Choose each task's **Execution profile** during planning, before approval:
   present. Criterion evidence is requested only for steps with criteria; completion is
   still validated. The response contract asks for status, summary and full output, with
   an optional format. File/artifact instructions are omitted.
-- **Limited tools** (Claude): select the exact built-in tools the step needs. Keeps the
+- **Limited tools**: select the executor's built-in capabilities the step needs. Keeps the
   CLI's coding guidance but skips customizations and MCP. Selected tools are authorized
   for this invocation; Bash can run arbitrary commands. Managed CLI policies still apply.
+  Claude offers Read, Glob, Grep, Edit, Write, Bash, WebFetch and WebSearch. Codex offers
+  `shell` (read/edit/execute within the workspace sandbox), `web_search` (live search),
+  and `view_image` (local images). Codex's shell capability includes command execution and
+  stdin interaction; it is not a read-only file tool.
 - **Full agent**: keeps the existing CLI behavior, instructions, tools and project context.
-  This is the default for existing plans and the only currently supported Codex profile.
+  This is the default for existing plans.
 
 Profiles and tool choices are part of the saved, approved plan and survive cloning and
 templates. Change them through a draft revision or approved amendment, not at launch.
 Source-conversation execution continues using that conversation's existing context.
 The API fields are `execution.profile` (`text_only`, `limited_tools`, or `full_agent`)
-and `execution.tools` (a nonempty list only for `limited_tools`). The supported tools are
-`Read`, `Glob`, `Grep`, `Edit`, `Write`, `Bash`, `WebFetch`, and `WebSearch`.
+and `execution.tools` (a nonempty list only for `limited_tools`, using the executor's
+tool names above). Switching executors resets the profile and tool selection.
 An omitted profile means `full_agent` for compatibility. New tasks inherit the profile
 and tool selection, but need their own prompt. Reduced profiles require a Claude CLI
 supporting `--safe-mode`; Chief preserves subscription login and does not use `--bare`.
+Codex reduced profiles require `--ignore-user-config`, `--strict-config`, and the context
+controls tested with CLI 0.159.0-alpha.12.1. They preserve login, managed policies and
+exec-policy rules while skipping personal settings, plugins, skills, project instructions
+and memory. Text only uses a read-only sandbox; Limited tools uses workspace-write only
+when shell is selected. Chief never edits personal CLI settings. An empty `mcp_servers`
+table alone does not isolate Codex: inherited entries merge into it.
+All Codex profiles explicitly allow the approved working directory outside a Git repo.
 Unsupported flags fail the run rather than silently reverting to Full agent.
 
 The model field is a required dropdown: Codex choices come from the Chief host's local
